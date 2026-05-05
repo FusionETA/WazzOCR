@@ -1,0 +1,695 @@
+<?php
+/**
+ * WazzOCR Webhook Handler v3
+ * - Image OCR (jpg/png/gif/webp)
+ * - PDF extraction
+ * - Smart invoice formatting
+ * - AI chat for text messages (Gemini)
+ */
+
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
+function env_value(string $key, string $default = ''): string
+{
+    static $env = null;
+    if ($env === null) {
+        $env = [];
+        $envPath = __DIR__ . '/.env';
+        if (is_readable($envPath)) {
+            foreach (file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                $line = trim($line);
+                if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
+                    continue;
+                }
+                [$name, $value] = explode('=', $line, 2);
+                $env[trim($name)] = trim($value, " \t\n\r\0\x0B\"'");
+            }
+        }
+    }
+
+    $value = getenv($key);
+    if ($value !== false && $value !== '') {
+        return $value;
+    }
+    return $env[$key] ?? $default;
+}
+
+define('GEMINI_API_KEY',    env_value('GEMINI_API_KEY'));
+define('WAZZUP_API_KEY',    env_value('WAZZUP_API_KEY'));
+define('WAZZUP_CHANNEL_ID', env_value('WAZZUP_CHANNEL_ID'));
+define('WEBHOOK_SECRET',    env_value('WEBHOOK_SECRET'));
+define('XERO_BRIDGE_URL',   env_value('XERO_BRIDGE_URL', 'http://localhost:3000/api/whatsapp/analyze-ocr'));
+define('WHATSAPP_AUTO_CREATE_XERO_BILLS', env_value('WHATSAPP_AUTO_CREATE_XERO_BILLS', 'false') === 'true');
+define('MAX_FILE_BYTES',    15 * 1024 * 1024); // 15 MB Gemini inline_data limit
+
+// ─── WELCOME MESSAGE ─────────────────────────────────────────────────────────
+define('WELCOME_MSG',
+"👋 *Welcome to WazzOCR!*\n\n" .
+"I'm your AI-powered document assistant. Here's what I can do:\n\n" .
+"📸 *Send me an image* of:\n" .
+"  • 🪪 ID card / MyKad / Passport\n" .
+"  • 🧾 Invoice, receipt or bill\n" .
+"  • 🚗 Car plate / number plate\n" .
+"  • 📋 Any document or form\n" .
+"  • 🏷️ Labels, business cards, signs\n\n" .
+"📄 *Send me a PDF* of:\n" .
+"  • 🧾 Invoices or purchase orders\n" .
+"  • 📑 Contracts or reports\n" .
+"  • 📝 Any text document\n\n" .
+"💬 *Or just chat with me* — ask me anything!\n\n" .
+"_For invoices, I'll automatically detect and format the output with vendor, line items, totals and payment details._\n\n" .
+"➡️ *To start: just send any image or PDF now!*"
+);
+
+// ─── CAPABILITY MESSAGE ───────────────────────────────────────────────────────
+define('CAPABILITY_MSG',
+"🤖 *WazzOCR Capabilities*\n\n" .
+"*1️⃣ Image OCR*\n" .
+"Send any photo and I'll extract all text from it:\n" .
+"• ID cards, MyKad, NRIC, passports\n" .
+"• Car / vehicle number plates\n" .
+"• Invoices, receipts, bills\n" .
+"• Forms, labels, business cards\n" .
+"• Handwritten or printed text\n" .
+"• 100+ languages supported\n\n" .
+"*2️⃣ PDF Extraction*\n" .
+"Send any PDF document and I'll read all pages:\n" .
+"• Multi-page invoices & POs\n" .
+"• Contracts & agreements\n" .
+"• Reports & statements\n\n" .
+"*3️⃣ Smart Invoice Detection*\n" .
+"When I detect an invoice or receipt, I auto-structure the output with:\n" .
+"• Vendor & buyer details\n" .
+"• Line items with quantities & prices\n" .
+"• Subtotal, tax & total amount\n" .
+"• Payment terms & bank details\n\n" .
+"*4️⃣ AI Chat*\n" .
+"Ask me anything! I can answer questions, help you understand documents, translate text, and more.\n\n" .
+"📤 *Just send an image or PDF to get started!*"
+);
+
+// ─── ENTRY POINT ─────────────────────────────────────────────────────────────
+header('Content-Type: application/json');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    exit(json_encode(['error' => 'Method not allowed']));
+}
+
+$raw  = file_get_contents('php://input');
+$data = json_decode($raw, true);
+
+error_log("WAZZOCR RAW: " . $raw);
+
+if (!$data) {
+    http_response_code(400);
+    exit(json_encode(['error' => 'Invalid JSON']));
+}
+
+if (WEBHOOK_SECRET !== '') {
+    $sig      = $_SERVER['HTTP_X_WAZZUP_SIGNATURE'] ?? '';
+    $expected = hash_hmac('sha256', $raw, WEBHOOK_SECRET);
+    if (!hash_equals($expected, $sig)) {
+        http_response_code(401);
+        exit(json_encode(['error' => 'Invalid signature']));
+    }
+}
+
+// Acknowledge immediately
+http_response_code(200);
+echo json_encode(['status' => 'ok']);
+
+if (function_exists('fastcgi_finish_request')) {
+    fastcgi_finish_request();
+} else {
+    ob_flush();
+    flush();
+}
+
+// ─── PROCESS MESSAGES ────────────────────────────────────────────────────────
+foreach ($data['messages'] ?? [] as $message) {
+    process_message($message);
+}
+
+// ─── MAIN ROUTER ─────────────────────────────────────────────────────────────
+
+function process_message(array $msg): void
+{
+    $type     = $msg['type']     ?? '';
+    $chatType = $msg['chatType'] ?? 'whatsapp';
+    $isEcho   = $msg['isEcho']   ?? false;
+    $status   = $msg['status']   ?? '';
+    $chatId   = preg_replace('/@[a-z.]+$/i', '', $msg['chatId'] ?? '');
+
+    error_log("WAZZOCR PROCESS: type=$type chatId=$chatId isEcho=" . ($isEcho ? 'true' : 'false') . " status=$status");
+
+    if ($isEcho === true || $status === 'outbound') {
+        error_log("WAZZOCR SKIP: outbound echo.");
+        return;
+    }
+
+    if (empty($chatId)) {
+        error_log("WAZZOCR SKIP: empty chatId.");
+        return;
+    }
+
+    // ── Route by message type ──────────────────────────────────────────────
+    if ($type === 'text') {
+        handle_text($chatId, $chatType, $msg);
+        return;
+    }
+
+    if (in_array($type, ['image', 'document'], true)) {
+        handle_file($chatId, $chatType, $msg, $type);
+        return;
+    }
+
+    // Unsupported type — guide user
+    if (in_array($type, ['audio', 'video', 'sticker', 'location', 'contact'], true)) {
+        wazzup_send($chatId, $chatType,
+            "⚠️ I received a *{$type}* message, but I can only process:\n\n" .
+            "📸 *Images* — photos of documents, IDs, invoices\n" .
+            "📄 *PDFs* — invoice files, reports\n" .
+            "💬 *Text* — chat or ask me anything\n\n" .
+            "Please send an image or PDF to extract text."
+        );
+    }
+}
+
+// ─── TEXT MESSAGE HANDLER ────────────────────────────────────────────────────
+
+function handle_text(string $chatId, string $chatType, array $msg): void
+{
+    $text = trim($msg['text'] ?? $msg['body'] ?? '');
+
+    if ($text === '') return;
+
+    error_log("WAZZOCR TEXT: chatId=$chatId text=" . substr($text, 0, 100));
+
+    // ── Keyword shortcuts ──────────────────────────────────────────────────
+    $lower = mb_strtolower($text);
+
+    // Greetings → welcome message
+    $greetings = ['hi', 'hello', 'hey', 'halo', 'hai', 'start', 'helo', 'yo', 'help'];
+    foreach ($greetings as $g) {
+        if ($lower === $g || str_starts_with($lower, $g . ' ') || str_starts_with($lower, $g . ',')) {
+            wazzup_send($chatId, $chatType, WELCOME_MSG);
+            return;
+        }
+    }
+
+    // Capability / help queries
+    $capWords = ['capability', 'capabilities', 'what can you do', 'features', 'function',
+                 'boleh buat apa', 'apa boleh', 'what do you do', 'how does this work',
+                 'how do you work', 'what are you', 'who are you'];
+    foreach ($capWords as $w) {
+        if (str_contains($lower, $w)) {
+            wazzup_send($chatId, $chatType, CAPABILITY_MSG);
+            return;
+        }
+    }
+
+    // ── AI Chat (Gemini) ───────────────────────────────────────────────────
+    $reply = gemini_chat($text);
+
+    if ($reply === null) {
+        wazzup_send($chatId, $chatType,
+            "❌ Sorry, I had trouble processing your message. Please try again.\n\n" .
+            "Or send me an image or PDF to extract text from!"
+        );
+        return;
+    }
+
+    wazzup_send($chatId, $chatType, $reply);
+}
+
+// ─── FILE HANDLER (IMAGE / PDF) ───────────────────────────────────────────────
+
+function handle_file(string $chatId, string $chatType, array $msg, string $type): void
+{
+    $fileUrl  = $msg['contentUri'] ?? ($msg['media']['url'] ?? '') ?? '';
+    $filename = $msg['text'] ?? $msg['fileName'] ?? $msg['media']['filename'] ?? '';
+
+    error_log("WAZZOCR FILE: url=$fileUrl filename=$filename");
+
+    if (empty($fileUrl)) {
+        wazzup_send($chatId, $chatType, "⚠️ Received your file but couldn't get the download URL. Please try again.");
+        return;
+    }
+
+    $isPdf     = ($type === 'document') || str_ends_with_ci($filename, '.pdf');
+    $typeLabel = $isPdf ? 'PDF' : 'image';
+
+    wazzup_send($chatId, $chatType, "🔍 Reading your {$typeLabel}...");
+
+    error_log("WAZZOCR DOWNLOAD: starting — $fileUrl");
+    $file = download_file($fileUrl);
+
+    if ($file === null) {
+        error_log("WAZZOCR ERROR: download failed for $fileUrl");
+        wazzup_send($chatId, $chatType, "❌ Could not download the file. Please try again.");
+        return;
+    }
+
+    error_log("WAZZOCR DOWNLOAD OK: mime={$file['mime']} size=" . strlen($file['bytes']) . " bytes");
+
+    if (strlen($file['bytes']) > MAX_FILE_BYTES) {
+        wazzup_send($chatId, $chatType, "⚠️ File too large (max 15MB). Please send a smaller file.");
+        return;
+    }
+
+    if ($isPdf) {
+        $file['mime'] = 'application/pdf';
+    }
+
+    error_log("WAZZOCR GEMINI: calling with mime={$file['mime']}");
+    $result = call_gemini_with_file($file);
+
+    if ($result === null) {
+        wazzup_send($chatId, $chatType, "❌ Sorry, I had trouble reading the {$typeLabel}. Please try again.");
+        return;
+    }
+
+    if (trim($result['text']) === '') {
+        wazzup_send($chatId, $chatType, "📄 I couldn't find any text in this {$typeLabel}.");
+        return;
+    }
+
+    error_log("WAZZOCR SUCCESS: extracted " . mb_strlen($result['text']) . " chars");
+
+    $output = $result['output'];
+    $analysis = analyze_with_xero_bridge($result['text']);
+    if ($analysis !== null && ($analysis['ok'] ?? false)) {
+        $output .= "\n\n" . format_bridge_analysis($analysis);
+    } elseif ($analysis !== null && !empty($analysis['error'])) {
+        $output .= "\n\n⚠️ *AI/Xero draft failed*\n" . $analysis['error'];
+    }
+
+    wazzup_send($chatId, $chatType, $output);
+}
+
+// ─── GEMINI: AI CHAT ─────────────────────────────────────────────────────────
+
+function gemini_chat(string $userText): ?string
+{
+    $systemPrompt = <<<'PROMPT'
+You are WazzOCR, a friendly and helpful AI assistant for FusionETA, a Malaysian technology company.
+
+Your primary specialties are:
+1. Reading and extracting text from images (ID cards, passports, invoices, car plates, forms)
+2. Extracting text from PDF documents
+3. Automatically detecting and structuring invoice data
+4. Answering questions about documents and business processes
+
+Personality:
+- Friendly, professional, and concise
+- You support English, Malay (Bahasa Malaysia), and Chinese
+- Keep answers brief and practical — this is a WhatsApp chat
+- When relevant, remind users they can send images or PDFs for OCR extraction
+- Do not answer questions unrelated to business, documents, or general knowledge
+
+If asked who you are: "I'm WazzOCR, an AI document assistant by FusionETA. I extract text from images and PDFs, and I can chat too!"
+
+Always respond in the same language the user is writing in.
+PROMPT;
+
+    $payload = [
+        'system_instruction' => [
+            'parts' => [['text' => $systemPrompt]],
+        ],
+        'contents' => [[
+            'role'  => 'user',
+            'parts' => [['text' => $userText]],
+        ]],
+        'generationConfig' => [
+            'maxOutputTokens' => 800,
+            'temperature'     => 0.7,
+        ],
+    ];
+
+    $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' . GEMINI_API_KEY;
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_TIMEOUT        => 30,
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr || $httpCode !== 200) {
+        error_log("WAZZOCR CHAT ERROR: http=$httpCode curlErr=$curlErr resp=" . substr($response, 0, 300));
+        return null;
+    }
+
+    $result = json_decode($response, true);
+    $text   = $result['candidates'][0]['content']['parts'][0]['text'] ?? '';
+
+    return trim($text) !== '' ? $text : null;
+}
+
+// ─── GEMINI: FILE OCR ─────────────────────────────────────────────────────────
+
+function call_gemini_with_file(array $file): ?array
+{
+    $payload = [
+        'contents' => [[
+            'parts' => [
+                ['inline_data' => [
+                    'mime_type' => $file['mime'],
+                    'data'      => base64_encode($file['bytes']),
+                ]],
+                ['text' => build_ocr_prompt()],
+            ],
+        ]],
+        'generationConfig' => [
+            'maxOutputTokens' => 4096,
+            'temperature'     => 0.1,
+        ],
+    ];
+
+    $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' . GEMINI_API_KEY;
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_TIMEOUT        => 90,
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr) {
+        error_log("WAZZOCR GEMINI CURL ERROR: $curlErr");
+        return null;
+    }
+
+    if ($httpCode !== 200) {
+        error_log("WAZZOCR GEMINI HTTP ERROR: $httpCode — " . substr($response, 0, 500));
+        return null;
+    }
+
+    $result = json_decode($response, true);
+    $text   = $result['candidates'][0]['content']['parts'][0]['text'] ?? '';
+
+    if (trim($text) === '') {
+        error_log("WAZZOCR GEMINI EMPTY: " . substr($response, 0, 1000));
+        return ['text' => '', 'output' => ''];
+    }
+
+    $isInvoice = stripos($text, 'INVOICE DETECTED') !== false;
+    $header    = $isInvoice ? "📋 *Invoice extracted:*\n\n" : "📝 *Extracted text:*\n\n";
+
+    return ['text' => $text, 'output' => $header . $text];
+}
+
+// ─── LOCAL XERO / AI BRIDGE ─────────────────────────────────────────────────
+
+function analyze_with_xero_bridge(string $ocrText): ?array
+{
+    if (XERO_BRIDGE_URL === '' || trim($ocrText) === '') {
+        return null;
+    }
+
+    $payload = [
+        'text'       => $ocrText,
+        'createBill' => WHATSAPP_AUTO_CREATE_XERO_BILLS,
+    ];
+
+    $ch = curl_init(XERO_BRIDGE_URL);
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_TIMEOUT        => 45,
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr || !$response) {
+        error_log("WAZZOCR XERO BRIDGE SKIP: http=$httpCode curlErr=$curlErr response=" . substr((string)$response, 0, 300));
+        return [
+            'ok'    => false,
+            'error' => $curlErr ? "Could not reach the local AI/Xero server: {$curlErr}" : 'No response from local AI/Xero server.',
+        ];
+    }
+
+    $data = json_decode($response, true);
+    if (!is_array($data)) {
+        return [
+            'ok'    => false,
+            'error' => 'Local AI/Xero server returned an invalid response.',
+        ];
+    }
+
+    if ($httpCode < 200 || $httpCode >= 300) {
+        return [
+            'ok'    => false,
+            'error' => $data['error'] ?? ('Local AI/Xero server failed with HTTP ' . $httpCode),
+        ];
+    }
+
+    return $data;
+}
+
+function format_bridge_analysis(array $analysis): string
+{
+    $bill = $analysis['bill'] ?? [];
+    if (!is_array($bill) || !$bill) {
+        return '';
+    }
+
+    $lines = [
+        "🤖 *AI bill analysis*",
+        "Supplier: " . ($bill['supplier'] ?? 'Unknown'),
+        "Invoice No: " . ($bill['invoiceNo'] ?? '-'),
+        "Date: " . ($bill['date'] ?? '-'),
+        "Currency: " . ($bill['currency'] ?? 'MYR'),
+        "Subtotal: " . format_money_value($bill['subtotal'] ?? 0),
+        "Tax: " . format_money_value($bill['tax'] ?? 0),
+        "*Total: " . format_money_value($bill['total'] ?? 0) . "*",
+    ];
+
+    if (!empty($bill['lineItems']) && is_array($bill['lineItems'])) {
+        $lines[] = "";
+        $lines[] = "*Line items*";
+        foreach (array_slice($bill['lineItems'], 0, 8) as $index => $item) {
+            $description = $item['description'] ?? ('Item ' . ($index + 1));
+            $amount = format_money_value($item['amount'] ?? 0);
+            $lines[] = ($index + 1) . ". {$description} — {$amount}";
+        }
+    }
+
+    if (!empty($analysis['xero']) && is_array($analysis['xero'])) {
+        $xero = $analysis['xero'];
+        $lines[] = "";
+        $lines[] = "✅ *Xero draft bill created*";
+        if (!empty($xero['contactName'])) {
+            $lines[] = "Supplier: " . $xero['contactName'];
+        }
+        $lines[] = "Invoice: " . ($xero['invoiceNumber'] ?? $xero['invoiceId'] ?? '-');
+        if (isset($xero['total']) && $xero['total'] !== null) {
+            $currency = $xero['currency'] ?? '';
+            $lines[] = "Total: " . trim($currency . ' ' . format_money_value($xero['total']));
+        }
+        $lines[] = "Status: " . ($xero['status'] ?? 'DRAFT');
+        if (!empty($xero['invoiceId'])) {
+            $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
+        }
+    } elseif (WHATSAPP_AUTO_CREATE_XERO_BILLS) {
+        $lines[] = "";
+        $lines[] = "⚠️ Xero draft creation was requested but no bill was returned.";
+    }
+
+    return implode("\n", $lines);
+}
+
+function format_money_value($value): string
+{
+    return number_format((float)$value, 2, '.', ',');
+}
+
+// ─── OCR PROMPT ──────────────────────────────────────────────────────────────
+
+function build_ocr_prompt(): string
+{
+    return <<<'PROMPT'
+You are an OCR and document intelligence assistant.
+
+Step 1 — Extract ALL text from this document or image exactly as it appears.
+
+Step 2 — Determine if this is an INVOICE, RECEIPT, BILL, PURCHASE ORDER, or CREDIT NOTE.
+Indicators: invoice number, date, vendor name, buyer name, line items with quantities and prices, subtotal, tax, total amount.
+
+Step 3a — If it IS an invoice/receipt/bill, return this EXACT structured format:
+
+📋 INVOICE DETECTED
+━━━━━━━━━━━━━━━━━━━━━━
+🏢 VENDOR
+Name: [vendor/company name]
+Address: [address]
+Tel: [phone]
+Email: [email]
+Reg No: [company reg if present]
+━━━━━━━━━━━━━━━━━━━━━━
+📄 INVOICE DETAILS
+Invoice No: [number]
+Date: [date]
+Due Date: [due date]
+PO No: [PO number if present]
+━━━━━━━━━━━━━━━━━━━━━━
+👤 BILL TO
+Name: [customer name]
+Address: [customer address]
+━━━━━━━━━━━━━━━━━━━━━━
+🛒 LINE ITEMS
+[No.] [Description] | Qty: [qty] | Unit: [price] | Total: [amount]
+[repeat for each line item]
+━━━━━━━━━━━━━━━━━━━━━━
+💰 SUMMARY
+Subtotal: [amount]
+Discount: [if present]
+Tax/GST/SST: [amount]
+*TOTAL DUE: [total]*
+Currency: [currency]
+━━━━━━━━━━━━━━━━━━━━━━
+📝 NOTES
+[payment terms, bank details, account number, any other info]
+
+Omit any field not present in the document.
+
+Step 3b — If it is NOT an invoice, return the extracted text exactly as it appears, preserving line breaks. No extra formatting.
+PROMPT;
+}
+
+// ─── DOWNLOAD FILE ────────────────────────────────────────────────────────────
+
+function download_file(string $url): ?array
+{
+    // Try with auth first, then without (Wazzup CDN URLs vary)
+    foreach ([true, false] as $withAuth) {
+        $headers = $withAuth
+            ? ['Authorization: Bearer ' . WAZZUP_API_KEY, 'User-Agent: WazzOCR/3.0']
+            : ['User-Agent: WazzOCR/3.0'];
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_HTTPHEADER     => $headers,
+        ]);
+
+        $bytes    = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $mime     = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $curlErr  = curl_error($ch);
+        curl_close($ch);
+
+        error_log("WAZZOCR DOWNLOAD " . ($withAuth ? 'WITH' : 'WITHOUT') . " AUTH: http=$httpCode mime=$mime bytes=" . ($bytes ? strlen($bytes) : 0) . " err=$curlErr");
+
+        if (!$curlErr && $httpCode === 200 && $bytes) {
+            // Normalise MIME
+            $mime = strtok($mime ?: '', ';') ?: '';
+            $mimeMap = [
+                'image/jpeg'      => 'image/jpeg',
+                'image/jpg'       => 'image/jpeg',
+                'image/png'       => 'image/png',
+                'image/gif'       => 'image/gif',
+                'image/webp'      => 'image/webp',
+                'application/pdf' => 'application/pdf',
+            ];
+            if (isset($mimeMap[$mime])) {
+                $mime = $mimeMap[$mime];
+            } elseif (substr($bytes, 0, 4) === '%PDF') {
+                $mime = 'application/pdf';
+            } else {
+                $mime = 'image/jpeg';
+            }
+            return ['bytes' => $bytes, 'mime' => $mime];
+        }
+    }
+
+    error_log("WAZZOCR DOWNLOAD FAILED: both attempts failed for $url");
+    return null;
+}
+
+// ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
+
+function wazzup_send(string $chatId, string $chatType, string $text): void
+{
+    $chunks = split_message($text, 4000);
+
+    foreach ($chunks as $i => $chunk) {
+        $payload = [
+            'channelId' => WAZZUP_CHANNEL_ID,
+            'chatId'    => $chatId,
+            'chatType'  => $chatType,
+            'text'      => $chunk,
+        ];
+
+        $ch = curl_init('https://api.wazzup24.com/v3/message');
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/json',
+                'Authorization: Bearer ' . WAZZUP_API_KEY,
+            ],
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_TIMEOUT    => 15,
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode < 200 || $httpCode >= 300) {
+            error_log("WAZZOCR SEND ERROR: HTTP $httpCode chunk $i to $chatId — " . substr($response, 0, 200));
+        } else {
+            error_log("WAZZOCR SEND OK: chunk $i to $chatId (" . mb_strlen($chunk) . " chars)");
+        }
+
+        if (count($chunks) > 1) {
+            usleep(400000);
+        }
+    }
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+function split_message(string $text, int $maxLen): array
+{
+    $chunks = [];
+    while (mb_strlen($text) > $maxLen) {
+        $slice   = mb_substr($text, 0, $maxLen);
+        $lastNl  = mb_strrpos($slice, "\n");
+        $splitAt = ($lastNl !== false && $lastNl > $maxLen * 0.5) ? $lastNl : $maxLen;
+        $chunks[] = mb_substr($text, 0, $splitAt);
+        $text     = ltrim(mb_substr($text, $splitAt), "\n");
+    }
+    if ($text !== '') {
+        $chunks[] = $text;
+    }
+    return $chunks ?: [$text];
+}
+
+function str_ends_with_ci(string $haystack, string $needle): bool
+{
+    return strcasecmp(substr($haystack, -strlen($needle)), $needle) === 0;
+}

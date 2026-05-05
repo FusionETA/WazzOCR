@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Bill Scanner to Xero | FusionETA</title>
+  <meta name="description" content="AI bill scanner by FusionETA. Upload a receipt or invoice image, parse structured bill data, and create Xero draft bills.">
+  <meta name="keywords" content="bill scanner, invoice parser, receipt OCR, Xero draft bill, Tesseract, Groq, Gemini, Malaysia, FusionETA">
+  <link rel="canonical" href="https://fusioneta.com.my/web/ocr-tool/">
+
+  <meta property="og:title" content="AI Bill Scanner to Xero | FusionETA">
+  <meta property="og:description" content="Upload a receipt or invoice image, parse structured bill data, and create Xero draft bills.">
+  <meta property="og:url" content="https://fusioneta.com.my/web/ocr-tool/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FusionETA">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AI Bill Scanner to Xero | FusionETA">
+  <meta name="twitter:description" content="AI bill scanner and Xero draft bill creator by FusionETA.">
+
+  <link rel="icon" type="image/svg+xml" href="https://fusioneta.com.my/web/assets/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="https://fusioneta.com.my/web/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="https://fusioneta.com.my/web/assets/favicon-16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="https://fusioneta.com.my/web/assets/apple-touch-icon.png">
+  <link rel="manifest" href="https://fusioneta.com.my/web/assets/site.webmanifest">
+  <meta name="theme-color" content="#1A2E6F">
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "FusionETA AI Bill Scanner to Xero",
+    "url": "https://fusioneta.com.my/web/ocr-tool/",
+    "description": "AI bill scanner for parsing receipt and invoice images into Xero draft bills",
+    "applicationCategory": "UtilityApplication",
+    "operatingSystem": "Any",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "MYR" },
+    "provider": {
+      "@type": "Organization",
+      "name": "FusionETA",
+      "url": "https://fusioneta.com.my"
+    }
+  }
+  </script>
+
+  <style>
+    :root {
+      --fe-primary:   #1A2E6F;
+      --fe-accent:    #FF6B35;
+      --fe-light:     #F4F6FB;
+      --fe-white:     #FFFFFF;
+      --fe-text:      #1C2B3A;
+      --fe-muted:     #6B7A8D;
+      --fe-border:    #E2E8F0;
+      --fe-success:   #22C55E;
+      --fe-gradient:  linear-gradient(135deg, #1A2E6F 0%, #2D4DB3 100%);
+      --fe-shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+      --fe-shadow-md: 0 4px 16px rgba(26,46,111,0.10);
+      --fe-shadow-lg: 0 8px 32px rgba(26,46,111,0.15);
+      --fe-radius:    12px;
+      --fe-radius-sm: 8px;
+      --fe-transition: 0.2s ease;
+      --fe-font-body: 'Inter', sans-serif;
+      --fe-font-heading: 'Plus Jakarta Sans', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--fe-font-body);
+      color: var(--fe-text);
+      background: var(--fe-light);
+      line-height: 1.7;
+      min-height: 100vh;
+    }
+
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2rem); }
+
+    /* ── Navbar ── */
+    .navbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--fe-border);
+      transition: box-shadow var(--fe-transition);
+    }
+    .navbar.scrolled { box-shadow: var(--fe-shadow-md); }
+    .nav-inner {
+      display: flex; align-items: center; gap: 2rem; height: 70px;
+    }
+    .nav-logo {
+      display: flex; align-items: center; gap: 0.625rem;
+      text-decoration: none; flex-shrink: 0;
+    }
+    .logo-mark {
+      width: 36px; height: 36px;
+      background: var(--fe-gradient);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-family: var(--fe-font-heading);
+      font-weight: 800; font-size: 0.875rem; letter-spacing: -0.5px;
+    }
+    .logo-text {
+      font-family: var(--fe-font-heading);
+      font-weight: 700; font-size: 1.125rem; color: var(--fe-primary);
+    }
+    .nav-links {
+      display: flex; align-items: center; gap: 0.25rem;
+      list-style: none; margin-left: auto;
+    }
+    .nav-link {
+      padding: 0.5rem 0.875rem; color: var(--fe-text);
+      font-weight: 500; font-size: 0.9375rem;
+      border-radius: var(--fe-radius-sm);
+      transition: color var(--fe-transition), background var(--fe-transition);
+      text-decoration: none;
+    }
+    .nav-link:hover, .nav-link.active {
+      color: var(--fe-primary); background: rgba(26,46,111,0.06);
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.75rem 2rem; border-radius: var(--fe-radius-sm);
+      font-weight: 600; font-size: 0.9375rem;
+      cursor: pointer; border: none; text-decoration: none;
+      transition: all var(--fe-transition);
+    }
+    .btn-primary {
+      background: var(--fe-accent); color: white;
+    }
+    .btn-primary:hover {
+      background: #e55a28; transform: translateY(-2px);
+      box-shadow: var(--fe-shadow-md);
+    }
+    .btn-sm { padding: 0.5rem 1.25rem; font-size: 0.875rem; }
+    .nav-cta { margin-left: 0.5rem; }
+    .hero-actions {
+      display: flex; justify-content: center; gap: 0.75rem;
+      flex-wrap: wrap; margin-top: 1.75rem;
+    }
+    .nav-toggle {
+      display: none; flex-direction: column; gap: 5px;
+      background: none; border: none; cursor: pointer;
+      padding: 4px; margin-left: auto;
+    }
+    .nav-toggle span {
+      display: block; width: 24px; height: 2px;
+      background: var(--fe-text); border-radius: 2px;
+      transition: all var(--fe-transition);
+    }
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none; flex-direction: column; align-items: flex-start;
+        gap: 0; margin-left: 0;
+        position: absolute; top: 70px; left: 0; right: 0;
+        background: white; border-bottom: 1px solid var(--fe-border);
+        padding: 1rem 1.5rem; box-shadow: var(--fe-shadow-md);
+      }
+      .nav-links.open { display: flex; }
+      .nav-link { width: 100%; padding: 0.75rem 0.5rem; border-bottom: 1px solid var(--fe-border); }
+      .nav-links li:last-child .nav-link { border-bottom: none; }
+      .nav-cta { display: none; }
+      .nav-toggle { display: flex; }
+      .nav-inner { position: relative; }
+    }
+
+    /* ── Hero ── */
+    .hero {
+      background: var(--fe-gradient);
+      color: white;
+      padding: 6rem 0 4rem;
+      text-align: center;
+      margin-top: 70px;
+    }
+    .hero-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.3);
+      padding: 0.35rem 1rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 1.25rem;
+    }
+    .hero h1 {
+      font-family: var(--fe-font-heading);
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 800;
+      margin-bottom: 1rem;
+      line-height: 1.2;
+    }
+    .hero p {
+      font-size: 1.125rem;
+      color: rgba(255,255,255,0.8);
+      max-width: 560px;
+      margin: 0 auto;
+    }
+    .privacy-note {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      margin-top: 1.5rem;
+      background: rgba(255,255,255,0.1);
+      border-radius: 999px;
+      padding: 0.4rem 1rem;
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.85);
+    }
+
+    /* ── Main Tool ── */
+    .tool-section {
+      padding: clamp(2.25rem, 5vw, 4rem) 0 clamp(4rem, 7vw, 6rem);
+    }
+    .tool-container {
+      max-width: 1180px;
+    }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: clamp(1.25rem, 3vw, 2.5rem);
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .tool-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: white;
+      border-radius: calc(var(--fe-radius) + 4px);
+      box-shadow: var(--fe-shadow-md);
+      border: 1px solid var(--fe-border);
+      overflow: hidden;
+      height: 100%;
+    }
+    .card-header {
+      padding: clamp(1rem, 2.2vw, 1.35rem) clamp(1.1rem, 2.5vw, 1.6rem);
+      border-bottom: 1px solid var(--fe-border);
+      display: flex; align-items: center; gap: 0.85rem;
+      min-height: 78px;
+    }
+    .card-icon {
+      width: 38px; height: 38px;
+      background: var(--fe-gradient);
+      border-radius: var(--fe-radius-sm);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; flex-shrink: 0;
+    }
+    .card-title {
+      font-family: var(--fe-font-heading);
+      font-weight: 700; font-size: 1rem; color: var(--fe-primary);
+    }
+    .card-subtitle { font-size: 0.8rem; color: var(--fe-muted); }
+    .card-body { padding: clamp(1.1rem, 2.5vw, 1.65rem); }
+
+    /* ── Drop Zone ── */
+    .drop-zone {
+      border: 2px dashed var(--fe-border);
+      border-radius: var(--fe-radius);
+      padding: clamp(2.25rem, 5vw, 3.5rem) clamp(1rem, 3vw, 1.75rem);
+      text-align: center;
+      cursor: pointer;
+      transition: all var(--fe-transition);
+      background: var(--fe-light);
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--fe-accent);
+      background: rgba(255,107,53,0.04);
+    }
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0;
+      opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .drop-icon {
+      width: 60px; height: 60px;
+      background: var(--fe-gradient);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 1rem;
+      font-size: 1.5rem;
+    }
+    .drop-zone h3 {
+      font-family: var(--fe-font-heading);
+      font-size: 1rem; font-weight: 700;
+      color: var(--fe-primary); margin-bottom: 0.375rem;
+    }
+    .drop-zone p { font-size: 0.875rem; color: var(--fe-muted); }
+    .drop-zone .or { margin: 0.75rem 0; font-size: 0.8rem; color: var(--fe-muted); }
+
+    .btn-outline {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.6rem 1.5rem;
+      border: 2px solid var(--fe-primary);
+      color: var(--fe-primary); border-radius: var(--fe-radius-sm);
+      font-weight: 600; font-size: 0.875rem;
+      cursor: pointer; background: white;
+      transition: all var(--fe-transition);
+    }
+    .btn-outline:hover {
+      background: var(--fe-primary); color: white;
+    }
+
+    /* ── Preview ── */
+    #previewWrap { display: none; margin-top: 1rem; }
+    #previewImg {
+      width: 100%; max-height: 340px;
+      object-fit: contain;
+      border-radius: var(--fe-radius-sm);
+      border: 1px solid var(--fe-border);
+      background: #f8f9fb;
+    }
+    .img-meta {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 0.75rem;
+      font-size: 0.8rem; color: var(--fe-muted);
+    }
+    .btn-change {
+      font-size: 0.8rem; color: var(--fe-accent);
+      background: none; border: none; cursor: pointer; font-weight: 600;
+    }
+    .btn-change:hover { text-decoration: underline; }
+
+    /* ── Progress ── */
+    .progress-wrap {
+      display: none;
+      margin-top: 1rem;
+    }
+    .progress-label {
+      display: flex; justify-content: space-between;
+      font-size: 0.8rem; color: var(--fe-muted); margin-bottom: 0.4rem;
+    }
+    .progress-bar-track {
+      height: 8px; background: var(--fe-border); border-radius: 999px; overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; width: 0%;
+      background: var(--fe-gradient);
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
+    .progress-status {
+      font-size: 0.8rem; color: var(--fe-muted); margin-top: 0.4rem;
+    }
+
+    /* ── Result ── */
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.5rem 1rem;
+      background: var(--fe-light); border: 1px solid var(--fe-border);
+      border-radius: var(--fe-radius-sm); font-size: 0.85rem;
+      font-weight: 500; color: var(--fe-text);
+      cursor: pointer; transition: all var(--fe-transition);
+    }
+    .btn-ghost:hover { background: var(--fe-border); }
+    .btn-ghost.success { background: #f0fdf4; border-color: var(--fe-success); color: #15803d; }
+
+    /* ── Empty state ── */
+    .empty-state {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      min-height: 300px; gap: 0.75rem;
+      color: var(--fe-muted); font-size: 0.9rem; text-align: center;
+    }
+    .empty-state-icon { font-size: 2.5rem; opacity: 0.4; }
+
+    /* ── Tips ── */
+    .tips-section { margin-top: clamp(2.5rem, 5vw, 4rem); }
+    .tips-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem; margin-top: 1.5rem;
+    }
+    .tip-card {
+      background: white;
+      border-radius: var(--fe-radius);
+      padding: 1.5rem;
+      box-shadow: var(--fe-shadow-sm);
+      border: 1px solid var(--fe-border);
+    }
+    .tip-icon { font-size: 1.75rem; margin-bottom: 0.75rem; }
+    .tip-card h4 {
+      font-family: var(--fe-font-heading);
+      font-weight: 700; font-size: 0.9375rem;
+      color: var(--fe-primary); margin-bottom: 0.4rem;
+    }
+    .tip-card p { font-size: 0.85rem; color: var(--fe-muted); }
+
+    .section-label {
+      font-size: 0.8rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--fe-accent); margin-bottom: 0.5rem;
+    }
+    .section-title {
+      font-family: var(--fe-font-heading);
+      font-weight: 700; font-size: 1.75rem;
+      color: var(--fe-primary);
+    }
+
+    /* ── Mode Tabs ── */
+    .mode-tabs {
+      display: flex; gap: 0.5rem;
+      background: white;
+      border-radius: calc(var(--fe-radius) + 2px);
+      padding: 0.375rem;
+      border: 1px solid var(--fe-border);
+      box-shadow: var(--fe-shadow-sm);
+      max-width: 720px;
+      margin: 0 auto clamp(1.5rem, 3vw, 2.25rem);
+    }
+    .mode-tab {
+      flex: 1; padding: 0.65rem 1rem;
+      border: none; border-radius: 9px;
+      font-family: var(--fe-font-heading);
+      font-weight: 600; font-size: 0.875rem;
+      cursor: pointer; transition: all var(--fe-transition);
+      background: transparent; color: var(--fe-muted);
+      display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+    }
+    .mode-tab.active {
+      background: var(--fe-gradient); color: white;
+      box-shadow: var(--fe-shadow-sm);
+    }
+    .mode-tab:not(.active):hover { color: var(--fe-primary); background: var(--fe-light); }
+
+    /* ── API Key bar ── */
+    .api-bar {
+      background: white; border: 1px solid var(--fe-border);
+      border-radius: var(--fe-radius); padding: 1rem 1.25rem;
+      display: flex; align-items: center; gap: 0.75rem;
+      margin-bottom: 1.5rem; flex-wrap: wrap;
+      box-shadow: var(--fe-shadow-sm);
+    }
+    .api-bar-label {
+      font-size: 0.8rem; font-weight: 600; color: var(--fe-primary);
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .api-bar-input {
+      flex: 1 1 180px; min-width: 160px;
+      border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
+      padding: 0.5rem 0.875rem; font-size: 0.82rem; font-family: monospace;
+      color: var(--fe-text); outline: none;
+      transition: border-color var(--fe-transition);
+      background: white;
+    }
+    .api-bar-select {
+      flex: 0 1 220px; min-width: 180px;
+      border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
+      padding: 0.5rem 0.875rem; font-size: 0.82rem;
+      color: var(--fe-text); outline: none; background: white;
+      transition: border-color var(--fe-transition);
+    }
+    .api-bar-input:focus, .api-bar-select:focus { border-color: var(--fe-primary); }
+    .api-bar-status {
+      font-size: 0.75rem; font-weight: 600;
+      padding: 0.28rem 0.7rem; border-radius: 999px;
+    }
+    .api-bar-status.set { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .api-bar-status.unset { color: var(--fe-muted); background: var(--fe-light); border: 1px solid var(--fe-border); }
+    .api-bar-status.warn { color: #b45309; background: #fffbeb; border: 1px solid #fde68a; }
+    .api-bar-note {
+      width: 100%;
+      font-size: 0.72rem;
+      color: var(--fe-muted);
+    }
+    .notice {
+      display: none;
+      margin-bottom: 1rem;
+      border-radius: var(--fe-radius-sm);
+      padding: 0.875rem 1rem;
+      font-size: 0.84rem;
+      line-height: 1.6;
+      border: 1px solid transparent;
+      background: white;
+      white-space: pre-wrap;
+    }
+    .notice.success { display: block; background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+    .notice.error { display: block; background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+    .notice.info { display: block; background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+
+    /* ── Bill mode panel ── */
+    #billMode { display: block; }
+
+    /* ── Progress steps ── */
+    .step-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
+    .step-item {
+      display: flex; align-items: center; gap: 0.75rem;
+      font-size: 0.8rem; color: var(--fe-muted);
+    }
+    .step-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      background: var(--fe-border); transition: background 0.3s;
+    }
+    .step-item.active .step-dot { background: var(--fe-accent); box-shadow: 0 0 6px rgba(255,107,53,0.5); }
+    .step-item.done .step-dot { background: var(--fe-success); }
+    .step-item.active .step-text { color: var(--fe-primary); font-weight: 600; }
+    .step-item.done .step-text { color: var(--fe-muted); }
+
+    /* ── Bill card output ── */
+    .bill-output { display: none; }
+    .bill-card-wrap {
+      background: white; border: 1px solid var(--fe-border);
+      border-radius: var(--fe-radius); overflow: hidden;
+      box-shadow: var(--fe-shadow-md);
+    }
+    .bill-header {
+      background: var(--fe-gradient);
+      padding: 1.5rem;
+      position: relative; overflow: hidden;
+    }
+    .bill-header::after {
+      content: 'BILL';
+      position: absolute; right: 1.25rem; top: 50%; transform: translateY(-50%);
+      font-family: var(--fe-font-heading); font-size: 3.5rem; font-weight: 800;
+      color: rgba(255,255,255,0.06); letter-spacing: 0.1em; pointer-events: none;
+    }
+    .bill-supplier {
+      font-family: var(--fe-font-heading); font-size: 1.2rem; font-weight: 800;
+      color: white; margin-bottom: 0.2rem;
+    }
+    .bill-invno { font-size: 0.78rem; color: rgba(255,255,255,0.55); }
+    .bill-meta-row {
+      display: flex; gap: 1.5rem; margin-top: 1.1rem; flex-wrap: wrap;
+    }
+    .bill-meta-item { display: flex; flex-direction: column; gap: 0.15rem; }
+    .bill-meta-label {
+      font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.4); font-weight: 600;
+    }
+    .bill-meta-val {
+      font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.9);
+      font-family: monospace;
+    }
+    .bill-meta-val.total-highlight { color: #6EF5C0; font-size: 0.95rem; }
+
+    .bill-body-inner { padding: 1.25rem; }
+    .bill-section-label {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--fe-muted); margin-bottom: 0.75rem;
+    }
+    .line-table { width: 100%; border-collapse: collapse; }
+    .line-table th {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--fe-muted);
+      padding: 0.4rem 0.625rem; text-align: left;
+      border-bottom: 2px solid var(--fe-border);
+    }
+    .line-table th:last-child, .line-table td:last-child { text-align: right; }
+    .line-table td {
+      padding: 0.65rem 0.625rem; font-size: 0.875rem;
+      border-bottom: 1px solid var(--fe-light);
+      vertical-align: top;
+    }
+    .line-table tr:last-child td { border-bottom: none; }
+    .line-qty, .line-price, .line-amount { font-family: monospace; font-size: 0.82rem; color: var(--fe-muted); }
+    .line-amount { color: var(--fe-text); font-weight: 500; }
+
+    .bill-totals {
+      border-top: 2px solid var(--fe-light); padding: 1rem 1.25rem;
+      display: flex; flex-direction: column; gap: 0.45rem;
+    }
+    .total-row { display: flex; justify-content: space-between; align-items: center; }
+    .total-label { font-size: 0.85rem; color: var(--fe-muted); }
+    .total-val { font-family: monospace; font-size: 0.85rem; font-weight: 500; }
+    .total-row.grand { border-top: 1px solid var(--fe-border); padding-top: 0.75rem; margin-top: 0.25rem; }
+    .total-row.grand .total-label { font-family: var(--fe-font-heading); font-weight: 700; font-size: 1rem; color: var(--fe-text); }
+    .total-row.grand .total-val { font-family: var(--fe-font-heading); font-weight: 800; font-size: 1.15rem; color: var(--fe-primary); }
+
+    .bill-notes {
+      padding: 0.875rem 1.25rem; border-top: 1px solid var(--fe-border);
+      font-size: 0.82rem; color: var(--fe-muted); line-height: 1.6;
+    }
+    .bill-confirmation {
+      display: none;
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--fe-border);
+      background: #f0fdf4;
+      color: #166534;
+    }
+    .bill-confirmation.show { display: block; }
+    .bill-actions-bar {
+      padding: 1rem 1.25rem; border-top: 1px solid var(--fe-border);
+      display: flex; gap: 0.625rem; flex-wrap: wrap;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      background: #0F1C4D;
+      color: rgba(255,255,255,0.75);
+      padding: 2.5rem 0 1.5rem;
+    }
+    .footer-bottom {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.875rem; color: rgba(255,255,255,0.5);
+      flex-wrap: wrap; gap: 0.5rem;
+    }
+    .footer-bottom a { color: rgba(255,255,255,0.6); text-decoration: none; }
+    .footer-bottom a:hover { color: white; }
+    .footer-links-inline { display: flex; gap: 1.5rem; }
+
+    @media (max-width: 640px) {
+      .hero { padding: 4.25rem 0 3rem; }
+      .tool-section { padding-top: 2rem; }
+      .mode-tabs { flex-direction: column; }
+      .card-header { min-height: auto; }
+      .btn-ghost { flex: 1 1 100%; justify-content: center; }
+      .footer-bottom { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar" id="navbar">
+  <div class="container">
+    <div class="nav-inner">
+      <a href="https://fusioneta.com.my" class="nav-logo">
+        <div class="logo-mark">FE</div>
+        <span class="logo-text">FusionETA</span>
+      </a>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="https://fusioneta.com.my" class="nav-link">Home</a></li>
+        <li><a href="https://fusioneta.com.my/web/services/" class="nav-link">Services</a></li>
+        <li><a href="https://fusioneta.com.my/web/about/" class="nav-link">About</a></li>
+        <li><a href="https://fusioneta.com.my/web/contact/" class="nav-link">Contact</a></li>
+      </ul>
+      <a href="/xero-setup" class="btn btn-primary btn-sm nav-cta">Xero Setup</a>
+      <a href="https://fusioneta.com.my/web/contact/" class="btn btn-primary btn-sm nav-cta">Get a Free Consultation</a>
+      <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">🧾 AI Bill Scanner + Xero</div>
+    <h1>Parse Bills from Images into Xero Drafts</h1>
+    <p>Upload a receipt or invoice image, extract the details with AI, review the structured bill, then create a Xero draft bill.</p>
+    <div class="hero-actions">
+      <a href="/xero-setup" class="btn btn-primary">Open Xero Setup</a>
+    </div>
+    <div class="privacy-note">
+      🔒 Keys and Xero tokens stay server-side
+    </div>
+  </div>
+</section>
+
+<!-- Main Tool -->
+<section class="tool-section">
+  <div class="container tool-container">
+    <!-- Bill Mode -->
+    <div id="billMode">
+
+      <!-- AI config bar -->
+      <div class="api-bar">
+        <span class="api-bar-label">AI Provider</span>
+        <select class="api-bar-select" id="providerSelect" onchange="handleProviderChange()"></select>
+        <select class="api-bar-select" id="modelSelect" onchange="saveSelectedModel()"></select>
+        <span class="api-bar-status unset" id="apiStatus">Not set</span>
+        <div class="api-bar-note" id="apiHelpText">Keys are loaded server-side from <code>.env</code>.</div>
+      </div>
+
+      <div class="api-bar" id="xero-setup">
+        <span class="api-bar-label">Xero</span>
+        <span class="api-bar-status unset" id="xeroStatus">Not connected</span>
+        <select class="api-bar-select" id="xeroTenantSelect" onchange="handleTenantChange()" disabled>
+          <option value="">Select tenant</option>
+        </select>
+        <input type="text" class="api-bar-input" id="xeroAccountCode" placeholder="Expense account code">
+        <input type="text" class="api-bar-input" id="xeroTaxType" placeholder="Tax type e.g. NONE">
+        <a href="/api/xero/connect" class="btn btn-primary btn-sm" id="xeroConnectBtn">Connect Xero</a>
+        <button type="button" class="btn-ghost" id="xeroRefreshBtn" onclick="loadXeroStatus()">Refresh status</button>
+        <div class="api-bar-note" id="xeroHelpText">Connect once, then create draft bills in Xero from extracted data.</div>
+      </div>
+      <div id="xeroNotice" class="notice info"></div>
+
+      <div class="tool-grid">
+
+        <!-- Left: Upload -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon">🧾</div>
+            <div>
+              <div class="card-title">Upload Bill / Receipt</div>
+              <div class="card-subtitle">Photo, screenshot or scan</div>
+            </div>
+          </div>
+          <div class="card-body">
+
+            <div class="drop-zone" id="billDropZone">
+              <input type="file" id="billFileInput" accept="image/*">
+              <div class="drop-icon">📄</div>
+              <h3>Drop your bill here</h3>
+              <p>or click to browse files</p>
+              <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--fe-muted);">JPG · PNG · WEBP · BMP</div>
+            </div>
+
+            <div id="billPreviewWrap" style="display:none;">
+              <img id="billPreviewImg" src="" alt="Bill preview" style="width:100%;max-height:280px;object-fit:contain;border-radius:var(--fe-radius-sm);border:1px solid var(--fe-border);background:var(--fe-light);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.625rem;">
+                <span style="font-size:0.78rem;color:var(--fe-muted);" id="billImgName">—</span>
+                <button class="btn-ghost" onclick="resetBill()">✕ Change</button>
+              </div>
+            </div>
+
+            <button class="btn btn-primary" id="scanBillBtn" disabled onclick="scanBill()"
+              style="width:100%;justify-content:center;margin-top:1rem;">
+              ⚡ Scan &amp; Parse Bill
+            </button>
+
+            <div id="billProgressWrap" style="display:none;margin-top:1.25rem;">
+              <div class="step-list">
+                <div class="step-item" id="bstep1"><div class="step-dot"></div><span class="step-text">Reading image with Tesseract OCR…</span></div>
+                <div class="step-item" id="bstep2"><div class="step-dot"></div><span class="step-text">Sending text to selected AI model…</span></div>
+                <div class="step-item" id="bstep3"><div class="step-dot"></div><span class="step-text">Structuring bill data…</span></div>
+              </div>
+              <div class="progress-bar-track" style="margin-top:1rem;">
+                <div class="progress-bar-fill" id="billProgressFill"></div>
+              </div>
+            </div>
+
+            <div id="billError" style="display:none;margin-top:1rem;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:0.875rem;font-size:0.82rem;color:#DC2626;"></div>
+
+            <button id="billRawToggle" onclick="toggleBillRaw()" style="display:none;font-size:0.75rem;color:var(--fe-muted);background:none;border:none;cursor:pointer;margin-top:0.75rem;padding:0;">▸ Show raw OCR text</button>
+            <div id="billRawOcr" style="display:none;margin-top:0.5rem;background:var(--fe-light);border:1px solid var(--fe-border);border-radius:var(--fe-radius-sm);padding:0.875rem;font-size:0.72rem;font-family:monospace;color:var(--fe-muted);max-height:130px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;"></div>
+
+          </div>
+        </div>
+
+        <!-- Right: Bill result -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon">📑</div>
+            <div>
+              <div class="card-title">Structured Bill</div>
+              <div class="card-subtitle">AI-parsed from your image</div>
+            </div>
+          </div>
+          <div class="card-body" style="padding:0;">
+            <div id="billEmptyState" class="empty-state" style="min-height:300px;">
+              <div class="empty-state-icon">🧾</div>
+              <p>Your structured bill will appear here<br>after uploading and clicking <strong>Scan &amp; Parse Bill</strong></p>
+            </div>
+            <div id="billOutput"></div>
+          </div>
+        </div>
+
+      </div><!-- end bill tool-grid -->
+    </div><!-- end #billMode -->
+
+    <!-- Tips -->
+    <div class="tips-section">
+      <div class="section-label">Best Practices</div>
+      <div class="section-title">Tips for Better Results</div>
+      <div class="tips-grid">
+        <div class="tip-card">
+          <div class="tip-icon">☀️</div>
+          <h4>Good Lighting</h4>
+          <p>Images with even, bright lighting produce the most accurate text extraction.</p>
+        </div>
+        <div class="tip-card">
+          <div class="tip-icon">📐</div>
+          <h4>Keep It Straight</h4>
+          <p>Skewed or rotated text reduces accuracy. Try to keep text aligned horizontally.</p>
+        </div>
+        <div class="tip-card">
+          <div class="tip-icon">🔎</div>
+          <h4>Higher Resolution</h4>
+          <p>Larger, clearer images give better results. Avoid blurry or compressed photos.</p>
+        </div>
+        <div class="tip-card">
+          <div class="tip-icon">🖨️</div>
+          <h4>Printed Text Works Best</h4>
+          <p>Typed/printed text extracts almost perfectly. Handwriting accuracy varies.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-bottom">
+      <p>© <span id="footerYear"></span> FusionETA. All rights reserved.</p>
+      <div class="footer-links-inline">
+        <a href="https://fusioneta.com.my">Home</a>
+        <a href="https://fusioneta.com.my/web/services/">Services</a>
+        <a href="https://fusioneta.com.my/web/contact/">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- Tesseract.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+<script>
+  // ── Init ──
+  document.getElementById('footerYear').textContent = new Date().getFullYear();
+
+  // Navbar scroll
+  const navbar = document.getElementById('navbar');
+  window.addEventListener('scroll', () => {
+    navbar.classList.toggle('scrolled', window.scrollY > 20);
+  });
+  document.getElementById('navToggle').addEventListener('click', () => {
+    document.getElementById('navLinks').classList.toggle('open');
+  });
+
+  // Paste image support for bill images.
+  document.addEventListener('paste', e => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          handleBillFile(file);
+          break;
+        }
+      }
+    }
+  });
+
+  // ── AI Provider / Model / API Key ──
+  let PROVIDER_CONFIG = {
+    groq: {
+      label: 'Groq',
+      modelStorage: 'fe_groq_model',
+      defaultModel: 'llama-3.3-70b-versatile',
+      helpText: 'Groq uses the OpenAI-compatible chat completions API.',
+      hasKey: false,
+      models: [
+        'llama-3.3-70b-versatile',
+        'openai/gpt-oss-120b',
+        'openai/gpt-oss-20b',
+        'llama-3.1-8b-instant'
+      ]
+    },
+    gemini: {
+      label: 'Gemini',
+      modelStorage: 'fe_gemini_model',
+      defaultModel: 'gemini-2.5-flash',
+      helpText: 'Gemini uses Google\'s generateContent API.',
+      hasKey: false,
+      models: [
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-2.5-pro',
+        'gemini-2.0-flash'
+      ]
+    }
+  };
+
+  // ── Global helpers ──
+  const esc = s => s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
+
+  let selectedProvider = localStorage.getItem('fe_ai_provider') || 'groq';
+  const providerSelect = document.getElementById('providerSelect');
+  const modelSelect = document.getElementById('modelSelect');
+  let xeroState = { connected: false };
+  let xeroTaxRates = [];
+
+  async function initAiConfig() {
+    try {
+      const resp = await fetch('/api/ai/config');
+      const data = await resp.json();
+      if (resp.ok && data.providers) {
+        PROVIDER_CONFIG = Object.fromEntries(
+          Object.entries(data.providers).map(([value, cfg]) => [
+            value,
+            {
+              ...cfg,
+              modelStorage: `fe_${value}_model`
+            }
+          ])
+        );
+        if (!PROVIDER_CONFIG[selectedProvider]) {
+          selectedProvider = data.defaultProvider || 'groq';
+          localStorage.setItem('fe_ai_provider', selectedProvider);
+        }
+      }
+    } catch {
+      // Keep the local fallback config and show missing-key status.
+    }
+
+    providerSelect.innerHTML = Object.entries(PROVIDER_CONFIG).map(([value, cfg]) => (
+      `<option value="${value}">${cfg.label}</option>`
+    )).join('');
+    providerSelect.value = selectedProvider;
+    refreshProviderUi();
+  }
+
+  function getSelectedModel() {
+    const cfg = PROVIDER_CONFIG[selectedProvider];
+    return localStorage.getItem(cfg.modelStorage) || cfg.defaultModel;
+  }
+
+  function getSelectedApiKey() {
+    return Boolean(PROVIDER_CONFIG[selectedProvider]?.hasKey);
+  }
+
+  function refreshProviderUi() {
+    const cfg = PROVIDER_CONFIG[selectedProvider];
+    modelSelect.innerHTML = cfg.models.map(model => (
+      `<option value="${model}">${model}</option>`
+    )).join('');
+
+    const storedModel = getSelectedModel();
+    modelSelect.value = cfg.models.includes(storedModel) ? storedModel : cfg.defaultModel;
+    if (modelSelect.value !== storedModel) {
+      localStorage.setItem(cfg.modelStorage, modelSelect.value);
+    }
+
+    document.getElementById('apiHelpText').innerHTML = `${cfg.helpText} Keys are loaded server-side from <code>.env</code>, so they are not exposed in the browser.`;
+    setApiStatus(Boolean(getSelectedApiKey()));
+  }
+
+  function handleProviderChange() {
+    selectedProvider = providerSelect.value;
+    localStorage.setItem('fe_ai_provider', selectedProvider);
+    refreshProviderUi();
+  }
+
+  function saveSelectedModel() {
+    const cfg = PROVIDER_CONFIG[selectedProvider];
+    localStorage.setItem(cfg.modelStorage, modelSelect.value);
+  }
+
+  function setApiStatus(ok) {
+    const el = document.getElementById('apiStatus');
+    el.textContent = ok ? '✅ Key loaded' : 'Not set';
+    el.className = 'api-bar-status ' + (ok ? 'set' : 'unset');
+  }
+
+  initAiConfig();
+
+  function showXeroNotice(message, type = 'info') {
+    const el = document.getElementById('xeroNotice');
+    if (!message) {
+      el.style.display = 'none';
+      el.className = 'notice info';
+      el.innerHTML = '';
+      return;
+    }
+    el.className = `notice ${type}`;
+    el.innerHTML = message;
+    el.style.display = 'block';
+  }
+
+  function updateXeroUi(status) {
+    xeroState = status || { connected: false };
+    const statusEl = document.getElementById('xeroStatus');
+    const helpEl = document.getElementById('xeroHelpText');
+    const tenantEl = document.getElementById('xeroTenantSelect');
+    const accountEl = document.getElementById('xeroAccountCode');
+    const taxEl = document.getElementById('xeroTaxType');
+    const connectBtn = document.getElementById('xeroConnectBtn');
+
+    const tenants = Array.isArray(status.tenants) ? status.tenants : [];
+    tenantEl.innerHTML = tenants.length
+      ? tenants.map(tenant => `<option value="${tenant.tenantId}" ${tenant.isSelected ? 'selected' : ''}>${tenant.tenantName || tenant.tenantId}</option>`).join('')
+      : '<option value="">Select tenant</option>';
+    tenantEl.disabled = !status.connected || tenants.length === 0;
+
+    if (status.connected) {
+      statusEl.textContent = `Connected: ${status.organisationName || status.tenantName || 'Xero org'}`;
+      statusEl.className = 'api-bar-status set';
+      helpEl.innerHTML = `Draft bills will be created in <strong>${status.organisationName || status.tenantName || 'your Xero org'}</strong>. You can switch the tenant here, and the selection will be stored locally for future bill creation.${status.redirectUri ? `<br>OAuth callback: <code>${status.redirectUri}</code>` : ''}`;
+      connectBtn.textContent = 'Reconnect Xero';
+      if (!accountEl.value) accountEl.value = status.defaultAccountCode || '';
+      if (!taxEl.value) taxEl.value = status.defaultTaxType || '';
+    } else {
+      statusEl.textContent = 'Not connected';
+      statusEl.className = 'api-bar-status unset';
+      helpEl.innerHTML = `Connect Xero once to store tokens locally and auto-refresh them for future draft bill creation.${status.redirectUri ? `<br>OAuth callback: <code>${status.redirectUri}</code>` : ''}`;
+      connectBtn.textContent = 'Connect Xero';
+    }
+  }
+
+  async function handleTenantChange() {
+    const tenantEl = document.getElementById('xeroTenantSelect');
+    const tenantId = tenantEl.value;
+    if (!tenantId) return;
+
+    tenantEl.disabled = true;
+    try {
+      const resp = await fetch('/api/xero/select-tenant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to change tenant.');
+      await loadXeroStatus();
+      showXeroNotice(`Xero tenant switched to <strong>${data.tenant.tenantName || data.tenant.tenantId}</strong>.`, 'success');
+    } catch (error) {
+      showXeroNotice(`Could not switch tenant: ${error.message}`, 'error');
+      await loadXeroStatus();
+    } finally {
+      tenantEl.disabled = false;
+    }
+  }
+
+  async function loadXeroStatus(showInfoMessage = false) {
+    try {
+      const resp = await fetch('/api/xero/status');
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to load Xero status.');
+      updateXeroUi(data);
+      if (data.connected) loadXeroTaxRates();
+      if (showInfoMessage) {
+        showXeroNotice(data.connected
+          ? `Xero is connected to <strong>${data.organisationName || data.tenantName || 'your organisation'}</strong>.`
+          : 'Xero is not connected yet.', 'info');
+      }
+    } catch (error) {
+      updateXeroUi({ connected: false });
+      showXeroNotice(`Could not load Xero status: ${error.message}<br>Use <strong>Reconnect Xero</strong> to authorise again.`, 'error');
+    }
+  }
+
+  async function loadXeroTaxRates() {
+    try {
+      const resp = await fetch('/api/xero/tax-rates');
+      const data = await resp.json();
+      if (!resp.ok) return;
+      xeroTaxRates = data.taxRates || [];
+    } catch {
+      xeroTaxRates = [];
+    }
+  }
+
+  function matchTaxRate(bill) {
+    if (!xeroTaxRates.length) return null;
+
+    const tax = Number(bill.tax) || 0;
+    const subtotal = Number(bill.subtotal) > 0 ? Number(bill.subtotal) : (Number(bill.total) - tax);
+
+    // No tax on this bill — find a zero-rate type
+    if (tax === 0) {
+      const zeroRate = xeroTaxRates.find(r => r.displayTaxRate === 0) || null;
+      return zeroRate ? { rate: zeroRate, diff: 0, extractedRate: 0 } : null;
+    }
+
+    if (subtotal <= 0) return null;
+
+    const extractedRate = (tax / subtotal) * 100;
+
+    let bestMatch = null;
+    let bestDiff = Infinity;
+    for (const rate of xeroTaxRates) {
+      const diff = Math.abs(rate.displayTaxRate - extractedRate);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestMatch = rate;
+      }
+    }
+
+    // Only accept match if within 1.5% tolerance
+    return bestDiff <= 1.5 ? { rate: bestMatch, diff: bestDiff, extractedRate } : null;
+  }
+
+  loadXeroStatus(window.location.search.includes('xero=connected'));
+
+  // ── Bill file handling ──
+  const billFileInput = document.getElementById('billFileInput');
+  const billDropZone  = document.getElementById('billDropZone');
+  let billCurrentFile = null;
+
+  billFileInput.addEventListener('change', e => handleBillFile(e.target.files[0]));
+  billDropZone.addEventListener('dragover', e => { e.preventDefault(); billDropZone.classList.add('dragover'); });
+  billDropZone.addEventListener('dragleave', () => billDropZone.classList.remove('dragover'));
+  billDropZone.addEventListener('drop', e => {
+    e.preventDefault(); billDropZone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('image/')) handleBillFile(f);
+  });
+
+  function handleBillFile(file) {
+    if (!file) return;
+    billCurrentFile = file;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('billPreviewImg').src = e.target.result;
+      billDropZone.style.display = 'none';
+      document.getElementById('billPreviewWrap').style.display = 'block';
+      document.getElementById('scanBillBtn').disabled = false;
+      document.getElementById('billImgName').textContent = file.name;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function resetBill() {
+    billCurrentFile = null;
+    billFileInput.value = '';
+    billDropZone.style.display = 'block';
+    document.getElementById('billPreviewWrap').style.display = 'none';
+    document.getElementById('scanBillBtn').disabled = true;
+    document.getElementById('scanBillBtn').innerHTML = '⚡ Scan &amp; Parse Bill';
+    document.getElementById('billProgressWrap').style.display = 'none';
+    document.getElementById('billError').style.display = 'none';
+    document.getElementById('billRawToggle').style.display = 'none';
+    document.getElementById('billRawOcr').style.display = 'none';
+    document.getElementById('billOutput').innerHTML = '';
+    document.getElementById('billOutput').style.display = 'none';
+    document.getElementById('billEmptyState').style.display = 'flex';
+    showXeroNotice('');
+    setBillStep(-1);
+  }
+
+  function setBillStep(n) {
+    ['bstep1','bstep2','bstep3'].forEach((id, i) => {
+      const el = document.getElementById(id);
+      el.className = 'step-item';
+      if (i < n) el.classList.add('done');
+      else if (i === n) el.classList.add('active');
+    });
+    if (n >= 0) document.getElementById('billProgressFill').style.width = `${Math.round(((n+1)/3)*100)}%`;
+  }
+
+  async function scanBill() {
+    if (!billCurrentFile) return;
+    const hasApiKey = getSelectedApiKey();
+    if (!hasApiKey) {
+      showBillError(`Please add your ${PROVIDER_CONFIG[selectedProvider].label} API key in .env first, then restart the Node server.`);
+      return;
+    }
+
+    const scanBtn = document.getElementById('scanBillBtn');
+    scanBtn.disabled = true;
+    scanBtn.innerHTML = '⏳ Scanning…';
+    document.getElementById('billProgressWrap').style.display = 'block';
+    document.getElementById('billError').style.display = 'none';
+    document.getElementById('billEmptyState').style.display = 'none';
+    document.getElementById('billOutput').innerHTML = '';
+    document.getElementById('billOutput').style.display = 'none';
+    document.getElementById('billRawToggle').style.display = 'none';
+
+    try {
+      setBillStep(0);
+      const { data: { text: rawText } } = await Tesseract.recognize(billCurrentFile, 'eng', {
+        logger: m => {
+          if (m.status === 'recognizing text')
+            document.getElementById('billProgressFill').style.width = Math.round(m.progress * 33) + '%';
+        }
+      });
+
+      const trimmedRaw = rawText.trim();
+      document.getElementById('billRawOcr').textContent = trimmedRaw;
+      document.getElementById('billRawToggle').style.display = 'block';
+
+      setBillStep(1);
+      document.getElementById('billProgressFill').style.width = '55%';
+      const bill = await callBillModel(trimmedRaw);
+
+      setBillStep(2);
+      document.getElementById('billProgressFill').style.width = '90%';
+      await new Promise(r => setTimeout(r, 300));
+      document.getElementById('billProgressFill').style.width = '100%';
+      renderBill(bill);
+      if (xeroState.connected) {
+        showXeroNotice('Extracted bill ready. Creating the draft bill in Xero now…', 'info');
+        await createDraftBillInXero(null, { auto: true });
+      }
+
+    } catch (err) {
+      console.error(err);
+      showBillError('Error: ' + (err.message || 'Something went wrong. Please try again.'));
+    }
+
+    scanBtn.disabled = false;
+    scanBtn.innerHTML = '⚡ Scan Another';
+  }
+
+  function buildBillPrompt(ocrText) {
+    return `You are an expert at reading bills, receipts and invoices from OCR-extracted text.
+
+Given the raw OCR text below, extract and return ONLY a valid JSON object:
+{
+  "supplier": "Company name or null",
+  "invoiceNo": "Invoice number or null",
+  "date": "Date string or null",
+  "dueDate": "Due date string or null",
+  "currency": "MYR/USD/SGD etc, default MYR",
+  "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00 }],
+  "subtotal": 0.00,
+  "tax": 0.00,
+  "taxLabel": "SST/GST/VAT/Tax",
+  "discount": 0.00,
+  "total": 0.00,
+  "notes": "string or null"
+}
+Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.
+
+OCR Text:
+${ocrText}`;
+  }
+
+  function extractJsonText(raw) {
+    const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start === -1 || end === -1 || end < start) {
+      throw new Error('The model did not return valid JSON.');
+    }
+    return cleaned.slice(start, end + 1);
+  }
+
+  async function callBillModel(ocrText) {
+    const resp = await fetch('/api/ai/analyze-bill', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text: ocrText,
+        provider: selectedProvider,
+        model: getSelectedModel()
+      })
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      throw new Error(data.error || `AI analysis failed (${resp.status})`);
+    }
+
+    return data.bill;
+  }
+
+  function renderBill(bill) {
+    const sym = { USD: '$', SGD: 'S$', EUR: '€', GBP: '£', MYR: 'RM' }[bill.currency] || (bill.currency || 'GBP');
+    const fmt = n => `${sym} ${Number(n || 0).toFixed(2)}`;
+
+    const lineRows = (bill.lineItems || []).map(it => `
+      <tr>
+        <td>${esc(it.description)}</td>
+        <td class="line-qty">${it.qty ?? 1}</td>
+        <td class="line-price">${fmt(it.unitPrice)}</td>
+        <td class="line-amount">${fmt(it.amount)}</td>
+      </tr>`).join('') || `<tr><td colspan="4" style="color:var(--fe-muted);font-size:0.8rem;padding:0.75rem;">No line items detected</td></tr>`;
+
+    document.getElementById('billOutput').innerHTML = `
+      <div class="bill-card-wrap">
+        <div class="bill-header">
+          <div class="bill-supplier">${esc(bill.supplier || 'Unknown Supplier')}</div>
+          <div class="bill-invno">${bill.invoiceNo ? 'Invoice #' + esc(bill.invoiceNo) : 'No invoice number'}</div>
+          <div class="bill-meta-row">
+            ${bill.date ? `<div class="bill-meta-item"><div class="bill-meta-label">Date</div><div class="bill-meta-val">${esc(bill.date)}</div></div>` : ''}
+            ${bill.dueDate ? `<div class="bill-meta-item"><div class="bill-meta-label">Due</div><div class="bill-meta-val">${esc(bill.dueDate)}</div></div>` : ''}
+            <div class="bill-meta-item"><div class="bill-meta-label">Currency</div><div class="bill-meta-val">${esc(bill.currency || 'MYR')}</div></div>
+            <div class="bill-meta-item"><div class="bill-meta-label">Total</div><div class="bill-meta-val total-highlight">${fmt(bill.total)}</div></div>
+          </div>
+        </div>
+        <div class="bill-body-inner">
+          <div class="bill-section-label">Line Items</div>
+          <table class="line-table">
+            <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
+            <tbody>${lineRows}</tbody>
+          </table>
+        </div>
+        <div class="bill-totals">
+          ${bill.subtotal > 0 ? `<div class="total-row"><span class="total-label">Subtotal</span><span class="total-val">${fmt(bill.subtotal)}</span></div>` : ''}
+          ${bill.tax > 0 ? `<div class="total-row"><span class="total-label">${esc(bill.taxLabel || 'Tax')}</span><span class="total-val">${fmt(bill.tax)}</span></div>` : ''}
+          ${bill.discount > 0 ? `<div class="total-row"><span class="total-label">Discount</span><span class="total-val">- ${fmt(bill.discount)}</span></div>` : ''}
+          <div class="total-row grand"><span class="total-label">Total</span><span class="total-val">${fmt(bill.total)}</span></div>
+        </div>
+        ${bill.notes ? `<div class="bill-notes"><strong style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--fe-muted);">Notes</strong><br>${esc(bill.notes)}</div>` : ''}
+        <div class="bill-confirmation" id="xeroInlineConfirmation"></div>
+        <div class="bill-actions-bar">
+          <button class="btn btn-primary btn-sm" onclick="createDraftBillInXero(this)">🔁 Retry Xero Create</button>
+          <button class="btn btn-primary btn-sm" onclick="copyBillJSON(this)">📋 Copy JSON</button>
+          <button class="btn btn-sm" style="background:var(--fe-light);color:var(--fe-primary);border:1px solid var(--fe-border);" onclick="resetBill()">🔄 Scan Another</button>
+        </div>
+      </div>`;
+
+    document.getElementById('billOutput').style.display = 'block';
+    window._lastBill = bill;
+
+    // Auto-match tax rate from Xero
+    const taxEl = document.getElementById('xeroTaxType');
+    const match = matchTaxRate(bill);
+    if (match) {
+      taxEl.value = match.rate.taxType;
+      const pct = match.extractedRate.toFixed(1);
+      const matched = match.rate.displayTaxRate.toFixed(1);
+      const confidence = match.diff < 0.1 ? '✅ exact match' : `≈ matched (extracted ${pct}%, Xero ${matched}%)`;
+      showXeroNotice(
+        `Tax auto-matched: <strong>${match.rate.name}</strong> (${match.rate.taxType}) — ${confidence}`,
+        'info'
+      );
+    } else if (xeroTaxRates.length && (Number(bill.tax) || 0) > 0) {
+      showXeroNotice(
+        `⚠️ Could not match extracted tax rate to a Xero tax type. Please set the tax type manually.`,
+        'error'
+      );
+    }
+  }
+
+  function setXeroInlineConfirmation(message = '') {
+    const el = document.getElementById('xeroInlineConfirmation');
+    if (!el) return;
+    if (!message) {
+      el.className = 'bill-confirmation';
+      el.innerHTML = '';
+      return;
+    }
+    el.className = 'bill-confirmation show';
+    el.innerHTML = message;
+  }
+
+  function showBillError(msg) {
+    const el = document.getElementById('billError');
+    el.textContent = msg; el.style.display = 'block';
+    document.getElementById('billProgressWrap').style.display = 'none';
+    document.getElementById('billEmptyState').style.display = 'flex';
+    const scanBtn = document.getElementById('scanBillBtn');
+    scanBtn.disabled = false; scanBtn.innerHTML = '⚡ Scan &amp; Parse Bill';
+  }
+
+  let billRawVisible = false;
+  function toggleBillRaw() {
+    billRawVisible = !billRawVisible;
+    document.getElementById('billRawOcr').style.display = billRawVisible ? 'block' : 'none';
+    document.getElementById('billRawToggle').textContent = billRawVisible ? '▾ Hide raw OCR text' : '▸ Show raw OCR text';
+  }
+
+  async function copyBillJSON(buttonEl) {
+    if (!window._lastBill) return;
+    await navigator.clipboard.writeText(JSON.stringify(window._lastBill, null, 2));
+    const btn = buttonEl;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => btn.textContent = '📋 Copy JSON', 2000);
+  }
+
+  async function createDraftBillInXero(buttonEl, options = {}) {
+    const { auto = false } = options;
+    if (!window._lastBill) {
+      if (!auto) showXeroNotice('Scan a bill first so there is data to send to Xero.', 'error');
+      return;
+    }
+    if (!xeroState.connected) {
+      if (!auto) showXeroNotice('Connect Xero first, then create the draft bill.', 'error');
+      return;
+    }
+
+    const trigger = buttonEl;
+    const originalText = trigger ? trigger.textContent : '🔁 Retry Xero Create';
+    if (trigger) {
+      trigger.disabled = true;
+      trigger.textContent = '⏳ Creating Draft Bill…';
+    }
+
+    const accountCode = document.getElementById('xeroAccountCode').value.trim();
+    const taxType = document.getElementById('xeroTaxType').value.trim();
+    const payload = {
+      ...window._lastBill,
+      accountCode: accountCode || undefined,
+      taxType: taxType || undefined
+    };
+
+    const formData = new FormData();
+    formData.append('bill', JSON.stringify(payload));
+    if (billCurrentFile) {
+      formData.append('sourceImage', billCurrentFile, billCurrentFile.name);
+    }
+
+    try {
+      const resp = await fetch('/api/xero/create-bill', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        const duplicateLink = data.details?.invoiceId
+          ? `<br>Existing invoice ID: <code>${data.details.invoiceId}</code>`
+          : '';
+        const reconnectHint = data.needsReconnect
+          ? '<br>Click <strong>Reconnect Xero</strong> and complete the connection again.'
+          : '';
+        throw new Error((data.error || 'Failed to create draft bill.') + duplicateLink + reconnectHint);
+      }
+
+      const created = data.bill;
+      const attachmentNote = created.attachment?.fileName ? `<br>Attachment uploaded: <code>${created.attachment.fileName}</code>` : '';
+      const linkNote = created.url ? `<br><a href="${created.url}" target="_blank" rel="noopener">Open in Xero</a>` : '';
+      const confirmationHtml = `✅ Draft bill created in Xero.<br>Invoice: <strong>${created.invoiceNumber || created.invoiceId}</strong><br>Status: <strong>${created.status}</strong>${attachmentNote}${linkNote}`;
+      showXeroNotice(
+        confirmationHtml,
+        'success'
+      );
+      setXeroInlineConfirmation(confirmationHtml);
+    } catch (error) {
+      showXeroNotice(error.message, 'error');
+      setXeroInlineConfirmation('');
+    } finally {
+      if (trigger) {
+        trigger.disabled = false;
+        trigger.textContent = originalText || '🔁 Retry Xero Create';
+      }
+    }
+  }
+</script>
+
+</body>
+</html>
