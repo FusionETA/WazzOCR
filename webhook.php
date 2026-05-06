@@ -275,13 +275,17 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
     }
 
     error_log("WAZZOCR SUCCESS: extracted " . mb_strlen($result['text']) . " chars");
+    error_log("WAZZOCR EXTRACTED TEXT:\n" . $result['text']);
 
-    $output = $result['output'];
-    $analysis = analyze_with_xero_bridge($result['text']);
+    $analysis = analyze_with_xero_bridge($result['text'], $file['bytes'], $file['mime'], $filename);
+
     if ($analysis !== null && ($analysis['ok'] ?? false)) {
-        $output .= "\n\n" . format_bridge_analysis($analysis);
-    } elseif ($analysis !== null && !empty($analysis['error'])) {
-        $output .= "\n\n⚠️ *AI/Xero draft failed*\n" . $analysis['error'];
+        $output = format_bridge_analysis($analysis);
+    } else {
+        $output = $result['output'];
+        if ($analysis !== null && !empty($analysis['error'])) {
+            $output .= "\n\n⚠️ *AI/Xero draft failed*\n" . $analysis['error'];
+        }
     }
 
     wazzup_send($chatId, $chatType, $output);
@@ -415,7 +419,7 @@ function call_gemini_with_file(array $file): ?array
 
 // ─── LOCAL XERO / AI BRIDGE ─────────────────────────────────────────────────
 
-function analyze_with_xero_bridge(string $ocrText): ?array
+function analyze_with_xero_bridge(string $ocrText, ?string $fileBytes = null, ?string $mime = null, ?string $filename = null): ?array
 {
     if (XERO_BRIDGE_URL === '' || trim($ocrText) === '') {
         return null;
@@ -426,13 +430,21 @@ function analyze_with_xero_bridge(string $ocrText): ?array
         'createBill' => WHATSAPP_AUTO_CREATE_XERO_BILLS,
     ];
 
+    if ($fileBytes !== null && $fileBytes !== '') {
+        $payload['imageBase64'] = base64_encode($fileBytes);
+        $payload['imageMime']   = $mime ?: 'application/octet-stream';
+        if ($filename) {
+            $payload['fileName'] = $filename;
+        }
+    }
+
     $ch = curl_init(XERO_BRIDGE_URL);
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
         CURLOPT_POSTFIELDS     => json_encode($payload),
-        CURLOPT_TIMEOUT        => 45,
+        CURLOPT_TIMEOUT        => 90,
     ]);
 
     $response = curl_exec($ch);
@@ -476,6 +488,7 @@ function format_bridge_analysis(array $analysis): string
     $lines = [
         "🤖 *AI bill analysis*",
         "Supplier: " . ($bill['supplier'] ?? 'Unknown'),
+        "Bill To: " . ($bill['billedTo'] ?? '-'),
         "Invoice No: " . ($bill['invoiceNo'] ?? '-'),
         "Date: " . ($bill['date'] ?? '-'),
         "Currency: " . ($bill['currency'] ?? 'MYR'),
@@ -494,22 +507,37 @@ function format_bridge_analysis(array $analysis): string
         }
     }
 
-    if (!empty($analysis['xero']) && is_array($analysis['xero'])) {
-        $xero = $analysis['xero'];
+    $matched = $analysis['matchedTenant'] ?? null;
+    $xero    = $analysis['xero'] ?? null;
+    $pending = $analysis['pending'] ?? null;
+
+    if (is_array($xero) && !empty($xero['invoiceId'])) {
         $lines[] = "";
         $lines[] = "✅ *Xero draft bill created*";
+        $orgName = $xero['tenantName'] ?? ($matched['tenantName'] ?? 'Xero');
+        $lines[] = "Organisation: " . $orgName;
         if (!empty($xero['contactName'])) {
             $lines[] = "Supplier: " . $xero['contactName'];
         }
-        $lines[] = "Invoice: " . ($xero['invoiceNumber'] ?? $xero['invoiceId'] ?? '-');
+        $lines[] = "Invoice: " . ($xero['invoiceNumber'] ?? $xero['invoiceId']);
         if (isset($xero['total']) && $xero['total'] !== null) {
             $currency = $xero['currency'] ?? '';
             $lines[] = "Total: " . trim($currency . ' ' . format_money_value($xero['total']));
         }
         $lines[] = "Status: " . ($xero['status'] ?? 'DRAFT');
-        if (!empty($xero['invoiceId'])) {
-            $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
+        $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
+    } elseif (is_array($pending)) {
+        $lines[] = "";
+        $lines[] = "⚠️ *Action needed: assign organisation*";
+        $lines[] = $pending['reason'] ?? 'Could not match this bill to any connected Xero organisation.';
+        if (!empty($pending['candidates']) && is_array($pending['candidates'])) {
+            $names = array_map(fn($c) => $c['tenantName'] ?? '', $pending['candidates']);
+            $names = array_filter($names);
+            if ($names) {
+                $lines[] = "Connected orgs: " . implode(', ', $names);
+            }
         }
+        $lines[] = "Open the dashboard → *Unmatched Bills* to pick the right organisation and create the draft.";
     } elseif (WHATSAPP_AUTO_CREATE_XERO_BILLS) {
         $lines[] = "";
         $lines[] = "⚠️ Xero draft creation was requested but no bill was returned.";

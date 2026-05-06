@@ -27,24 +27,6 @@
 
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
 
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "WebApplication",
-    "name": "FusionETA AI Bill Scanner to Xero",
-    "url": "https://fusioneta.com.my/web/ocr-tool/",
-    "description": "AI bill scanner for parsing receipt and invoice images into Xero draft bills",
-    "applicationCategory": "UtilityApplication",
-    "operatingSystem": "Any",
-    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "MYR" },
-    "provider": {
-      "@type": "Organization",
-      "name": "FusionETA",
-      "url": "https://fusioneta.com.my"
-    }
-  }
-  </script>
-
   <style>
     :root {
       --fe-primary:   #1A2E6F;
@@ -134,6 +116,9 @@
       background: #e55a28; transform: translateY(-2px);
       box-shadow: var(--fe-shadow-md);
     }
+    .btn-primary:disabled {
+      background: #c8c8c8; cursor: not-allowed; transform: none; box-shadow: none;
+    }
     .btn-sm { padding: 0.5rem 1.25rem; font-size: 0.875rem; }
     .nav-cta { margin-left: 0.5rem; }
     .hero-actions {
@@ -170,7 +155,7 @@
     .hero {
       background: var(--fe-gradient);
       color: white;
-      padding: 6rem 0 4rem;
+      padding: 4.5rem 0 3rem;
       text-align: center;
       margin-top: 70px;
     }
@@ -188,15 +173,15 @@
     }
     .hero h1 {
       font-family: var(--fe-font-heading);
-      font-size: clamp(2rem, 5vw, 3rem);
+      font-size: clamp(1.75rem, 4vw, 2.5rem);
       font-weight: 800;
       margin-bottom: 1rem;
       line-height: 1.2;
     }
     .hero p {
-      font-size: 1.125rem;
+      font-size: 1.05rem;
       color: rgba(255,255,255,0.8);
-      max-width: 560px;
+      max-width: 640px;
       margin: 0 auto;
     }
     .privacy-note {
@@ -211,10 +196,7 @@
 
     /* ── Main Tool ── */
     .tool-section {
-      padding: clamp(2.25rem, 5vw, 4rem) 0 clamp(4rem, 7vw, 6rem);
-    }
-    .tool-container {
-      max-width: 1180px;
+      padding: clamp(1.75rem, 4vw, 3rem) 0 clamp(4rem, 7vw, 6rem);
     }
     .tool-grid {
       display: grid;
@@ -232,7 +214,6 @@
       box-shadow: var(--fe-shadow-md);
       border: 1px solid var(--fe-border);
       overflow: hidden;
-      height: 100%;
     }
     .card-header {
       padding: clamp(1rem, 2.2vw, 1.35rem) clamp(1.1rem, 2.5vw, 1.6rem);
@@ -287,50 +268,8 @@
       color: var(--fe-primary); margin-bottom: 0.375rem;
     }
     .drop-zone p { font-size: 0.875rem; color: var(--fe-muted); }
-    .drop-zone .or { margin: 0.75rem 0; font-size: 0.8rem; color: var(--fe-muted); }
-
-    .btn-outline {
-      display: inline-flex; align-items: center; gap: 0.5rem;
-      padding: 0.6rem 1.5rem;
-      border: 2px solid var(--fe-primary);
-      color: var(--fe-primary); border-radius: var(--fe-radius-sm);
-      font-weight: 600; font-size: 0.875rem;
-      cursor: pointer; background: white;
-      transition: all var(--fe-transition);
-    }
-    .btn-outline:hover {
-      background: var(--fe-primary); color: white;
-    }
-
-    /* ── Preview ── */
-    #previewWrap { display: none; margin-top: 1rem; }
-    #previewImg {
-      width: 100%; max-height: 340px;
-      object-fit: contain;
-      border-radius: var(--fe-radius-sm);
-      border: 1px solid var(--fe-border);
-      background: #f8f9fb;
-    }
-    .img-meta {
-      display: flex; justify-content: space-between; align-items: center;
-      margin-top: 0.75rem;
-      font-size: 0.8rem; color: var(--fe-muted);
-    }
-    .btn-change {
-      font-size: 0.8rem; color: var(--fe-accent);
-      background: none; border: none; cursor: pointer; font-weight: 600;
-    }
-    .btn-change:hover { text-decoration: underline; }
 
     /* ── Progress ── */
-    .progress-wrap {
-      display: none;
-      margin-top: 1rem;
-    }
-    .progress-label {
-      display: flex; justify-content: space-between;
-      font-size: 0.8rem; color: var(--fe-muted); margin-bottom: 0.4rem;
-    }
     .progress-bar-track {
       height: 8px; background: var(--fe-border); border-radius: 999px; overflow: hidden;
     }
@@ -339,9 +278,6 @@
       background: var(--fe-gradient);
       border-radius: 999px;
       transition: width 0.3s ease;
-    }
-    .progress-status {
-      font-size: 0.8rem; color: var(--fe-muted); margin-top: 0.4rem;
     }
 
     /* ── Result ── */
@@ -354,38 +290,18 @@
       cursor: pointer; transition: all var(--fe-transition);
     }
     .btn-ghost:hover { background: var(--fe-border); }
-    .btn-ghost.success { background: #f0fdf4; border-color: var(--fe-success); color: #15803d; }
+    .btn-danger {
+      background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+    }
+    .btn-danger:hover { background: #fee2e2; }
 
-    /* ── Empty state ── */
     .empty-state {
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      min-height: 300px; gap: 0.75rem;
+      min-height: 280px; gap: 0.75rem;
       color: var(--fe-muted); font-size: 0.9rem; text-align: center;
     }
     .empty-state-icon { font-size: 2.5rem; opacity: 0.4; }
-
-    /* ── Tips ── */
-    .tips-section { margin-top: clamp(2.5rem, 5vw, 4rem); }
-    .tips-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 1.25rem; margin-top: 1.5rem;
-    }
-    .tip-card {
-      background: white;
-      border-radius: var(--fe-radius);
-      padding: 1.5rem;
-      box-shadow: var(--fe-shadow-sm);
-      border: 1px solid var(--fe-border);
-    }
-    .tip-icon { font-size: 1.75rem; margin-bottom: 0.75rem; }
-    .tip-card h4 {
-      font-family: var(--fe-font-heading);
-      font-weight: 700; font-size: 0.9375rem;
-      color: var(--fe-primary); margin-bottom: 0.4rem;
-    }
-    .tip-card p { font-size: 0.85rem; color: var(--fe-muted); }
 
     .section-label {
       font-size: 0.8rem; font-weight: 700;
@@ -394,23 +310,25 @@
     }
     .section-title {
       font-family: var(--fe-font-heading);
-      font-weight: 700; font-size: 1.75rem;
+      font-weight: 700; font-size: 1.5rem;
       color: var(--fe-primary);
     }
 
-    /* ── Mode Tabs ── */
-    .mode-tabs {
+    /* ── Tabs (dashboard) ── */
+    .tabs {
       display: flex; gap: 0.5rem;
       background: white;
       border-radius: calc(var(--fe-radius) + 2px);
       padding: 0.375rem;
       border: 1px solid var(--fe-border);
       box-shadow: var(--fe-shadow-sm);
-      max-width: 720px;
+      max-width: 760px;
       margin: 0 auto clamp(1.5rem, 3vw, 2.25rem);
+      flex-wrap: wrap;
     }
-    .mode-tab {
-      flex: 1; padding: 0.65rem 1rem;
+    .tab {
+      flex: 1; min-width: 130px;
+      padding: 0.65rem 1rem;
       border: none; border-radius: 9px;
       font-family: var(--fe-font-heading);
       font-weight: 600; font-size: 0.875rem;
@@ -418,39 +336,42 @@
       background: transparent; color: var(--fe-muted);
       display: flex; align-items: center; justify-content: center; gap: 0.4rem;
     }
-    .mode-tab.active {
+    .tab.active {
       background: var(--fe-gradient); color: white;
       box-shadow: var(--fe-shadow-sm);
     }
-    .mode-tab:not(.active):hover { color: var(--fe-primary); background: var(--fe-light); }
+    .tab:not(.active):hover { color: var(--fe-primary); background: var(--fe-light); }
+    .tab-badge {
+      background: var(--fe-accent); color: white;
+      border-radius: 999px;
+      padding: 0 0.5rem; min-width: 22px; height: 20px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; font-weight: 700;
+    }
+    .tab.active .tab-badge { background: white; color: var(--fe-accent); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
 
-    /* ── API Key bar ── */
+    /* ── API Bar ── */
     .api-bar {
       background: white; border: 1px solid var(--fe-border);
       border-radius: var(--fe-radius); padding: 1rem 1.25rem;
       display: flex; align-items: center; gap: 0.75rem;
-      margin-bottom: 1.5rem; flex-wrap: wrap;
+      margin-bottom: 1.25rem; flex-wrap: wrap;
       box-shadow: var(--fe-shadow-sm);
     }
     .api-bar-label {
       font-size: 0.8rem; font-weight: 600; color: var(--fe-primary);
       white-space: nowrap; flex-shrink: 0;
     }
-    .api-bar-input {
-      flex: 1 1 180px; min-width: 160px;
-      border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
-      padding: 0.5rem 0.875rem; font-size: 0.82rem; font-family: monospace;
-      color: var(--fe-text); outline: none;
-      transition: border-color var(--fe-transition);
-      background: white;
-    }
-    .api-bar-select {
+    .api-bar-input, .api-bar-select {
       flex: 0 1 220px; min-width: 180px;
       border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
       padding: 0.5rem 0.875rem; font-size: 0.82rem;
       color: var(--fe-text); outline: none; background: white;
       transition: border-color var(--fe-transition);
     }
+    .api-bar-input { font-family: monospace; }
     .api-bar-input:focus, .api-bar-select:focus { border-color: var(--fe-primary); }
     .api-bar-status {
       font-size: 0.75rem; font-weight: 600;
@@ -479,10 +400,7 @@
     .notice.error { display: block; background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
     .notice.info { display: block; background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
 
-    /* ── Bill mode panel ── */
-    #billMode { display: block; }
-
-    /* ── Progress steps ── */
+    /* ── Step list ── */
     .step-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
     .step-item {
       display: flex; align-items: center; gap: 0.75rem;
@@ -495,10 +413,8 @@
     .step-item.active .step-dot { background: var(--fe-accent); box-shadow: 0 0 6px rgba(255,107,53,0.5); }
     .step-item.done .step-dot { background: var(--fe-success); }
     .step-item.active .step-text { color: var(--fe-primary); font-weight: 600; }
-    .step-item.done .step-text { color: var(--fe-muted); }
 
     /* ── Bill card output ── */
-    .bill-output { display: none; }
     .bill-card-wrap {
       background: white; border: 1px solid var(--fe-border);
       border-radius: var(--fe-radius); overflow: hidden;
@@ -521,7 +437,7 @@
     }
     .bill-invno { font-size: 0.78rem; color: rgba(255,255,255,0.55); }
     .bill-meta-row {
-      display: flex; gap: 1.5rem; margin-top: 1.1rem; flex-wrap: wrap;
+      display: flex; gap: 1.25rem; margin-top: 1.1rem; flex-wrap: wrap;
     }
     .bill-meta-item { display: flex; flex-direction: column; gap: 0.15rem; }
     .bill-meta-label {
@@ -571,18 +487,113 @@
       padding: 0.875rem 1.25rem; border-top: 1px solid var(--fe-border);
       font-size: 0.82rem; color: var(--fe-muted); line-height: 1.6;
     }
-    .bill-confirmation {
-      display: none;
-      padding: 1rem 1.25rem;
-      border-top: 1px solid var(--fe-border);
-      background: #f0fdf4;
-      color: #166534;
-    }
-    .bill-confirmation.show { display: block; }
     .bill-actions-bar {
       padding: 1rem 1.25rem; border-top: 1px solid var(--fe-border);
-      display: flex; gap: 0.625rem; flex-wrap: wrap;
+      display: flex; gap: 0.625rem; flex-wrap: wrap; align-items: center;
     }
+
+    /* ── Pending bill list ── */
+    .pending-list { display: flex; flex-direction: column; gap: 1rem; }
+    .pending-card {
+      background: white; border: 1px solid var(--fe-border);
+      border-radius: var(--fe-radius); padding: 1.25rem;
+      box-shadow: var(--fe-shadow-sm);
+    }
+    .pending-card-head {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem;
+    }
+    .pending-supplier {
+      font-family: var(--fe-font-heading); font-weight: 700;
+      font-size: 1.05rem; color: var(--fe-primary);
+    }
+    .pending-billed-to {
+      font-size: 0.82rem; color: var(--fe-muted); margin-top: 0.15rem;
+    }
+    .pending-billed-to strong { color: var(--fe-text); }
+    .pending-meta {
+      font-size: 0.78rem; color: var(--fe-muted);
+      display: flex; gap: 1.25rem; flex-wrap: wrap;
+    }
+    .pending-meta b { color: var(--fe-text); font-weight: 600; }
+    .pending-reason {
+      background: #fffbeb; border: 1px solid #fde68a;
+      color: #92400e; padding: 0.5rem 0.75rem;
+      border-radius: var(--fe-radius-sm); font-size: 0.82rem;
+      margin: 0.6rem 0;
+    }
+    .pending-actions {
+      display: flex; gap: 0.625rem; align-items: center;
+      flex-wrap: wrap; margin-top: 0.75rem;
+    }
+    .pending-actions select {
+      flex: 1 1 220px; min-width: 200px;
+      border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
+      padding: 0.5rem 0.75rem; font-size: 0.85rem;
+      background: white; color: var(--fe-text); outline: none;
+    }
+    .pending-attachment {
+      font-size: 0.75rem; color: var(--fe-muted);
+    }
+    .pending-attachment.has { color: var(--fe-success); }
+
+    /* ── Bills table ── */
+    .bills-table-wrap {
+      background: white; border: 1px solid var(--fe-border);
+      border-radius: var(--fe-radius); overflow: hidden;
+      box-shadow: var(--fe-shadow-sm);
+    }
+    .bills-table { width: 100%; border-collapse: collapse; }
+    .bills-table th {
+      background: var(--fe-light);
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--fe-muted);
+      padding: 0.7rem 0.875rem; text-align: left;
+      border-bottom: 1px solid var(--fe-border);
+    }
+    .bills-table td {
+      padding: 0.75rem 0.875rem; font-size: 0.85rem;
+      border-bottom: 1px solid var(--fe-light);
+      vertical-align: top;
+    }
+    .bills-table tr:last-child td { border-bottom: none; }
+    .bills-table .invoice-link { color: var(--fe-accent); text-decoration: none; font-weight: 600; }
+    .bills-table .invoice-link:hover { text-decoration: underline; }
+    .bills-status {
+      display: inline-block;
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: var(--fe-light); color: var(--fe-muted);
+    }
+    .bills-status.draft { background: #eff6ff; color: #1d4ed8; }
+    .bills-status.authorised { background: #f0fdf4; color: #15803d; }
+    @media (max-width: 720px) {
+      .bills-table thead { display: none; }
+      .bills-table, .bills-table tbody, .bills-table tr, .bills-table td { display: block; width: 100%; }
+      .bills-table tr { border-bottom: 1px solid var(--fe-border); padding: 0.5rem 0; }
+      .bills-table td { padding: 0.35rem 0.875rem; border: none; }
+      .bills-table td::before { content: attr(data-label) ': '; font-size: 0.7rem; text-transform: uppercase; color: var(--fe-muted); font-weight: 700; }
+    }
+
+    /* ── Settings panels ── */
+    .settings-grid {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 1.25rem;
+    }
+    @media (max-width: 760px) {
+      .settings-grid { grid-template-columns: 1fr; }
+    }
+    .org-pill {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      background: var(--fe-light); border: 1px solid var(--fe-border);
+      border-radius: 999px;
+      padding: 0.3rem 0.8rem;
+      font-size: 0.78rem; color: var(--fe-text);
+      margin: 0.2rem 0.3rem 0.2rem 0;
+    }
+    .org-pill::before { content: '🏢'; font-size: 0.75rem; }
 
     /* ── Footer ── */
     .footer {
@@ -600,11 +611,9 @@
     .footer-links-inline { display: flex; gap: 1.5rem; }
 
     @media (max-width: 640px) {
-      .hero { padding: 4.25rem 0 3rem; }
+      .hero { padding: 4rem 0 2.5rem; }
       .tool-section { padding-top: 2rem; }
-      .mode-tabs { flex-direction: column; }
       .card-header { min-height: auto; }
-      .btn-ghost { flex: 1 1 100%; justify-content: center; }
       .footer-bottom { flex-direction: column; align-items: flex-start; }
     }
   </style>
@@ -625,8 +634,6 @@
         <li><a href="https://fusioneta.com.my/web/about/" class="nav-link">About</a></li>
         <li><a href="https://fusioneta.com.my/web/contact/" class="nav-link">Contact</a></li>
       </ul>
-      <a href="/xero-setup" class="btn btn-primary btn-sm nav-cta">Xero Setup</a>
-      <a href="https://fusioneta.com.my/web/contact/" class="btn btn-primary btn-sm nav-cta">Get a Free Consultation</a>
       <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
         <span></span><span></span><span></span>
       </button>
@@ -637,60 +644,37 @@
 <!-- Hero -->
 <section class="hero">
   <div class="container">
-    <div class="hero-badge">🧾 AI Bill Scanner + Xero</div>
-    <h1>Parse Bills from Images into Xero Drafts</h1>
-    <p>Upload a receipt or invoice image, extract the details with AI, review the structured bill, then create a Xero draft bill.</p>
-    <div class="hero-actions">
-      <a href="/xero-setup" class="btn btn-primary">Open Xero Setup</a>
-    </div>
-    <div class="privacy-note">
-      🔒 Keys and Xero tokens stay server-side
-    </div>
+    <div class="hero-badge">🧾 AI Bill Scanner + Multi-Org Xero</div>
+    <h1>Multi-Organisation Bill Pipeline</h1>
+    <p>Bills from WhatsApp are auto-routed to the right Xero organisation. Unmatched bills are queued here so you can pick the right org and create the draft in one click.</p>
   </div>
 </section>
 
-<!-- Main Tool -->
+<!-- Dashboard -->
 <section class="tool-section">
-  <div class="container tool-container">
-    <!-- Bill Mode -->
-    <div id="billMode">
+  <div class="container">
 
-      <!-- AI config bar -->
-      <div class="api-bar">
-        <span class="api-bar-label">AI Provider</span>
-        <select class="api-bar-select" id="providerSelect" onchange="handleProviderChange()"></select>
-        <select class="api-bar-select" id="modelSelect" onchange="saveSelectedModel()"></select>
-        <span class="api-bar-status unset" id="apiStatus">Not set</span>
-        <div class="api-bar-note" id="apiHelpText">Keys are loaded server-side from <code>.env</code>.</div>
-      </div>
+    <div id="globalNotice" class="notice info"></div>
 
-      <div class="api-bar" id="xero-setup">
-        <span class="api-bar-label">Xero</span>
-        <span class="api-bar-status unset" id="xeroStatus">Not connected</span>
-        <select class="api-bar-select" id="xeroTenantSelect" onchange="handleTenantChange()" disabled>
-          <option value="">Select tenant</option>
-        </select>
-        <input type="text" class="api-bar-input" id="xeroAccountCode" placeholder="Expense account code">
-        <input type="text" class="api-bar-input" id="xeroTaxType" placeholder="Tax type e.g. NONE">
-        <a href="/api/xero/connect" class="btn btn-primary btn-sm" id="xeroConnectBtn">Connect Xero</a>
-        <button type="button" class="btn-ghost" id="xeroRefreshBtn" onclick="loadXeroStatus()">Refresh status</button>
-        <div class="api-bar-note" id="xeroHelpText">Connect once, then create draft bills in Xero from extracted data.</div>
-      </div>
-      <div id="xeroNotice" class="notice info"></div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="scan">⚡ Scan</button>
+      <button class="tab" data-tab="unmatched">📥 Unmatched <span class="tab-badge" id="unmatchedBadge" style="display:none;">0</span></button>
+      <button class="tab" data-tab="organisations">🏢 Organisations</button>
+      <button class="tab" data-tab="settings">⚙️ Settings</button>
+    </nav>
 
+    <!-- ── Scan tab ─────────────────────────────────────────────────────── -->
+    <div class="tab-panel active" id="panel-scan">
       <div class="tool-grid">
-
-        <!-- Left: Upload -->
         <div class="card">
           <div class="card-header">
             <div class="card-icon">🧾</div>
             <div>
               <div class="card-title">Upload Bill / Receipt</div>
-              <div class="card-subtitle">Photo, screenshot or scan</div>
+              <div class="card-subtitle">Test the OCR + match flow from your browser</div>
             </div>
           </div>
           <div class="card-body">
-
             <div class="drop-zone" id="billDropZone">
               <input type="file" id="billFileInput" accept="image/*">
               <div class="drop-icon">📄</div>
@@ -715,8 +699,8 @@
             <div id="billProgressWrap" style="display:none;margin-top:1.25rem;">
               <div class="step-list">
                 <div class="step-item" id="bstep1"><div class="step-dot"></div><span class="step-text">Reading image with Tesseract OCR…</span></div>
-                <div class="step-item" id="bstep2"><div class="step-dot"></div><span class="step-text">Sending text to selected AI model…</span></div>
-                <div class="step-item" id="bstep3"><div class="step-dot"></div><span class="step-text">Structuring bill data…</span></div>
+                <div class="step-item" id="bstep2"><div class="step-dot"></div><span class="step-text">Sending text to AI…</span></div>
+                <div class="step-item" id="bstep3"><div class="step-dot"></div><span class="step-text">Matching organisation…</span></div>
               </div>
               <div class="progress-bar-track" style="margin-top:1rem;">
                 <div class="progress-bar-fill" id="billProgressFill"></div>
@@ -727,58 +711,131 @@
 
             <button id="billRawToggle" onclick="toggleBillRaw()" style="display:none;font-size:0.75rem;color:var(--fe-muted);background:none;border:none;cursor:pointer;margin-top:0.75rem;padding:0;">▸ Show raw OCR text</button>
             <div id="billRawOcr" style="display:none;margin-top:0.5rem;background:var(--fe-light);border:1px solid var(--fe-border);border-radius:var(--fe-radius-sm);padding:0.875rem;font-size:0.72rem;font-family:monospace;color:var(--fe-muted);max-height:130px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;"></div>
-
           </div>
         </div>
 
-        <!-- Right: Bill result -->
         <div class="card">
           <div class="card-header">
             <div class="card-icon">📑</div>
             <div>
               <div class="card-title">Structured Bill</div>
-              <div class="card-subtitle">AI-parsed from your image</div>
+              <div class="card-subtitle">AI-parsed + auto-matched organisation</div>
             </div>
           </div>
           <div class="card-body" style="padding:0;">
-            <div id="billEmptyState" class="empty-state" style="min-height:300px;">
+            <div id="billEmptyState" class="empty-state">
               <div class="empty-state-icon">🧾</div>
-              <p>Your structured bill will appear here<br>after uploading and clicking <strong>Scan &amp; Parse Bill</strong></p>
+              <p>Your structured bill will appear here<br>after scanning.</p>
             </div>
             <div id="billOutput"></div>
           </div>
         </div>
+      </div>
+    </div>
 
-      </div><!-- end bill tool-grid -->
-    </div><!-- end #billMode -->
+    <!-- ── Unmatched tab ────────────────────────────────────────────────── -->
+    <div class="tab-panel" id="panel-unmatched">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+        <div>
+          <div class="section-label">WhatsApp queue</div>
+          <h2 class="section-title">Unmatched Bills</h2>
+        </div>
+        <button class="btn-ghost" onclick="loadPendingBills()">🔄 Refresh</button>
+      </div>
+      <div id="pendingList"></div>
+    </div>
 
-    <!-- Tips -->
-    <div class="tips-section">
-      <div class="section-label">Best Practices</div>
-      <div class="section-title">Tips for Better Results</div>
-      <div class="tips-grid">
-        <div class="tip-card">
-          <div class="tip-icon">☀️</div>
-          <h4>Good Lighting</h4>
-          <p>Images with even, bright lighting produce the most accurate text extraction.</p>
+    <!-- ── Organisations tab ────────────────────────────────────────────── -->
+    <div class="tab-panel" id="panel-organisations">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+        <div>
+          <div class="section-label">Per-organisation history</div>
+          <h2 class="section-title">Created Bills</h2>
         </div>
-        <div class="tip-card">
-          <div class="tip-icon">📐</div>
-          <h4>Keep It Straight</h4>
-          <p>Skewed or rotated text reduces accuracy. Try to keep text aligned horizontally.</p>
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <select class="api-bar-select" id="orgFilterSelect" onchange="loadBillsForOrg()" style="min-width:240px;">
+            <option value="">All organisations</option>
+          </select>
+          <button class="btn-ghost" onclick="loadBillsForOrg()">🔄 Refresh</button>
         </div>
-        <div class="tip-card">
-          <div class="tip-icon">🔎</div>
-          <h4>Higher Resolution</h4>
-          <p>Larger, clearer images give better results. Avoid blurry or compressed photos.</p>
+      </div>
+      <div id="billsList"></div>
+    </div>
+
+    <!-- ── Settings tab ─────────────────────────────────────────────────── -->
+    <div class="tab-panel" id="panel-settings">
+      <div class="settings-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon">🤖</div>
+            <div>
+              <div class="card-title">AI Provider</div>
+              <div class="card-subtitle">Used by both WhatsApp and the web scanner</div>
+            </div>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:0.85rem;">
+            <div>
+              <label class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Provider</label>
+              <select class="api-bar-select" id="providerSelect" onchange="handleProviderChange()" style="width:100%;flex:none;"></select>
+            </div>
+            <div>
+              <label class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Model</label>
+              <select class="api-bar-select" id="modelSelect" onchange="saveSelectedAiSettings()" style="width:100%;flex:none;"></select>
+            </div>
+            <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+              <span class="api-bar-status unset" id="apiStatus">Not set</span>
+              <span class="api-bar-note" style="width:auto;flex:1;" id="apiHelpText">Keys are loaded server-side from <code>.env</code>.</span>
+            </div>
+          </div>
         </div>
-        <div class="tip-card">
-          <div class="tip-icon">🖨️</div>
-          <h4>Printed Text Works Best</h4>
-          <p>Typed/printed text extracts almost perfectly. Handwriting accuracy varies.</p>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon">🔗</div>
+            <div>
+              <div class="card-title">Xero Connection</div>
+              <div class="card-subtitle">One login, all your authorised organisations</div>
+            </div>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:0.75rem;">
+            <div>
+              <span class="api-bar-status unset" id="xeroStatus">Not connected</span>
+            </div>
+            <div id="xeroOrgsWrap" style="display:none;">
+              <div class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Connected organisations</div>
+              <div id="xeroOrgsList"></div>
+            </div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+              <a href="/api/xero/connect" class="btn btn-primary btn-sm" id="xeroConnectBtn">Connect Xero</a>
+              <button type="button" class="btn-ghost" onclick="loadXeroStatus(true)">🔄 Refresh</button>
+            </div>
+            <div class="api-bar-note" id="xeroHelpText" style="width:100%;">Connect once via OAuth, then every authorised organisation becomes available.</div>
+          </div>
+        </div>
+
+        <div class="card" style="grid-column: 1 / -1;">
+          <div class="card-header">
+            <div class="card-icon">📊</div>
+            <div>
+              <div class="card-title">Bill Defaults</div>
+              <div class="card-subtitle">Used when AI / OCR doesn't supply these values</div>
+            </div>
+          </div>
+          <div class="card-body" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+            <div style="flex:1 1 220px;">
+              <label class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Default expense account code</label>
+              <input type="text" class="api-bar-input" id="xeroAccountCode" placeholder="e.g. 400" style="width:100%;flex:none;">
+            </div>
+            <div style="flex:1 1 220px;">
+              <label class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Default tax type</label>
+              <input type="text" class="api-bar-input" id="xeroTaxType" placeholder="e.g. NONE" style="width:100%;flex:none;">
+            </div>
+            <div class="api-bar-note" style="width:100%;">These apply when the parsed bill doesn't carry an account code or tax type.</div>
+          </div>
         </div>
       </div>
     </div>
+
   </div>
 </section>
 
@@ -803,7 +860,6 @@
   // ── Init ──
   document.getElementById('footerYear').textContent = new Date().getFullYear();
 
-  // Navbar scroll
   const navbar = document.getElementById('navbar');
   window.addEventListener('scroll', () => {
     navbar.classList.toggle('scrolled', window.scrollY > 20);
@@ -812,136 +868,32 @@
     document.getElementById('navLinks').classList.toggle('open');
   });
 
-  // Paste image support for bill images.
-  document.addEventListener('paste', e => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) {
-          handleBillFile(file);
-          break;
-        }
-      }
+  const esc = s => s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  // ── Tab handling ──
+  const panels = ['scan', 'unmatched', 'organisations', 'settings'];
+  function activateTab(name) {
+    if (!panels.includes(name)) name = 'scan';
+    document.querySelectorAll('.tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === name);
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => {
+      p.classList.toggle('active', p.id === `panel-${name}`);
+    });
+    if (location.hash !== `#${name}`) {
+      history.replaceState(null, '', `#${name}`);
     }
+    if (name === 'unmatched') loadPendingBills();
+    if (name === 'organisations') loadBillsForOrg();
+  }
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => activateTab(btn.dataset.tab));
   });
+  const initialHash = (location.hash || '#scan').slice(1);
+  activateTab(initialHash);
 
-  // ── AI Provider / Model / API Key ──
-  let PROVIDER_CONFIG = {
-    groq: {
-      label: 'Groq',
-      modelStorage: 'fe_groq_model',
-      defaultModel: 'llama-3.3-70b-versatile',
-      helpText: 'Groq uses the OpenAI-compatible chat completions API.',
-      hasKey: false,
-      models: [
-        'llama-3.3-70b-versatile',
-        'openai/gpt-oss-120b',
-        'openai/gpt-oss-20b',
-        'llama-3.1-8b-instant'
-      ]
-    },
-    gemini: {
-      label: 'Gemini',
-      modelStorage: 'fe_gemini_model',
-      defaultModel: 'gemini-2.5-flash',
-      helpText: 'Gemini uses Google\'s generateContent API.',
-      hasKey: false,
-      models: [
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-lite',
-        'gemini-2.5-pro',
-        'gemini-2.0-flash'
-      ]
-    }
-  };
-
-  // ── Global helpers ──
-  const esc = s => s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
-
-  let selectedProvider = localStorage.getItem('fe_ai_provider') || 'groq';
-  const providerSelect = document.getElementById('providerSelect');
-  const modelSelect = document.getElementById('modelSelect');
-  let xeroState = { connected: false };
-  let xeroTaxRates = [];
-
-  async function initAiConfig() {
-    try {
-      const resp = await fetch('/api/ai/config');
-      const data = await resp.json();
-      if (resp.ok && data.providers) {
-        PROVIDER_CONFIG = Object.fromEntries(
-          Object.entries(data.providers).map(([value, cfg]) => [
-            value,
-            {
-              ...cfg,
-              modelStorage: `fe_${value}_model`
-            }
-          ])
-        );
-        if (!PROVIDER_CONFIG[selectedProvider]) {
-          selectedProvider = data.defaultProvider || 'groq';
-          localStorage.setItem('fe_ai_provider', selectedProvider);
-        }
-      }
-    } catch {
-      // Keep the local fallback config and show missing-key status.
-    }
-
-    providerSelect.innerHTML = Object.entries(PROVIDER_CONFIG).map(([value, cfg]) => (
-      `<option value="${value}">${cfg.label}</option>`
-    )).join('');
-    providerSelect.value = selectedProvider;
-    refreshProviderUi();
-  }
-
-  function getSelectedModel() {
-    const cfg = PROVIDER_CONFIG[selectedProvider];
-    return localStorage.getItem(cfg.modelStorage) || cfg.defaultModel;
-  }
-
-  function getSelectedApiKey() {
-    return Boolean(PROVIDER_CONFIG[selectedProvider]?.hasKey);
-  }
-
-  function refreshProviderUi() {
-    const cfg = PROVIDER_CONFIG[selectedProvider];
-    modelSelect.innerHTML = cfg.models.map(model => (
-      `<option value="${model}">${model}</option>`
-    )).join('');
-
-    const storedModel = getSelectedModel();
-    modelSelect.value = cfg.models.includes(storedModel) ? storedModel : cfg.defaultModel;
-    if (modelSelect.value !== storedModel) {
-      localStorage.setItem(cfg.modelStorage, modelSelect.value);
-    }
-
-    document.getElementById('apiHelpText').innerHTML = `${cfg.helpText} Keys are loaded server-side from <code>.env</code>, so they are not exposed in the browser.`;
-    setApiStatus(Boolean(getSelectedApiKey()));
-  }
-
-  function handleProviderChange() {
-    selectedProvider = providerSelect.value;
-    localStorage.setItem('fe_ai_provider', selectedProvider);
-    refreshProviderUi();
-  }
-
-  function saveSelectedModel() {
-    const cfg = PROVIDER_CONFIG[selectedProvider];
-    localStorage.setItem(cfg.modelStorage, modelSelect.value);
-  }
-
-  function setApiStatus(ok) {
-    const el = document.getElementById('apiStatus');
-    el.textContent = ok ? '✅ Key loaded' : 'Not set';
-    el.className = 'api-bar-status ' + (ok ? 'set' : 'unset');
-  }
-
-  initAiConfig();
-
-  function showXeroNotice(message, type = 'info') {
-    const el = document.getElementById('xeroNotice');
+  function showGlobalNotice(message, type = 'info') {
+    const el = document.getElementById('globalNotice');
     if (!message) {
       el.style.display = 'none';
       el.className = 'notice info';
@@ -953,126 +905,415 @@
     el.style.display = 'block';
   }
 
-  function updateXeroUi(status) {
-    xeroState = status || { connected: false };
-    const statusEl = document.getElementById('xeroStatus');
-    const helpEl = document.getElementById('xeroHelpText');
-    const tenantEl = document.getElementById('xeroTenantSelect');
-    const accountEl = document.getElementById('xeroAccountCode');
-    const taxEl = document.getElementById('xeroTaxType');
-    const connectBtn = document.getElementById('xeroConnectBtn');
+  // ── State ──
+  let PROVIDER_CONFIG = {};
+  let aiSettings = { provider: 'groq', model: '' };
+  let xeroState = { connected: false, tenants: [] };
+  const tenantTaxRatesCache = {};
 
-    const tenants = Array.isArray(status.tenants) ? status.tenants : [];
-    tenantEl.innerHTML = tenants.length
-      ? tenants.map(tenant => `<option value="${tenant.tenantId}" ${tenant.isSelected ? 'selected' : ''}>${tenant.tenantName || tenant.tenantId}</option>`).join('')
-      : '<option value="">Select tenant</option>';
-    tenantEl.disabled = !status.connected || tenants.length === 0;
-
-    if (status.connected) {
-      statusEl.textContent = `Connected: ${status.organisationName || status.tenantName || 'Xero org'}`;
-      statusEl.className = 'api-bar-status set';
-      helpEl.innerHTML = `Draft bills will be created in <strong>${status.organisationName || status.tenantName || 'your Xero org'}</strong>. You can switch the tenant here, and the selection will be stored locally for future bill creation.${status.redirectUri ? `<br>OAuth callback: <code>${status.redirectUri}</code>` : ''}`;
-      connectBtn.textContent = 'Reconnect Xero';
-      if (!accountEl.value) accountEl.value = status.defaultAccountCode || '';
-      if (!taxEl.value) taxEl.value = status.defaultTaxType || '';
-    } else {
-      statusEl.textContent = 'Not connected';
-      statusEl.className = 'api-bar-status unset';
-      helpEl.innerHTML = `Connect Xero once to store tokens locally and auto-refresh them for future draft bill creation.${status.redirectUri ? `<br>OAuth callback: <code>${status.redirectUri}</code>` : ''}`;
-      connectBtn.textContent = 'Connect Xero';
+  async function getTenantTaxRates(tenantId) {
+    if (!tenantId) return [];
+    if (tenantTaxRatesCache[tenantId]) return tenantTaxRatesCache[tenantId];
+    try {
+      const resp = await fetch(`/api/xero/tax-rates?tenantId=${encodeURIComponent(tenantId)}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to load tax rates.');
+      tenantTaxRatesCache[tenantId] = data.taxRates || [];
+      return tenantTaxRatesCache[tenantId];
+    } catch (err) {
+      console.error('Could not load tax rates for tenant', tenantId, err);
+      tenantTaxRatesCache[tenantId] = [];
+      return [];
     }
   }
 
-  async function handleTenantChange() {
-    const tenantEl = document.getElementById('xeroTenantSelect');
-    const tenantId = tenantEl.value;
-    if (!tenantId) return;
+  function matchTaxRate(bill, rates) {
+    if (!Array.isArray(rates) || !rates.length) return null;
+    const tax = Number(bill.tax) || 0;
+    const subtotal = Number(bill.subtotal) > 0 ? Number(bill.subtotal) : (Number(bill.total) - tax);
 
-    tenantEl.disabled = true;
+    if (tax === 0) {
+      const zeroRate = rates.find(r => r.displayTaxRate === 0) || null;
+      return zeroRate ? { rate: zeroRate, diff: 0, extractedRate: 0 } : null;
+    }
+    if (subtotal <= 0) return null;
+    const extractedRate = (tax / subtotal) * 100;
+    let best = null, bestDiff = Infinity;
+    for (const r of rates) {
+      const d = Math.abs(r.displayTaxRate - extractedRate);
+      if (d < bestDiff) { bestDiff = d; best = r; }
+    }
+    return bestDiff <= 1.5 ? { rate: best, diff: bestDiff, extractedRate } : null;
+  }
+
+  // ── AI Provider settings ──
+  const providerSelect = document.getElementById('providerSelect');
+  const modelSelect = document.getElementById('modelSelect');
+
+  async function initAiConfig() {
     try {
-      const resp = await fetch('/api/xero/select-tenant', {
+      const [cfgResp, settingsResp] = await Promise.all([
+        fetch('/api/ai/config'),
+        fetch('/api/ai/settings')
+      ]);
+      const cfg = await cfgResp.json();
+      const settings = await settingsResp.json();
+      PROVIDER_CONFIG = cfg.providers || {};
+      if (settings && settings.provider && PROVIDER_CONFIG[settings.provider]) {
+        aiSettings = settings;
+      } else {
+        const fallback = cfg.defaultProvider || 'groq';
+        aiSettings = { provider: fallback, model: PROVIDER_CONFIG[fallback]?.defaultModel || '' };
+      }
+    } catch (err) {
+      console.error('Failed to load AI config', err);
+    }
+
+    providerSelect.innerHTML = Object.entries(PROVIDER_CONFIG).map(([value, c]) => (
+      `<option value="${esc(value)}">${esc(c.label)}</option>`
+    )).join('');
+    providerSelect.value = aiSettings.provider;
+    refreshProviderUi();
+  }
+
+  function refreshProviderUi() {
+    const cfg = PROVIDER_CONFIG[aiSettings.provider];
+    if (!cfg) return;
+    modelSelect.innerHTML = cfg.models.map(model => (
+      `<option value="${esc(model)}">${esc(model)}</option>`
+    )).join('');
+    modelSelect.value = cfg.models.includes(aiSettings.model) ? aiSettings.model : cfg.defaultModel;
+    aiSettings.model = modelSelect.value;
+    document.getElementById('apiHelpText').innerHTML = `${esc(cfg.helpText)} Keys are loaded server-side from <code>.env</code>.`;
+    setApiStatus(Boolean(cfg.hasKey));
+  }
+
+  function handleProviderChange() {
+    aiSettings.provider = providerSelect.value;
+    aiSettings.model = PROVIDER_CONFIG[aiSettings.provider]?.defaultModel || '';
+    refreshProviderUi();
+    saveSelectedAiSettings();
+  }
+
+  async function saveSelectedAiSettings() {
+    aiSettings.model = modelSelect.value;
+    try {
+      await fetch('/api/ai/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId })
+        body: JSON.stringify(aiSettings)
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Failed to change tenant.');
-      await loadXeroStatus();
-      showXeroNotice(`Xero tenant switched to <strong>${data.tenant.tenantName || data.tenant.tenantId}</strong>.`, 'success');
-    } catch (error) {
-      showXeroNotice(`Could not switch tenant: ${error.message}`, 'error');
-      await loadXeroStatus();
-    } finally {
-      tenantEl.disabled = false;
+    } catch (err) {
+      console.error('Could not save AI settings', err);
     }
   }
 
+  function setApiStatus(ok) {
+    const el = document.getElementById('apiStatus');
+    el.textContent = ok ? '✅ Key loaded' : '⚠️ No API key in .env';
+    el.className = 'api-bar-status ' + (ok ? 'set' : 'warn');
+  }
+
+  // ── Xero status ──
   async function loadXeroStatus(showInfoMessage = false) {
     try {
       const resp = await fetch('/api/xero/status');
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Failed to load Xero status.');
-      updateXeroUi(data);
-      if (data.connected) loadXeroTaxRates();
+      xeroState = data;
+      renderXeroStatus(data);
+      populateOrgFilter(data.tenants || []);
       if (showInfoMessage) {
-        showXeroNotice(data.connected
-          ? `Xero is connected to <strong>${data.organisationName || data.tenantName || 'your organisation'}</strong>.`
-          : 'Xero is not connected yet.', 'info');
+        showGlobalNotice(data.connected
+          ? `Xero connected (${(data.tenants || []).length} organisation${(data.tenants || []).length === 1 ? '' : 's'}).`
+          : 'Xero is not connected yet. Open the Settings tab to connect.', 'info');
       }
     } catch (error) {
-      updateXeroUi({ connected: false });
-      showXeroNotice(`Could not load Xero status: ${error.message}<br>Use <strong>Reconnect Xero</strong> to authorise again.`, 'error');
+      xeroState = { connected: false, tenants: [] };
+      renderXeroStatus({ connected: false, tenants: [] });
+      showGlobalNotice(`Could not load Xero status: ${esc(error.message)}`, 'error');
     }
   }
 
-  async function loadXeroTaxRates() {
+  function renderXeroStatus(status) {
+    const statusEl = document.getElementById('xeroStatus');
+    const helpEl = document.getElementById('xeroHelpText');
+    const connectBtn = document.getElementById('xeroConnectBtn');
+    const orgsWrap = document.getElementById('xeroOrgsWrap');
+    const orgsList = document.getElementById('xeroOrgsList');
+
+    const tenants = Array.isArray(status.tenants) ? status.tenants : [];
+
+    if (status.connected) {
+      statusEl.textContent = `✅ Connected · ${tenants.length} organisation${tenants.length === 1 ? '' : 's'}`;
+      statusEl.className = 'api-bar-status set';
+      helpEl.innerHTML = `Bills are routed to whichever organisation matches the bill's <strong>BILL TO</strong> name (case-insensitive, ≤1 character difference).${status.redirectUri ? `<br>OAuth callback: <code>${esc(status.redirectUri)}</code>` : ''}`;
+      connectBtn.textContent = 'Reconnect Xero';
+      orgsWrap.style.display = tenants.length ? 'block' : 'none';
+      orgsList.innerHTML = tenants.map(t => `<span class="org-pill">${esc(t.tenantName || t.tenantId)}</span>`).join('');
+
+      const accountEl = document.getElementById('xeroAccountCode');
+      const taxEl = document.getElementById('xeroTaxType');
+      if (!accountEl.value) accountEl.value = status.defaultAccountCode || '';
+      if (!taxEl.value) taxEl.value = status.defaultTaxType || '';
+    } else {
+      statusEl.textContent = 'Not connected';
+      statusEl.className = 'api-bar-status unset';
+      helpEl.innerHTML = `Connect Xero once via OAuth — every organisation that authorises the app becomes a routing target.${status.redirectUri ? `<br>OAuth callback: <code>${esc(status.redirectUri)}</code>` : ''}`;
+      connectBtn.textContent = 'Connect Xero';
+      orgsWrap.style.display = 'none';
+      orgsList.innerHTML = '';
+    }
+  }
+
+  function populateOrgFilter(tenants) {
+    const sel = document.getElementById('orgFilterSelect');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All organisations</option>' +
+      tenants.map(t => `<option value="${esc(t.tenantId)}">${esc(t.tenantName || t.tenantId)}</option>`).join('');
+    if (tenants.find(t => t.tenantId === current)) sel.value = current;
+  }
+
+  function tenantOptionsHtml(selectedId) {
+    const tenants = xeroState.tenants || [];
+    const opts = ['<option value="">— pick an organisation —</option>'];
+    for (const t of tenants) {
+      const sel = t.tenantId === selectedId ? 'selected' : '';
+      opts.push(`<option value="${esc(t.tenantId)}" ${sel}>${esc(t.tenantName || t.tenantId)}</option>`);
+    }
+    return opts.join('');
+  }
+
+  // ── Pending (unmatched) bills ──
+  let currentPendingBills = [];
+
+  async function loadPendingBills() {
+    const listEl = document.getElementById('pendingList');
+    listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Loading…</p></div>';
     try {
-      const resp = await fetch('/api/xero/tax-rates');
+      const resp = await fetch('/api/pending-bills');
       const data = await resp.json();
-      if (!resp.ok) return;
-      xeroTaxRates = data.taxRates || [];
-    } catch {
-      xeroTaxRates = [];
-    }
-  }
+      if (!resp.ok) throw new Error(data.error || 'Failed to load pending bills.');
+      const items = data.pending || [];
+      currentPendingBills = items;
 
-  function matchTaxRate(bill) {
-    if (!xeroTaxRates.length) return null;
-
-    const tax = Number(bill.tax) || 0;
-    const subtotal = Number(bill.subtotal) > 0 ? Number(bill.subtotal) : (Number(bill.total) - tax);
-
-    // No tax on this bill — find a zero-rate type
-    if (tax === 0) {
-      const zeroRate = xeroTaxRates.find(r => r.displayTaxRate === 0) || null;
-      return zeroRate ? { rate: zeroRate, diff: 0, extractedRate: 0 } : null;
-    }
-
-    if (subtotal <= 0) return null;
-
-    const extractedRate = (tax / subtotal) * 100;
-
-    let bestMatch = null;
-    let bestDiff = Infinity;
-    for (const rate of xeroTaxRates) {
-      const diff = Math.abs(rate.displayTaxRate - extractedRate);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        bestMatch = rate;
+      const badge = document.getElementById('unmatchedBadge');
+      if (items.length) {
+        badge.style.display = 'inline-flex';
+        badge.textContent = items.length;
+      } else {
+        badge.style.display = 'none';
       }
-    }
 
-    // Only accept match if within 1.5% tolerance
-    return bestDiff <= 1.5 ? { rate: bestMatch, diff: bestDiff, extractedRate } : null;
+      if (!items.length) {
+        listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><p>No unmatched bills. Everything from WhatsApp has been routed automatically.</p></div>';
+        return;
+      }
+
+      listEl.innerHTML = '<div class="pending-list">' + items.map(renderPendingCard).join('') + '</div>';
+
+      // Auto-fire tax match for any cards where the server suggested a tenant
+      for (const p of items) {
+        if (p.suggestedTenantId) {
+          const card = listEl.querySelector(`.pending-card[data-pending-id="${p.id}"]`);
+          if (card) {
+            const select = card.querySelector('.pending-tenant-select');
+            if (select) onPendingTenantChange(p.id, select);
+          }
+        }
+      }
+    } catch (error) {
+      listEl.innerHTML = `<div class="notice error" style="display:block;">Could not load pending bills: ${esc(error.message)}</div>`;
+    }
   }
 
-  loadXeroStatus(window.location.search.includes('xero=connected'));
+  function renderPendingCard(p) {
+    const bill = p.bill || {};
+    const total = Number(bill.total || 0).toFixed(2);
+    const currency = bill.currency || 'MYR';
+    const supplier = bill.supplier || '(unknown supplier)';
+    const billedTo = p.billedTo || bill.billedTo || '(no BILL TO detected)';
+    const created = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
+    const lineCount = Array.isArray(bill.lineItems) ? bill.lineItems.length : 0;
 
-  // ── Bill file handling ──
+    const attachmentBadge = p.hasAttachment
+      ? `<span class="pending-attachment has">📎 ${esc(p.attachmentName || 'attachment ready')}</span>`
+      : `<span class="pending-attachment">📎 no attachment</span>`;
+
+    return `
+      <div class="pending-card" data-pending-id="${esc(p.id)}">
+        <div class="pending-card-head">
+          <div>
+            <div class="pending-supplier">${esc(supplier)}</div>
+            <div class="pending-billed-to">Bill To: <strong>${esc(billedTo)}</strong></div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-family:var(--fe-font-heading);font-weight:800;font-size:1.1rem;color:var(--fe-primary);">${esc(currency)} ${esc(total)}</div>
+            <div style="font-size:0.7rem;color:var(--fe-muted);">${esc(created)}</div>
+          </div>
+        </div>
+        <div class="pending-meta">
+          <div><b>Invoice:</b> ${esc(bill.invoiceNo || '-')}</div>
+          <div><b>Date:</b> ${esc(bill.date || '-')}</div>
+          <div><b>Lines:</b> ${lineCount}</div>
+          <div><b>Source:</b> ${esc(p.source || 'n/a')}</div>
+          <div>${attachmentBadge}</div>
+        </div>
+        <div class="pending-reason">${esc(p.reason || 'Unmatched.')}</div>
+        <div class="pending-actions">
+          <select class="pending-tenant-select" onchange="onPendingTenantChange('${esc(p.id)}', this)">${tenantOptionsHtml(p.suggestedTenantId)}</select>
+          <input type="text" class="pending-tax-type api-bar-input" placeholder="Tax type (auto)" style="flex:0 1 160px;min-width:140px;">
+          <button class="btn btn-primary btn-sm" onclick="assignPending('${esc(p.id)}', this)">✅ Create Draft</button>
+          <button class="btn-ghost btn-danger" onclick="discardPending('${esc(p.id)}', this)">🗑 Discard</button>
+        </div>
+        <div class="pending-tax-notice" style="font-size:0.75rem;color:var(--fe-muted);margin-top:0.4rem;"></div>
+      </div>`;
+  }
+
+  async function onPendingTenantChange(pendingId, selectEl) {
+    const card = selectEl.closest('.pending-card');
+    const taxInput = card.querySelector('.pending-tax-type');
+    const noticeEl = card.querySelector('.pending-tax-notice');
+    const tenantId = selectEl.value;
+    if (!tenantId) {
+      taxInput.value = '';
+      noticeEl.textContent = '';
+      return;
+    }
+    const found = currentPendingBills.find(p => p.id === pendingId);
+    if (!found) return;
+    noticeEl.textContent = 'Loading tax rates…';
+    const rates = await getTenantTaxRates(tenantId);
+    const m = matchTaxRate(found.bill || {}, rates);
+    if (m) {
+      taxInput.value = m.rate.taxType;
+      const pct = m.extractedRate.toFixed(1);
+      const matched = m.rate.displayTaxRate.toFixed(1);
+      const confidence = m.diff < 0.1 ? 'exact match' : `≈ matched (extracted ${pct}%, Xero ${matched}%)`;
+      noticeEl.innerHTML = `Tax auto-matched: <strong>${esc(m.rate.name)}</strong> (${esc(m.rate.taxType)}) — ${confidence}`;
+    } else {
+      taxInput.value = '';
+      noticeEl.textContent = rates.length
+        ? '⚠️ Could not match this bill\'s tax rate. Set it manually if needed.'
+        : 'No tax rates for this organisation.';
+    }
+  }
+
+  async function assignPending(id, btn) {
+    const card = btn.closest('.pending-card');
+    const tenantId = card.querySelector('.pending-tenant-select').value;
+    if (!tenantId) {
+      showGlobalNotice('Pick an organisation first.', 'error');
+      return;
+    }
+    const taxType = card.querySelector('.pending-tax-type')?.value.trim() || undefined;
+    btn.disabled = true;
+    btn.textContent = '⏳ Creating…';
+    try {
+      const resp = await fetch(`/api/pending-bills/${encodeURIComponent(id)}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, taxType })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to create draft.');
+      showGlobalNotice(`✅ Draft <strong>${esc(data.bill.invoiceNumber || data.bill.invoiceId)}</strong> created in <strong>${esc(data.tenant.tenantName)}</strong>.`, 'success');
+      await loadPendingBills();
+    } catch (error) {
+      btn.disabled = false;
+      btn.textContent = '✅ Create Draft';
+      showGlobalNotice(`Could not create draft: ${esc(error.message)}`, 'error');
+    }
+  }
+
+  async function discardPending(id, btn) {
+    if (!confirm('Discard this pending bill? The original image will be deleted.')) return;
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/pending-bills/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to discard.');
+      await loadPendingBills();
+    } catch (error) {
+      btn.disabled = false;
+      showGlobalNotice(`Could not discard: ${esc(error.message)}`, 'error');
+    }
+  }
+
+  // ── Per-organisation bills history ──
+  async function loadBillsForOrg() {
+    const tenantId = document.getElementById('orgFilterSelect').value;
+    const listEl = document.getElementById('billsList');
+    listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Loading…</p></div>';
+    try {
+      const url = tenantId ? `/api/bills?tenantId=${encodeURIComponent(tenantId)}` : '/api/bills';
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to load bills.');
+      const items = data.bills || [];
+      if (!items.length) {
+        listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><p>No bills created here yet.</p></div>';
+        return;
+      }
+      listEl.innerHTML = `
+        <div class="bills-table-wrap">
+          <table class="bills-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Organisation</th>
+                <th>Supplier</th>
+                <th>Invoice #</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th>Source</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.map(renderBillRow).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    } catch (error) {
+      listEl.innerHTML = `<div class="notice error" style="display:block;">Could not load bills: ${esc(error.message)}</div>`;
+    }
+  }
+
+  function renderBillRow(b) {
+    const date = b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '-';
+    const total = `${esc(b.currency || '')} ${Number(b.total || 0).toFixed(2)}`.trim();
+    const statusClass = String(b.status || '').toLowerCase();
+    return `
+      <tr>
+        <td data-label="Date">${esc(date)}</td>
+        <td data-label="Org"><strong>${esc(b.tenantName || b.tenantId || '-')}</strong></td>
+        <td data-label="Supplier">${esc(b.supplier || '-')}</td>
+        <td data-label="Invoice">${esc(b.invoiceNumber || b.invoiceNo || '-')}</td>
+        <td data-label="Total">${esc(total)}</td>
+        <td data-label="Status"><span class="bills-status ${statusClass}">${esc(b.status || 'DRAFT')}</span></td>
+        <td data-label="Source">${esc(b.source || '-')}</td>
+        <td data-label=""><a href="${esc(b.xeroUrl || '#')}" target="_blank" rel="noopener" class="invoice-link">Open ↗</a></td>
+      </tr>`;
+  }
+
+  // ── Scan flow (web upload) ──
   const billFileInput = document.getElementById('billFileInput');
   const billDropZone  = document.getElementById('billDropZone');
   let billCurrentFile = null;
+  let lastBill = null;
+  let lastMatchedTenantId = null;
 
+  document.addEventListener('paste', e => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) { handleBillFile(file); break; }
+      }
+    }
+  });
   billFileInput.addEventListener('change', e => handleBillFile(e.target.files[0]));
   billDropZone.addEventListener('dragover', e => { e.preventDefault(); billDropZone.classList.add('dragover'); });
   billDropZone.addEventListener('dragleave', () => billDropZone.classList.remove('dragover'));
@@ -1098,6 +1339,8 @@
 
   function resetBill() {
     billCurrentFile = null;
+    lastBill = null;
+    lastMatchedTenantId = null;
     billFileInput.value = '';
     billDropZone.style.display = 'block';
     document.getElementById('billPreviewWrap').style.display = 'none';
@@ -1108,9 +1351,7 @@
     document.getElementById('billRawToggle').style.display = 'none';
     document.getElementById('billRawOcr').style.display = 'none';
     document.getElementById('billOutput').innerHTML = '';
-    document.getElementById('billOutput').style.display = 'none';
     document.getElementById('billEmptyState').style.display = 'flex';
-    showXeroNotice('');
     setBillStep(-1);
   }
 
@@ -1126,9 +1367,14 @@
 
   async function scanBill() {
     if (!billCurrentFile) return;
-    const hasApiKey = getSelectedApiKey();
-    if (!hasApiKey) {
-      showBillError(`Please add your ${PROVIDER_CONFIG[selectedProvider].label} API key in .env first, then restart the Node server.`);
+    if (!xeroState.connected) {
+      showGlobalNotice('Connect Xero in Settings before scanning.', 'error');
+      activateTab('settings');
+      return;
+    }
+    const cfg = PROVIDER_CONFIG[aiSettings.provider];
+    if (!cfg?.hasKey) {
+      showBillError(`Add your ${cfg?.label || 'AI'} API key in .env first, then restart the Node server.`);
       return;
     }
 
@@ -1139,7 +1385,6 @@
     document.getElementById('billError').style.display = 'none';
     document.getElementById('billEmptyState').style.display = 'none';
     document.getElementById('billOutput').innerHTML = '';
-    document.getElementById('billOutput').style.display = 'none';
     document.getElementById('billRawToggle').style.display = 'none';
 
     try {
@@ -1157,18 +1402,19 @@
 
       setBillStep(1);
       document.getElementById('billProgressFill').style.width = '55%';
-      const bill = await callBillModel(trimmedRaw);
+      const analyzeResp = await fetch('/api/ai/analyze-bill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmedRaw, provider: aiSettings.provider, model: aiSettings.model })
+      });
+      const analyzeData = await analyzeResp.json();
+      if (!analyzeResp.ok) throw new Error(analyzeData.error || 'AI analysis failed.');
+      lastBill = analyzeData.bill;
 
       setBillStep(2);
-      document.getElementById('billProgressFill').style.width = '90%';
-      await new Promise(r => setTimeout(r, 300));
       document.getElementById('billProgressFill').style.width = '100%';
-      renderBill(bill);
-      if (xeroState.connected) {
-        showXeroNotice('Extracted bill ready. Creating the draft bill in Xero now…', 'info');
-        await createDraftBillInXero(null, { auto: true });
-      }
-
+      lastMatchedTenantId = matchTenantClientSide(lastBill.billedTo, xeroState.tenants);
+      renderBill(lastBill, lastMatchedTenantId);
     } catch (err) {
       console.error(err);
       showBillError('Error: ' + (err.message || 'Something went wrong. Please try again.'));
@@ -1178,72 +1424,58 @@
     scanBtn.innerHTML = '⚡ Scan Another';
   }
 
-  function buildBillPrompt(ocrText) {
-    return `You are an expert at reading bills, receipts and invoices from OCR-extracted text.
-
-Given the raw OCR text below, extract and return ONLY a valid JSON object:
-{
-  "supplier": "Company name or null",
-  "invoiceNo": "Invoice number or null",
-  "date": "Date string or null",
-  "dueDate": "Due date string or null",
-  "currency": "MYR/USD/SGD etc, default MYR",
-  "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00 }],
-  "subtotal": 0.00,
-  "tax": 0.00,
-  "taxLabel": "SST/GST/VAT/Tax",
-  "discount": 0.00,
-  "total": 0.00,
-  "notes": "string or null"
-}
-Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.
-
-OCR Text:
-${ocrText}`;
-  }
-
-  function extractJsonText(raw) {
-    const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start === -1 || end === -1 || end < start) {
-      throw new Error('The model did not return valid JSON.');
+  // Client-side mirror of the server matcher (case-insensitive Levenshtein ≤ 1)
+  function clientLevenshtein(a, b) {
+    if (a === b) return 0;
+    const al = a.length, bl = b.length;
+    if (Math.abs(al - bl) > 1) return Math.abs(al - bl);
+    if (al === 0) return bl; if (bl === 0) return al;
+    let prev = Array.from({length: al + 1}, (_, i) => i);
+    let curr = new Array(al + 1);
+    for (let i = 1; i <= bl; i++) {
+      curr[0] = i;
+      for (let j = 1; j <= al; j++) {
+        const cost = b[i-1] === a[j-1] ? 0 : 1;
+        curr[j] = Math.min(prev[j] + 1, curr[j-1] + 1, prev[j-1] + cost);
+      }
+      [prev, curr] = [curr, prev];
     }
-    return cleaned.slice(start, end + 1);
+    return prev[al];
+  }
+  function normName(s) { return String(s||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim(); }
+  function matchTenantClientSide(billedTo, tenants) {
+    if (!billedTo || !tenants?.length) return null;
+    const normBill = normName(billedTo);
+    if (!normBill) return null;
+    const scored = tenants.map(t => ({ t, d: clientLevenshtein(normBill, normName(t.tenantName)) }))
+      .filter(s => s.d <= 1)
+      .sort((a, b) => a.d - b.d);
+    if (!scored.length) return null;
+    if (scored.length === 1) return scored[0].t.tenantId;
+    if (scored[0].d < scored[1].d) return scored[0].t.tenantId;
+    return null;
   }
 
-  async function callBillModel(ocrText) {
-    const resp = await fetch('/api/ai/analyze-bill', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        text: ocrText,
-        provider: selectedProvider,
-        model: getSelectedModel()
-      })
-    });
-
-    const data = await resp.json();
-    if (!resp.ok) {
-      throw new Error(data.error || `AI analysis failed (${resp.status})`);
-    }
-
-    return data.bill;
-  }
-
-  function renderBill(bill) {
-    const sym = { USD: '$', SGD: 'S$', EUR: '€', GBP: '£', MYR: 'RM' }[bill.currency] || (bill.currency || 'GBP');
+  function renderBill(bill, matchedTenantId) {
+    const sym = { USD: '$', SGD: 'S$', EUR: '€', GBP: '£', MYR: 'RM' }[bill.currency] || (bill.currency || '');
     const fmt = n => `${sym} ${Number(n || 0).toFixed(2)}`;
 
     const lineRows = (bill.lineItems || []).map(it => `
       <tr>
         <td>${esc(it.description)}</td>
-        <td class="line-qty">${it.qty ?? 1}</td>
-        <td class="line-price">${fmt(it.unitPrice)}</td>
-        <td class="line-amount">${fmt(it.amount)}</td>
+        <td class="line-qty">${esc(it.qty ?? 1)}</td>
+        <td class="line-price">${esc(fmt(it.unitPrice))}</td>
+        <td class="line-amount">${esc(fmt(it.amount))}</td>
       </tr>`).join('') || `<tr><td colspan="4" style="color:var(--fe-muted);font-size:0.8rem;padding:0.75rem;">No line items detected</td></tr>`;
+
+    const matchedTenant = (xeroState.tenants || []).find(t => t.tenantId === matchedTenantId);
+    const matchBox = matchedTenant
+      ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:0.7rem 1rem;font-size:0.84rem;border-top:1px solid var(--fe-border);">
+           ✅ Matched <strong>${esc(matchedTenant.tenantName)}</strong> from BILL TO "<em>${esc(bill.billedTo || '')}</em>".
+         </div>`
+      : `<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:0.7rem 1rem;font-size:0.84rem;border-top:1px solid var(--fe-border);">
+           ⚠️ No org matched BILL TO "<em>${esc(bill.billedTo || '(empty)')}</em>". Pick one below.
+         </div>`;
 
     document.getElementById('billOutput').innerHTML = `
       <div class="bill-card-wrap">
@@ -1254,64 +1486,65 @@ ${ocrText}`;
             ${bill.date ? `<div class="bill-meta-item"><div class="bill-meta-label">Date</div><div class="bill-meta-val">${esc(bill.date)}</div></div>` : ''}
             ${bill.dueDate ? `<div class="bill-meta-item"><div class="bill-meta-label">Due</div><div class="bill-meta-val">${esc(bill.dueDate)}</div></div>` : ''}
             <div class="bill-meta-item"><div class="bill-meta-label">Currency</div><div class="bill-meta-val">${esc(bill.currency || 'MYR')}</div></div>
-            <div class="bill-meta-item"><div class="bill-meta-label">Total</div><div class="bill-meta-val total-highlight">${fmt(bill.total)}</div></div>
+            <div class="bill-meta-item"><div class="bill-meta-label">Bill To</div><div class="bill-meta-val">${esc(bill.billedTo || '-')}</div></div>
+            <div class="bill-meta-item"><div class="bill-meta-label">Total</div><div class="bill-meta-val total-highlight">${esc(fmt(bill.total))}</div></div>
           </div>
         </div>
+        ${matchBox}
         <div class="bill-body-inner">
           <div class="bill-section-label">Line Items</div>
           <table class="line-table">
-            <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
+            <thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead>
             <tbody>${lineRows}</tbody>
           </table>
         </div>
         <div class="bill-totals">
-          ${bill.subtotal > 0 ? `<div class="total-row"><span class="total-label">Subtotal</span><span class="total-val">${fmt(bill.subtotal)}</span></div>` : ''}
-          ${bill.tax > 0 ? `<div class="total-row"><span class="total-label">${esc(bill.taxLabel || 'Tax')}</span><span class="total-val">${fmt(bill.tax)}</span></div>` : ''}
-          ${bill.discount > 0 ? `<div class="total-row"><span class="total-label">Discount</span><span class="total-val">- ${fmt(bill.discount)}</span></div>` : ''}
-          <div class="total-row grand"><span class="total-label">Total</span><span class="total-val">${fmt(bill.total)}</span></div>
+          ${bill.subtotal > 0 ? `<div class="total-row"><span class="total-label">Subtotal</span><span class="total-val">${esc(fmt(bill.subtotal))}</span></div>` : ''}
+          ${bill.tax > 0 ? `<div class="total-row"><span class="total-label">${esc(bill.taxLabel || 'Tax')}</span><span class="total-val">${esc(fmt(bill.tax))}</span></div>` : ''}
+          ${bill.discount > 0 ? `<div class="total-row"><span class="total-label">Discount</span><span class="total-val">- ${esc(fmt(bill.discount))}</span></div>` : ''}
+          <div class="total-row grand"><span class="total-label">Total</span><span class="total-val">${esc(fmt(bill.total))}</span></div>
         </div>
         ${bill.notes ? `<div class="bill-notes"><strong style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--fe-muted);">Notes</strong><br>${esc(bill.notes)}</div>` : ''}
-        <div class="bill-confirmation" id="xeroInlineConfirmation"></div>
         <div class="bill-actions-bar">
-          <button class="btn btn-primary btn-sm" onclick="createDraftBillInXero(this)">🔁 Retry Xero Create</button>
-          <button class="btn btn-primary btn-sm" onclick="copyBillJSON(this)">📋 Copy JSON</button>
-          <button class="btn btn-sm" style="background:var(--fe-light);color:var(--fe-primary);border:1px solid var(--fe-border);" onclick="resetBill()">🔄 Scan Another</button>
+          <select id="scanTenantSelect" class="api-bar-select" style="flex:1 1 200px;" onchange="onScanTenantChange()">
+            ${tenantOptionsHtml(matchedTenantId)}
+          </select>
+          <input type="text" id="scanTaxType" class="api-bar-input" placeholder="Tax type (auto)" style="flex:0 1 160px;min-width:140px;">
+          <button class="btn btn-primary btn-sm" onclick="createScannedDraft(this)">✅ Create Draft Bill</button>
+          <button class="btn-ghost" onclick="resetBill()">🔄 Scan Another</button>
         </div>
+        <div id="scanTaxNotice" style="padding:0 1.25rem 1rem;font-size:0.78rem;color:var(--fe-muted);"></div>
       </div>`;
 
-    document.getElementById('billOutput').style.display = 'block';
-    window._lastBill = bill;
-
-    // Auto-match tax rate from Xero
-    const taxEl = document.getElementById('xeroTaxType');
-    const match = matchTaxRate(bill);
-    if (match) {
-      taxEl.value = match.rate.taxType;
-      const pct = match.extractedRate.toFixed(1);
-      const matched = match.rate.displayTaxRate.toFixed(1);
-      const confidence = match.diff < 0.1 ? '✅ exact match' : `≈ matched (extracted ${pct}%, Xero ${matched}%)`;
-      showXeroNotice(
-        `Tax auto-matched: <strong>${match.rate.name}</strong> (${match.rate.taxType}) — ${confidence}`,
-        'info'
-      );
-    } else if (xeroTaxRates.length && (Number(bill.tax) || 0) > 0) {
-      showXeroNotice(
-        `⚠️ Could not match extracted tax rate to a Xero tax type. Please set the tax type manually.`,
-        'error'
-      );
-    }
+    onScanTenantChange();
   }
 
-  function setXeroInlineConfirmation(message = '') {
-    const el = document.getElementById('xeroInlineConfirmation');
-    if (!el) return;
-    if (!message) {
-      el.className = 'bill-confirmation';
-      el.innerHTML = '';
+  async function onScanTenantChange() {
+    const sel = document.getElementById('scanTenantSelect');
+    const taxInput = document.getElementById('scanTaxType');
+    const noticeEl = document.getElementById('scanTaxNotice');
+    if (!sel || !taxInput || !lastBill) return;
+    const tenantId = sel.value;
+    if (!tenantId) {
+      taxInput.value = '';
+      noticeEl.textContent = '';
       return;
     }
-    el.className = 'bill-confirmation show';
-    el.innerHTML = message;
+    noticeEl.textContent = 'Loading tax rates for the selected organisation…';
+    const rates = await getTenantTaxRates(tenantId);
+    const m = matchTaxRate(lastBill, rates);
+    if (m) {
+      taxInput.value = m.rate.taxType;
+      const pct = m.extractedRate.toFixed(1);
+      const matched = m.rate.displayTaxRate.toFixed(1);
+      const confidence = m.diff < 0.1 ? 'exact match' : `≈ matched (extracted ${pct}%, Xero ${matched}%)`;
+      noticeEl.innerHTML = `Tax auto-matched: <strong>${esc(m.rate.name)}</strong> (${esc(m.rate.taxType)}) — ${confidence}`;
+    } else {
+      taxInput.value = '';
+      noticeEl.textContent = rates.length
+        ? '⚠️ Could not match this bill\'s tax rate to any Xero tax type for this org. Set it manually.'
+        : 'No tax rates available for this organisation.';
+    }
   }
 
   function showBillError(msg) {
@@ -1330,81 +1563,54 @@ ${ocrText}`;
     document.getElementById('billRawToggle').textContent = billRawVisible ? '▾ Hide raw OCR text' : '▸ Show raw OCR text';
   }
 
-  async function copyBillJSON(buttonEl) {
-    if (!window._lastBill) return;
-    await navigator.clipboard.writeText(JSON.stringify(window._lastBill, null, 2));
-    const btn = buttonEl;
-    btn.textContent = '✅ Copied!';
-    setTimeout(() => btn.textContent = '📋 Copy JSON', 2000);
-  }
-
-  async function createDraftBillInXero(buttonEl, options = {}) {
-    const { auto = false } = options;
-    if (!window._lastBill) {
-      if (!auto) showXeroNotice('Scan a bill first so there is data to send to Xero.', 'error');
-      return;
-    }
-    if (!xeroState.connected) {
-      if (!auto) showXeroNotice('Connect Xero first, then create the draft bill.', 'error');
+  async function createScannedDraft(btn) {
+    if (!lastBill) return;
+    const tenantId = document.getElementById('scanTenantSelect').value;
+    if (!tenantId) {
+      showGlobalNotice('Pick an organisation to create the draft in.', 'error');
       return;
     }
 
-    const trigger = buttonEl;
-    const originalText = trigger ? trigger.textContent : '🔁 Retry Xero Create';
-    if (trigger) {
-      trigger.disabled = true;
-      trigger.textContent = '⏳ Creating Draft Bill…';
-    }
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Creating…';
 
     const accountCode = document.getElementById('xeroAccountCode').value.trim();
-    const taxType = document.getElementById('xeroTaxType').value.trim();
-    const payload = {
-      ...window._lastBill,
-      accountCode: accountCode || undefined,
-      taxType: taxType || undefined
-    };
+    const scanTaxType = document.getElementById('scanTaxType')?.value.trim();
+    const taxType = scanTaxType || document.getElementById('xeroTaxType').value.trim();
+    const payload = { ...lastBill };
+    if (accountCode) payload.accountCode = accountCode;
+    if (taxType) payload.taxType = taxType;
 
     const formData = new FormData();
     formData.append('bill', JSON.stringify(payload));
-    if (billCurrentFile) {
-      formData.append('sourceImage', billCurrentFile, billCurrentFile.name);
-    }
+    formData.append('tenantId', tenantId);
+    formData.append('source', 'web');
+    if (billCurrentFile) formData.append('sourceImage', billCurrentFile, billCurrentFile.name);
 
     try {
-      const resp = await fetch('/api/xero/create-bill', {
-        method: 'POST',
-        body: formData
-      });
+      const resp = await fetch('/api/xero/create-bill', { method: 'POST', body: formData });
       const data = await resp.json();
-      if (!resp.ok) {
-        const duplicateLink = data.details?.invoiceId
-          ? `<br>Existing invoice ID: <code>${data.details.invoiceId}</code>`
-          : '';
-        const reconnectHint = data.needsReconnect
-          ? '<br>Click <strong>Reconnect Xero</strong> and complete the connection again.'
-          : '';
-        throw new Error((data.error || 'Failed to create draft bill.') + duplicateLink + reconnectHint);
-      }
-
+      if (!resp.ok) throw new Error(data.error || 'Failed to create draft.');
       const created = data.bill;
-      const attachmentNote = created.attachment?.fileName ? `<br>Attachment uploaded: <code>${created.attachment.fileName}</code>` : '';
-      const linkNote = created.url ? `<br><a href="${created.url}" target="_blank" rel="noopener">Open in Xero</a>` : '';
-      const confirmationHtml = `✅ Draft bill created in Xero.<br>Invoice: <strong>${created.invoiceNumber || created.invoiceId}</strong><br>Status: <strong>${created.status}</strong>${attachmentNote}${linkNote}`;
-      showXeroNotice(
-        confirmationHtml,
-        'success'
-      );
-      setXeroInlineConfirmation(confirmationHtml);
+      const link = created.url ? `<br><a href="${esc(created.url)}" target="_blank" rel="noopener">Open in Xero ↗</a>` : '';
+      showGlobalNotice(`✅ Draft <strong>${esc(created.invoiceNumber || created.invoiceId)}</strong> created in <strong>${esc(data.tenant?.tenantName || 'Xero')}</strong>.${link}`, 'success');
+      btn.textContent = '✅ Created';
     } catch (error) {
-      showXeroNotice(error.message, 'error');
-      setXeroInlineConfirmation('');
-    } finally {
-      if (trigger) {
-        trigger.disabled = false;
-        trigger.textContent = originalText || '🔁 Retry Xero Create';
-      }
+      showGlobalNotice(`Could not create draft: ${esc(error.message)}`, 'error');
+      btn.disabled = false;
+      btn.textContent = orig;
     }
   }
+
+  // ── Boot ──
+  (async () => {
+    await Promise.all([
+      initAiConfig(),
+      loadXeroStatus(window.location.search.includes('xero=connected'))
+    ]);
+    loadPendingBills();
+  })();
 </script>
 
 </body>
