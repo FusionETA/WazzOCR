@@ -625,50 +625,86 @@ PROMPT;
 
 // ─── DOWNLOAD FILE ────────────────────────────────────────────────────────────
 
+function normalize_download_url(string $url): string
+{
+    $url = trim($url);
+
+    // Wazzup sometimes sends contentUri filename query values with raw spaces.
+    // Curl rejects those before it can make the request, so encode only unsafe
+    // URL characters while leaving existing reserved characters and % escapes.
+    return preg_replace_callback(
+        '/[^\w\-\.~:\/?#\[\]@!$&\'()*+,;=%]/u',
+        fn(array $match): string => rawurlencode($match[0]),
+        $url
+    ) ?? $url;
+}
+
 function download_file(string $url): ?array
 {
-    // Try with auth first, then without (Wazzup CDN URLs vary)
-    foreach ([true, false] as $withAuth) {
-        $headers = $withAuth
-            ? ['Authorization: Bearer ' . WAZZUP_API_KEY, 'User-Agent: WazzOCR/3.0']
-            : ['User-Agent: WazzOCR/3.0'];
+    $url = normalize_download_url($url);
 
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS      => 5,
-            CURLOPT_TIMEOUT        => 30,
-            CURLOPT_HTTPHEADER     => $headers,
-        ]);
-
-        $bytes    = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $mime     = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-        $curlErr  = curl_error($ch);
-        curl_close($ch);
-
-        wlog("WAZZOCR DOWNLOAD " . ($withAuth ? 'WITH' : 'WITHOUT') . " AUTH: http=$httpCode mime=$mime bytes=" . ($bytes ? strlen($bytes) : 0) . " err=$curlErr");
-
-        if (!$curlErr && $httpCode === 200 && $bytes) {
-            // Normalise MIME
-            $mime = strtok($mime ?: '', ';') ?: '';
-            $mimeMap = [
-                'image/jpeg'      => 'image/jpeg',
-                'image/jpg'       => 'image/jpeg',
-                'image/png'       => 'image/png',
-                'image/gif'       => 'image/gif',
-                'image/webp'      => 'image/webp',
-                'application/pdf' => 'application/pdf',
+    // Wazzup contentUri files can be briefly unavailable while media is being prepared.
+    for ($attempt = 1; $attempt <= 5; $attempt++) {
+        // Try with auth first, then without (Wazzup CDN URLs vary).
+        foreach ([true, false] as $withAuth) {
+            $headers = [
+                'Accept: application/pdf,image/*,*/*',
+                'User-Agent: WazzOCR/3.0',
             ];
-            if (isset($mimeMap[$mime])) {
-                $mime = $mimeMap[$mime];
-            } elseif (substr($bytes, 0, 4) === '%PDF') {
-                $mime = 'application/pdf';
-            } else {
-                $mime = 'image/jpeg';
+            if ($withAuth) {
+                array_unshift($headers, 'Authorization: Bearer ' . WAZZUP_API_KEY);
             }
-            return ['bytes' => $bytes, 'mime' => $mime];
+
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS      => 5,
+                CURLOPT_CONNECTTIMEOUT => 10,
+                CURLOPT_TIMEOUT        => 45,
+                CURLOPT_HTTPHEADER     => $headers,
+            ]);
+
+            $bytes        = curl_exec($ch);
+            $httpCode     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $mime         = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+            $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+            $curlErr      = curl_error($ch);
+
+            $byteCount = is_string($bytes) ? strlen($bytes) : 0;
+            wlog(
+                "WAZZOCR DOWNLOAD attempt=$attempt " . ($withAuth ? 'WITH' : 'WITHOUT') .
+                " AUTH: http=$httpCode mime=$mime bytes=$byteCount err=$curlErr effective=$effectiveUrl"
+            );
+
+            if (!$curlErr && $httpCode >= 200 && $httpCode < 300 && is_string($bytes) && $byteCount > 0) {
+                // Normalise MIME.
+                $mime = strtok($mime ?: '', ';') ?: '';
+                $mimeMap = [
+                    'image/jpeg'      => 'image/jpeg',
+                    'image/jpg'       => 'image/jpeg',
+                    'image/png'       => 'image/png',
+                    'image/gif'       => 'image/gif',
+                    'image/webp'      => 'image/webp',
+                    'application/pdf' => 'application/pdf',
+                ];
+                if (isset($mimeMap[$mime])) {
+                    $mime = $mimeMap[$mime];
+                } elseif (substr($bytes, 0, 4) === '%PDF') {
+                    $mime = 'application/pdf';
+                } else {
+                    $mime = 'image/jpeg';
+                }
+                return ['bytes' => $bytes, 'mime' => $mime];
+            }
+
+            if (is_string($bytes) && $byteCount > 0 && $byteCount < 1000) {
+                wlog("WAZZOCR DOWNLOAD BODY sample: " . substr(str_replace(["\r", "\n"], ' ', $bytes), 0, 300));
+            }
+        }
+
+        if ($attempt < 5) {
+            sleep($attempt);
         }
     }
 
