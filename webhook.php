@@ -40,6 +40,13 @@ define('WEBHOOK_SECRET',    env_value('WEBHOOK_SECRET'));
 define('XERO_BRIDGE_URL',   env_value('XERO_BRIDGE_URL', 'http://localhost:3000/api/whatsapp/analyze-ocr'));
 define('WHATSAPP_AUTO_CREATE_XERO_BILLS', env_value('WHATSAPP_AUTO_CREATE_XERO_BILLS', 'false') === 'true');
 define('MAX_FILE_BYTES',    15 * 1024 * 1024); // 15 MB Gemini inline_data limit
+define('WEBHOOK_LOG_FILE',  __DIR__ . '/webhook.log');
+
+function wlog(string $msg): void
+{
+    $line = '[' . date('Y-m-d H:i:s') . '] ' . $msg . PHP_EOL;
+    @file_put_contents(WEBHOOK_LOG_FILE, $line, FILE_APPEND | LOCK_EX);
+}
 
 // ─── WELCOME MESSAGE ─────────────────────────────────────────────────────────
 define('WELCOME_MSG',
@@ -98,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $raw  = file_get_contents('php://input');
 $data = json_decode($raw, true);
 
-error_log("WAZZOCR RAW: " . $raw);
+wlog("WAZZOCR RAW: " . $raw);
 
 if (!$data) {
     http_response_code(400);
@@ -125,6 +132,18 @@ if (function_exists('fastcgi_finish_request')) {
     flush();
 }
 
+wlog("WAZZOCR POST-ACK: alive, about to loop " . count($data['messages'] ?? []) . " messages");
+set_error_handler(function($severity, $message, $file, $line) {
+    wlog("WAZZOCR PHP-ERR: [$severity] $message in $file:$line");
+    return false;
+});
+register_shutdown_function(function() {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR])) {
+        wlog("WAZZOCR FATAL: {$e['message']} in {$e['file']}:{$e['line']}");
+    }
+});
+
 // ─── PROCESS MESSAGES ────────────────────────────────────────────────────────
 foreach ($data['messages'] ?? [] as $message) {
     process_message($message);
@@ -140,15 +159,15 @@ function process_message(array $msg): void
     $status   = $msg['status']   ?? '';
     $chatId   = preg_replace('/@[a-z.]+$/i', '', $msg['chatId'] ?? '');
 
-    error_log("WAZZOCR PROCESS: type=$type chatId=$chatId isEcho=" . ($isEcho ? 'true' : 'false') . " status=$status");
+    wlog("WAZZOCR PROCESS: type=$type chatId=$chatId isEcho=" . ($isEcho ? 'true' : 'false') . " status=$status");
 
     if ($isEcho === true || $status === 'outbound') {
-        error_log("WAZZOCR SKIP: outbound echo.");
+        wlog("WAZZOCR SKIP: outbound echo.");
         return;
     }
 
     if (empty($chatId)) {
-        error_log("WAZZOCR SKIP: empty chatId.");
+        wlog("WAZZOCR SKIP: empty chatId.");
         return;
     }
 
@@ -183,7 +202,7 @@ function handle_text(string $chatId, string $chatType, array $msg): void
 
     if ($text === '') return;
 
-    error_log("WAZZOCR TEXT: chatId=$chatId text=" . substr($text, 0, 100));
+    wlog("WAZZOCR TEXT: chatId=$chatId text=" . substr($text, 0, 100));
 
     // ── Keyword shortcuts ──────────────────────────────────────────────────
     $lower = mb_strtolower($text);
@@ -229,7 +248,7 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
     $fileUrl  = $msg['contentUri'] ?? ($msg['media']['url'] ?? '') ?? '';
     $filename = $msg['text'] ?? $msg['fileName'] ?? $msg['media']['filename'] ?? '';
 
-    error_log("WAZZOCR FILE: url=$fileUrl filename=$filename");
+    wlog("WAZZOCR FILE: url=$fileUrl filename=$filename");
 
     if (empty($fileUrl)) {
         wazzup_send($chatId, $chatType, "⚠️ Received your file but couldn't get the download URL. Please try again.");
@@ -241,16 +260,16 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
 
     wazzup_send($chatId, $chatType, "🔍 Reading your {$typeLabel}...");
 
-    error_log("WAZZOCR DOWNLOAD: starting — $fileUrl");
+    wlog("WAZZOCR DOWNLOAD: starting — $fileUrl");
     $file = download_file($fileUrl);
 
     if ($file === null) {
-        error_log("WAZZOCR ERROR: download failed for $fileUrl");
+        wlog("WAZZOCR ERROR: download failed for $fileUrl");
         wazzup_send($chatId, $chatType, "❌ Could not download the file. Please try again.");
         return;
     }
 
-    error_log("WAZZOCR DOWNLOAD OK: mime={$file['mime']} size=" . strlen($file['bytes']) . " bytes");
+    wlog("WAZZOCR DOWNLOAD OK: mime={$file['mime']} size=" . strlen($file['bytes']) . " bytes");
 
     if (strlen($file['bytes']) > MAX_FILE_BYTES) {
         wazzup_send($chatId, $chatType, "⚠️ File too large (max 15MB). Please send a smaller file.");
@@ -261,7 +280,7 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
         $file['mime'] = 'application/pdf';
     }
 
-    error_log("WAZZOCR GEMINI: calling with mime={$file['mime']}");
+    wlog("WAZZOCR GEMINI: calling with mime={$file['mime']}");
     $result = call_gemini_with_file($file);
 
     if ($result === null) {
@@ -274,8 +293,8 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
         return;
     }
 
-    error_log("WAZZOCR SUCCESS: extracted " . mb_strlen($result['text']) . " chars");
-    error_log("WAZZOCR EXTRACTED TEXT:\n" . $result['text']);
+    wlog("WAZZOCR SUCCESS: extracted " . mb_strlen($result['text']) . " chars");
+    wlog("WAZZOCR EXTRACTED TEXT:\n" . $result['text']);
 
     $analysis = analyze_with_xero_bridge($result['text'], $file['bytes'], $file['mime'], $filename);
 
@@ -347,7 +366,7 @@ PROMPT;
     curl_close($ch);
 
     if ($curlErr || $httpCode !== 200) {
-        error_log("WAZZOCR CHAT ERROR: http=$httpCode curlErr=$curlErr resp=" . substr($response, 0, 300));
+        wlog("WAZZOCR CHAT ERROR: http=$httpCode curlErr=$curlErr resp=" . substr($response, 0, 300));
         return null;
     }
 
@@ -394,12 +413,12 @@ function call_gemini_with_file(array $file): ?array
     curl_close($ch);
 
     if ($curlErr) {
-        error_log("WAZZOCR GEMINI CURL ERROR: $curlErr");
+        wlog("WAZZOCR GEMINI CURL ERROR: $curlErr");
         return null;
     }
 
     if ($httpCode !== 200) {
-        error_log("WAZZOCR GEMINI HTTP ERROR: $httpCode — " . substr($response, 0, 500));
+        wlog("WAZZOCR GEMINI HTTP ERROR: $httpCode — " . substr($response, 0, 500));
         return null;
     }
 
@@ -407,7 +426,7 @@ function call_gemini_with_file(array $file): ?array
     $text   = $result['candidates'][0]['content']['parts'][0]['text'] ?? '';
 
     if (trim($text) === '') {
-        error_log("WAZZOCR GEMINI EMPTY: " . substr($response, 0, 1000));
+        wlog("WAZZOCR GEMINI EMPTY: " . substr($response, 0, 1000));
         return ['text' => '', 'output' => ''];
     }
 
@@ -453,7 +472,7 @@ function analyze_with_xero_bridge(string $ocrText, ?string $fileBytes = null, ?s
     curl_close($ch);
 
     if ($curlErr || !$response) {
-        error_log("WAZZOCR XERO BRIDGE SKIP: http=$httpCode curlErr=$curlErr response=" . substr((string)$response, 0, 300));
+        wlog("WAZZOCR XERO BRIDGE SKIP: http=$httpCode curlErr=$curlErr response=" . substr((string)$response, 0, 300));
         return [
             'ok'    => false,
             'error' => $curlErr ? "Could not reach the local AI/Xero server: {$curlErr}" : 'No response from local AI/Xero server.',
@@ -629,7 +648,7 @@ function download_file(string $url): ?array
         $curlErr  = curl_error($ch);
         curl_close($ch);
 
-        error_log("WAZZOCR DOWNLOAD " . ($withAuth ? 'WITH' : 'WITHOUT') . " AUTH: http=$httpCode mime=$mime bytes=" . ($bytes ? strlen($bytes) : 0) . " err=$curlErr");
+        wlog("WAZZOCR DOWNLOAD " . ($withAuth ? 'WITH' : 'WITHOUT') . " AUTH: http=$httpCode mime=$mime bytes=" . ($bytes ? strlen($bytes) : 0) . " err=$curlErr");
 
         if (!$curlErr && $httpCode === 200 && $bytes) {
             // Normalise MIME
@@ -653,7 +672,7 @@ function download_file(string $url): ?array
         }
     }
 
-    error_log("WAZZOCR DOWNLOAD FAILED: both attempts failed for $url");
+    wlog("WAZZOCR DOWNLOAD FAILED: both attempts failed for $url");
     return null;
 }
 
@@ -661,7 +680,9 @@ function download_file(string $url): ?array
 
 function wazzup_send(string $chatId, string $chatType, string $text): void
 {
+    wlog("WAZZOCR SEND START: chatId=$chatId chatType=$chatType len=" . mb_strlen($text));
     $chunks = split_message($text, 4000);
+    wlog("WAZZOCR SEND CHUNKS: count=" . count($chunks));
 
     foreach ($chunks as $i => $chunk) {
         $payload = [
@@ -688,9 +709,9 @@ function wazzup_send(string $chatId, string $chatType, string $text): void
         curl_close($ch);
 
         if ($httpCode < 200 || $httpCode >= 300) {
-            error_log("WAZZOCR SEND ERROR: HTTP $httpCode chunk $i to $chatId — " . substr($response, 0, 200));
+            wlog("WAZZOCR SEND ERROR: HTTP $httpCode chunk $i to $chatId — " . substr($response, 0, 200));
         } else {
-            error_log("WAZZOCR SEND OK: chunk $i to $chatId (" . mb_strlen($chunk) . " chars)");
+            wlog("WAZZOCR SEND OK: chunk $i to $chatId (" . mb_strlen($chunk) . " chars)");
         }
 
         if (count($chunks) > 1) {
