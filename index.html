@@ -400,6 +400,32 @@
     .notice.error { display: block; background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
     .notice.info { display: block; background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
 
+    .supplier-prompt-backdrop {
+      position: fixed; inset: 0; z-index: 2000;
+      display: none; align-items: center; justify-content: center;
+      padding: 1rem; background: rgba(15, 23, 42, 0.5);
+    }
+    .supplier-prompt-backdrop.open { display: flex; }
+    .supplier-prompt-panel {
+      width: min(100%, 480px); background: var(--fe-white);
+      border-radius: var(--fe-radius-sm); box-shadow: var(--fe-shadow-lg);
+      border: 1px solid var(--fe-border); overflow: hidden;
+    }
+    .supplier-prompt-head {
+      padding: 1rem 1.15rem; border-bottom: 1px solid var(--fe-border);
+      font-family: var(--fe-font-heading); font-weight: 800; color: var(--fe-primary);
+    }
+    .supplier-prompt-body { padding: 1.15rem; display: flex; flex-direction: column; gap: 0.85rem; }
+    .supplier-prompt-note {
+      padding: 0.75rem 0.85rem; border-radius: var(--fe-radius-sm);
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+      font-size: 0.86rem; font-weight: 600; line-height: 1.5;
+    }
+    .supplier-prompt-actions {
+      display: flex; justify-content: flex-end; gap: 0.6rem; flex-wrap: wrap;
+      padding: 0 1.15rem 1.15rem;
+    }
+
     /* ── Step list ── */
     .step-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
     .step-item {
@@ -794,7 +820,7 @@
             <div class="card-icon">🔗</div>
             <div>
               <div class="card-title">Xero Connection</div>
-              <div class="card-subtitle">One login, all your authorised organisations</div>
+              <div class="card-subtitle">Authorise one or more Xero users and organisations</div>
             </div>
           </div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:0.75rem;">
@@ -806,10 +832,10 @@
               <div id="xeroOrgsList"></div>
             </div>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-              <a href="/api/xero/connect" class="btn btn-primary btn-sm" id="xeroConnectBtn">Connect Xero</a>
+              <a href="/api/xero/connect" class="btn btn-primary btn-sm" id="xeroConnectBtn">Add Xero Connection</a>
               <button type="button" class="btn-ghost" onclick="loadXeroStatus(true)">🔄 Refresh</button>
             </div>
-            <div class="api-bar-note" id="xeroHelpText" style="width:100%;">Connect once via OAuth, then every authorised organisation becomes available.</div>
+            <div class="api-bar-note" id="xeroHelpText" style="width:100%;">Add a Xero OAuth connection for each user/organisation you want this app to access.</div>
           </div>
         </div>
 
@@ -852,6 +878,24 @@
     </div>
   </div>
 </footer>
+
+<div class="supplier-prompt-backdrop" id="supplierPrompt" aria-hidden="true">
+  <div class="supplier-prompt-panel" role="dialog" aria-modal="true" aria-labelledby="supplierPromptTitle">
+    <div class="supplier-prompt-head" id="supplierPromptTitle">Supplier name needed</div>
+    <div class="supplier-prompt-body">
+      <p style="font-size:0.92rem;color:var(--fe-muted);">The scan did not detect a supplier. Enter the supplier name before creating the Xero draft bill.</p>
+      <div>
+        <label class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Supplier name</label>
+        <input type="text" class="api-bar-input" id="supplierPromptInput" placeholder="e.g. ABC SDN BHD" style="width:100%;flex:none;">
+      </div>
+      <div class="supplier-prompt-note">If you continue without a supplier name, this bill will use <strong>ImportWazzOCR Supplier</strong>.</div>
+    </div>
+    <div class="supplier-prompt-actions">
+      <button type="button" class="btn-ghost" id="supplierPromptCancel">Cancel</button>
+      <button type="button" class="btn btn-primary btn-sm" id="supplierPromptContinue">Continue</button>
+    </div>
+  </div>
+</div>
 
 <!-- Tesseract.js CDN -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -910,6 +954,53 @@
   let aiSettings = { provider: 'groq', model: '' };
   let xeroState = { connected: false, tenants: [] };
   const tenantTaxRatesCache = {};
+  const FALLBACK_SUPPLIER_NAME = 'ImportWazzOCR Supplier';
+  let supplierPromptResolve = null;
+
+  function requestSupplierName(initialValue = '') {
+    const panel = document.getElementById('supplierPrompt');
+    const input = document.getElementById('supplierPromptInput');
+    input.value = String(initialValue || '').trim();
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    setTimeout(() => input.focus(), 0);
+
+    return new Promise(resolve => {
+      supplierPromptResolve = resolve;
+    });
+  }
+
+  function closeSupplierPrompt(value) {
+    const panel = document.getElementById('supplierPrompt');
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    const resolve = supplierPromptResolve;
+    supplierPromptResolve = null;
+    if (resolve) resolve(value);
+  }
+
+  async function ensureSupplierNameForBill(bill) {
+    const existing = String(bill?.supplier || '').trim();
+    if (existing) return existing;
+    const entered = await requestSupplierName();
+    if (entered === null) return null;
+    return String(entered || '').trim() || FALLBACK_SUPPLIER_NAME;
+  }
+
+  document.getElementById('supplierPromptContinue').addEventListener('click', () => {
+    closeSupplierPrompt(document.getElementById('supplierPromptInput').value);
+  });
+  document.getElementById('supplierPromptCancel').addEventListener('click', () => closeSupplierPrompt(null));
+  document.getElementById('supplierPromptInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      closeSupplierPrompt(event.currentTarget.value);
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSupplierPrompt(null);
+    }
+  });
 
   async function getTenantTaxRates(tenantId) {
     if (!tenantId) return [];
@@ -1045,12 +1136,16 @@
     const tenants = Array.isArray(status.tenants) ? status.tenants : [];
 
     if (status.connected) {
-      statusEl.textContent = `✅ Connected · ${tenants.length} organisation${tenants.length === 1 ? '' : 's'}`;
+      const grantText = status.grantCount > 1 ? ` via ${status.grantCount} logins` : '';
+      statusEl.textContent = `✅ Connected · ${tenants.length} organisation${tenants.length === 1 ? '' : 's'}${grantText}`;
       statusEl.className = 'api-bar-status set';
-      helpEl.innerHTML = `Bills are routed to whichever organisation matches the bill's <strong>BILL TO</strong> name (case-insensitive, ≤1 character difference).${status.redirectUri ? `<br>OAuth callback: <code>${esc(status.redirectUri)}</code>` : ''}`;
-      connectBtn.textContent = 'Reconnect Xero';
+      helpEl.innerHTML = `Bills are routed to whichever organisation matches the bill's <strong>BILL TO</strong> name (case-insensitive, ≤1 character difference). Adding another Xero login keeps the existing organisations.${status.redirectUri ? `<br>OAuth callback: <code>${esc(status.redirectUri)}</code>` : ''}`;
+      connectBtn.textContent = 'Add/Reconnect Xero';
       orgsWrap.style.display = tenants.length ? 'block' : 'none';
-      orgsList.innerHTML = tenants.map(t => `<span class="org-pill">${esc(t.tenantName || t.tenantId)}</span>`).join('');
+      orgsList.innerHTML = tenants.map(t => {
+        const title = t.connectedBy ? ` title="Connected by ${esc(t.connectedBy)}"` : '';
+        return `<span class="org-pill"${title}>${esc(t.tenantName || t.tenantId)}</span>`;
+      }).join('');
 
       const accountEl = document.getElementById('xeroAccountCode');
       const taxEl = document.getElementById('xeroTaxType');
@@ -1059,8 +1154,8 @@
     } else {
       statusEl.textContent = 'Not connected';
       statusEl.className = 'api-bar-status unset';
-      helpEl.innerHTML = `Connect Xero once via OAuth — every organisation that authorises the app becomes a routing target.${status.redirectUri ? `<br>OAuth callback: <code>${esc(status.redirectUri)}</code>` : ''}`;
-      connectBtn.textContent = 'Connect Xero';
+      helpEl.innerHTML = `Add a Xero OAuth connection for each user/organisation you want this app to access.${status.redirectUri ? `<br>OAuth callback: <code>${esc(status.redirectUri)}</code>` : ''}`;
+      connectBtn.textContent = 'Add Xero Connection';
       orgsWrap.style.display = 'none';
       orgsList.innerHTML = '';
     }
@@ -1135,7 +1230,6 @@
     const billedTo = p.billedTo || bill.billedTo || '(no BILL TO detected)';
     const created = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
     const lineCount = Array.isArray(bill.lineItems) ? bill.lineItems.length : 0;
-
     const attachmentBadge = p.hasAttachment
       ? `<span class="pending-attachment has">📎 ${esc(p.attachmentName || 'attachment ready')}</span>`
       : `<span class="pending-attachment">📎 no attachment</span>`;
@@ -1206,6 +1300,10 @@
       showGlobalNotice('Pick an organisation first.', 'error');
       return;
     }
+    const pending = currentPendingBills.find(p => p.id === id);
+    const supplierName = await ensureSupplierNameForBill(pending?.bill || {});
+    if (supplierName === null) return;
+
     const taxType = card.querySelector('.pending-tax-type')?.value.trim() || undefined;
     btn.disabled = true;
     btn.textContent = '⏳ Creating…';
@@ -1213,7 +1311,7 @@
       const resp = await fetch(`/api/pending-bills/${encodeURIComponent(id)}/assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId, taxType })
+        body: JSON.stringify({ tenantId, taxType, supplier: supplierName })
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Failed to create draft.');
@@ -1570,6 +1668,8 @@
       showGlobalNotice('Pick an organisation to create the draft in.', 'error');
       return;
     }
+    const supplierName = await ensureSupplierNameForBill(lastBill);
+    if (supplierName === null) return;
 
     btn.disabled = true;
     const orig = btn.textContent;
@@ -1579,6 +1679,7 @@
     const scanTaxType = document.getElementById('scanTaxType')?.value.trim();
     const taxType = scanTaxType || document.getElementById('xeroTaxType').value.trim();
     const payload = { ...lastBill };
+    payload.supplier = supplierName;
     if (accountCode) payload.accountCode = accountCode;
     if (taxType) payload.taxType = taxType;
 

@@ -25,6 +25,7 @@ const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
 const XERO_IDENTITY_BASE = 'https://login.xero.com/identity/connect';
 const XERO_API_BASE = 'https://api.xero.com/api.xro/2.0';
 const XERO_CONNECTIONS_URL = 'https://api.xero.com/connections';
+const FALLBACK_SUPPLIER_NAME = 'ImportWazzOCR Supplier';
 
 const {
   XERO_CLIENT_ID,
@@ -156,6 +157,111 @@ function isTokenExpiringSoon(tokens) {
   return Date.now() >= new Date(tokens.expiresAt).getTime() - 60_000;
 }
 
+function decodeJwtPayload(token) {
+  try {
+    const part = String(token || '').split('.')[1];
+    if (!part) return {};
+    return JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function getGrantIdentity(tokens = {}) {
+  const claims = decodeJwtPayload(tokens.idToken);
+  return {
+    userId: tokens.userId || claims.sub || null,
+    email: tokens.email || claims.email || null,
+    name: tokens.name || claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(' ') || null
+  };
+}
+
+function getConnectionTenantId(connection) {
+  return connection?.tenantId || connection?.id || null;
+}
+
+function tenantBelongsToGrant(grant, tenantId) {
+  return Boolean(tenantId && (grant.connections || []).some((c) => getConnectionTenantId(c) === tenantId));
+}
+
+function buildGrantId(tokens, connections) {
+  const identity = getGrantIdentity(tokens);
+  if (identity.userId) return `user:${identity.userId}`;
+  if (identity.email) return `email:${identity.email.toLowerCase()}`;
+  const tenantIds = (connections || []).map(getConnectionTenantId).filter(Boolean).sort().join('|');
+  return `grant:${crypto.createHash('sha256').update(`${tenantIds}:${tokens.refreshToken || ''}`).digest('hex').slice(0, 16)}`;
+}
+
+function normalizeTokenGrant(tokens = {}, connections = tokens.connections || [], existing = {}) {
+  const identity = getGrantIdentity(tokens);
+  const now = isoNow();
+  return {
+    ...existing,
+    id: existing.id || buildGrantId(tokens, connections),
+    userId: identity.userId,
+    email: identity.email,
+    name: identity.name,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    idToken: tokens.idToken,
+    scope: tokens.scope,
+    tokenType: tokens.tokenType,
+    expiresAt: tokens.expiresAt,
+    connections: Array.isArray(connections) ? connections : [],
+    createdAt: existing.createdAt || tokens.createdAt || tokens.updatedAt || now,
+    updatedAt: now
+  };
+}
+
+async function loadTokenStore() {
+  const saved = await readJson(TOKEN_FILE, null);
+  if (!saved) {
+    return { grants: [], updatedAt: isoNow() };
+  }
+  if (Array.isArray(saved.grants)) {
+    return {
+      ...saved,
+      grants: saved.grants.filter((grant) => grant?.refreshToken || grant?.accessToken)
+    };
+  }
+  if (saved.refreshToken || saved.accessToken) {
+    return {
+      grants: [normalizeTokenGrant(saved, saved.connections || [])],
+      updatedAt: saved.updatedAt || isoNow(),
+      migratedFromLegacy: true
+    };
+  }
+  return { grants: [], updatedAt: isoNow() };
+}
+
+async function saveTokenStore(store) {
+  await writeJson(TOKEN_FILE, {
+    grants: store.grants || [],
+    updatedAt: isoNow()
+  });
+}
+
+function mergeGrantConnections(grants) {
+  const byTenant = new Map();
+  for (const grant of grants || []) {
+    for (const connection of grant.connections || []) {
+      const tenantId = getConnectionTenantId(connection);
+      if (!tenantId) continue;
+      const previous = byTenant.get(tenantId);
+      if (!previous || String(grant.updatedAt || '') >= String(previous.grantUpdatedAt || '')) {
+        byTenant.set(tenantId, {
+          ...connection,
+          tenantId,
+          grantId: grant.id,
+          connectedBy: grant.email || grant.name || grant.userId || null,
+          grantUpdatedAt: grant.updatedAt || null
+        });
+      }
+    }
+  }
+  return [...byTenant.values()].sort((a, b) => String(a.tenantName || '').localeCompare(String(b.tenantName || '')));
+}
+
 function normalizeDateString(value) {
   if (!value) return undefined;
   const trimmed = String(value).trim();
@@ -168,8 +274,15 @@ function normalizeDateString(value) {
 }
 
 function normalizeNumber(value, fallback = 0) {
-  const num = Number(value);
+  const cleaned = typeof value === 'string'
+    ? value.replace(/,/g, '').replace(/[^\d.-]/g, '')
+    : value;
+  const num = Number(cleaned);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function firstPresent(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== '');
 }
 
 function escapeXeroString(value) {
@@ -183,6 +296,14 @@ function buildWhereClause(parts) {
 function getFirstItem(payload, key) {
   const list = payload?.[key];
   return Array.isArray(list) && list.length ? list[0] : null;
+}
+
+const NON_BLOCKING_BILL_STATUSES = new Set(['DELETED', 'VOIDED']);
+
+function isBlockingDuplicateBill(invoice) {
+  if (!invoice?.InvoiceID) return false;
+  const status = String(invoice.Status || '').toUpperCase();
+  return !NON_BLOCKING_BILL_STATUSES.has(status);
 }
 
 function collectValidationMessages(node, messages = [], seen = new Set()) {
@@ -449,7 +570,6 @@ async function refreshTokens(saved) {
     updatedAt: isoNow()
   };
 
-  await writeJson(TOKEN_FILE, next);
   return next;
 }
 
@@ -467,39 +587,81 @@ async function fetchConnections(accessToken) {
   return payload;
 }
 
-async function getTokens({ refreshIfNeeded = true } = {}) {
+async function getTokensForTenant(tenantId, { refreshIfNeeded = true } = {}) {
   ensureConfig();
-  const saved = await readJson(TOKEN_FILE, null);
-  if (!saved?.refreshToken && !saved?.accessToken) {
-    return null;
+  const store = await loadTokenStore();
+  let grants = store.grants || [];
+  let changed = Boolean(store.migratedFromLegacy);
+  const candidates = grants.filter((grant) => tenantBelongsToGrant(grant, tenantId));
+
+  for (const grant of candidates.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))) {
+    try {
+      let current = grant;
+      if (refreshIfNeeded && isTokenExpiringSoon(current)) {
+        current = await refreshTokens(current);
+        const idx = grants.findIndex((item) => item.id === grant.id);
+        if (idx !== -1) {
+          grants[idx] = normalizeTokenGrant(current, current.connections || [], grants[idx]);
+          changed = true;
+        }
+      }
+      if (changed) await saveTokenStore({ grants });
+      return current;
+    } catch (error) {
+      console.error(`Could not refresh Xero token for tenant ${tenantId}:`, error.message);
+    }
   }
-  if (!refreshIfNeeded || !isTokenExpiringSoon(saved)) {
-    return saved;
-  }
-  return refreshTokens(saved);
+
+  if (changed) await saveTokenStore({ grants });
+  return null;
 }
 
 async function getValidConnections() {
-  const tokens = await getTokens();
-  if (!tokens?.accessToken) {
-    return { tokens: null, connections: [] };
+  let store = await loadTokenStore();
+  let grants = store.grants || [];
+  let changed = Boolean(store.migratedFromLegacy);
+
+  if (!grants.length) {
+    return { tokens: null, grants: [], connections: [] };
   }
-  const connections = await fetchConnections(tokens.accessToken);
-  if (JSON.stringify(tokens.connections || []) !== JSON.stringify(connections)) {
-    tokens.connections = connections;
-    tokens.updatedAt = isoNow();
-    await writeJson(TOKEN_FILE, tokens);
+
+  const activeGrants = [];
+  const persistedGrants = [];
+  for (const grant of grants) {
+    try {
+      const fresh = isTokenExpiringSoon(grant) ? await refreshTokens(grant) : grant;
+      const connections = await fetchConnections(fresh.accessToken);
+      const nextGrant = normalizeTokenGrant(fresh, connections, grant);
+      activeGrants.push(nextGrant);
+      persistedGrants.push(nextGrant);
+      if (JSON.stringify(nextGrant) !== JSON.stringify(grant)) changed = true;
+    } catch (error) {
+      console.error('Could not refresh Xero connections for saved grant:', error.message);
+      persistedGrants.push(grant);
+    }
   }
-  return { tokens, connections };
+
+  if (changed) {
+    grants = persistedGrants;
+    await saveTokenStore({ grants });
+  } else {
+    grants = persistedGrants;
+  }
+
+  return {
+    tokens: activeGrants[0] || null,
+    grants: activeGrants,
+    connections: mergeGrantConnections(activeGrants)
+  };
 }
 
 async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = false } = {}, tenantId) {
   if (!tenantId) {
     throw new Error('tenantId is required for Xero API calls.');
   }
-  const tokens = await getTokens();
+  const tokens = await getTokensForTenant(tenantId);
   if (!tokens?.accessToken) {
-    const error = new Error('Xero is not connected yet.');
+    const error = new Error('Xero is not connected to this organisation yet.');
     error.statusCode = 401;
     throw error;
   }
@@ -546,10 +708,7 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
 // ── Xero bill creation (per-tenant) ─────────────────────────────────────────
 
 async function findOrCreateContact(bill, tenantId) {
-  const supplierName = String(bill.supplier || '').trim();
-  if (!supplierName) {
-    throw new Error('Supplier name is required before creating a Xero bill.');
-  }
+  const supplierName = String(bill.supplier || FALLBACK_SUPPLIER_NAME).trim() || FALLBACK_SUPPLIER_NAME;
 
   const exactWhere = buildWhereClause([
     `Name=="${escapeXeroString(supplierName)}"`,
@@ -580,10 +739,12 @@ async function findDuplicateBill(invoiceNumber, tenantId) {
   if (!invoiceNumber) return null;
   const where = buildWhereClause([
     'Type=="ACCPAY"',
-    `InvoiceNumber=="${escapeXeroString(invoiceNumber)}"`
+    `InvoiceNumber=="${escapeXeroString(invoiceNumber)}"`,
+    'Status!="DELETED"',
+    'Status!="VOIDED"'
   ]);
   const payload = await xeroApi(`/Invoices?where=${encodeURIComponent(where)}`, {}, tenantId);
-  return getFirstItem(payload, 'Invoices');
+  return (payload.Invoices || []).find(isBlockingDuplicateBill) || null;
 }
 
 function deriveLineItems(bill, defaults) {
@@ -603,20 +764,24 @@ function deriveLineItems(bill, defaults) {
   }
 
   const normalized = provided.map((item, index) => {
-    const quantity = normalizeNumber(item.qty ?? item.quantity, 1) || 1;
-    const amount = normalizeNumber(item.amount, 0);
-    const unitPrice = normalizeNumber(item.unitPrice ?? item.unitAmount, amount > 0 ? amount / quantity : 0);
+    const quantity = normalizeNumber(firstPresent(item.qty, item.quantity, item.Quantity), 1) || 1;
+    const amount = normalizeNumber(firstPresent(item.amount, item.lineAmount, item.LineAmount, item.total, item.Total), 0);
+    const unitPrice = normalizeNumber(
+      firstPresent(item.unitPrice, item.unitAmount, item.UnitAmount, item.price, item.rate),
+      amount > 0 ? amount / quantity : 0
+    );
     const resolvedAccount = item.accountCode || accountCode;
     const resolvedTax = item.taxType || taxType;
     const lineItem = {
-      Description: String(item.description || `Line item ${index + 1}`),
+      Description: String(firstPresent(item.description, item.Description, item.name) || `Line item ${index + 1}`),
       Quantity: quantity,
       UnitAmount: Number(unitPrice.toFixed(2))
     };
     if (resolvedAccount) lineItem.AccountCode = resolvedAccount;
     if (resolvedTax) lineItem.TaxType = resolvedTax;
+    if (amount > 0) lineItem.LineAmount = Number(amount.toFixed(2));
     return lineItem;
-  });
+  }).filter((item) => item.UnitAmount > 0 || item.LineAmount > 0);
 
   if (!normalized.length) {
     throw new Error('No usable line items were found for the bill.');
@@ -629,10 +794,11 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
   if (!tenantId) {
     throw new Error('tenantId is required.');
   }
+  bill.supplier = String(bill.supplier || '').trim() || FALLBACK_SUPPLIER_NAME;
   const contact = await findOrCreateContact(bill, tenantId);
   const duplicate = await findDuplicateBill(bill.invoiceNo, tenantId);
   if (duplicate?.InvoiceID) {
-    const error = new Error(`A draft or existing bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
+    const error = new Error(`An active bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
     error.statusCode = 409;
     error.payload = {
       duplicate: true,
@@ -762,6 +928,24 @@ function extractJsonText(raw) {
 }
 
 function normalizeBillPayload(bill) {
+  const lineItems = Array.isArray(bill?.lineItems)
+    ? bill.lineItems.map((item) => {
+        const qty = normalizeNumber(firstPresent(item.qty, item.quantity, item.Quantity), 1) || 1;
+        const amount = normalizeNumber(firstPresent(item.amount, item.lineAmount, item.LineAmount, item.total, item.Total), 0);
+        const unitPrice = normalizeNumber(
+          firstPresent(item.unitPrice, item.unitAmount, item.UnitAmount, item.price, item.rate),
+          amount > 0 ? amount / qty : 0
+        );
+        return {
+          ...item,
+          description: firstPresent(item.description, item.Description, item.name) || '',
+          qty,
+          unitPrice,
+          amount
+        };
+      })
+    : [];
+
   const normalized = {
     supplier: bill?.supplier || null,
     billedTo: bill?.billedTo || null,
@@ -769,7 +953,7 @@ function normalizeBillPayload(bill) {
     date: bill?.date || null,
     dueDate: bill?.dueDate || null,
     currency: bill?.currency || XERO_DEFAULT_CURRENCY,
-    lineItems: Array.isArray(bill?.lineItems) ? bill.lineItems : [],
+    lineItems,
     subtotal: normalizeNumber(bill?.subtotal),
     tax: normalizeNumber(bill?.tax),
     taxLabel: bill?.taxLabel || 'Tax',
@@ -1086,8 +1270,12 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
 
 app.get('/api/xero/status', async (req, res) => {
   try {
-    const tokens = await getTokens();
-    if (!tokens?.accessToken) {
+    const { grants, connections } = await getValidConnections();
+    const latestGrant = (grants || [])
+      .slice()
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
+
+    if (!latestGrant?.accessToken || !connections.length) {
       return res.json({
         connected: false,
         connectUrl: '/api/xero/connect',
@@ -1098,19 +1286,19 @@ app.get('/api/xero/status', async (req, res) => {
       });
     }
 
-    const { connections } = await getValidConnections();
-
     res.json({
       connected: true,
       tenants: connections.map((c) => ({
         tenantId: c.tenantId,
         tenantName: c.tenantName,
         tenantType: c.tenantType,
+        connectedBy: c.connectedBy,
         createdDateUtc: c.createdDateUtc,
         updatedDateUtc: c.updatedDateUtc
       })),
-      expiresAt: tokens.expiresAt,
-      scope: tokens.scope,
+      grantCount: grants.length,
+      expiresAt: latestGrant.expiresAt,
+      scope: latestGrant.scope,
       connectUrl: '/api/xero/connect',
       redirectUri: getOAuthRedirectUri(req),
       defaultAccountCode: XERO_DEFAULT_ACCOUNT_CODE,
@@ -1132,7 +1320,8 @@ app.get('/api/xero/tenants', async (req, res) => {
       tenants: connections.map((c) => ({
         tenantId: c.tenantId,
         tenantName: c.tenantName,
-        tenantType: c.tenantType
+        tenantType: c.tenantType,
+        connectedBy: c.connectedBy
       }))
     });
   } catch (error) {
@@ -1174,12 +1363,15 @@ app.get('/api/xero/callback', async (req, res) => {
     const tokens = await exchangeCodeForTokens(code, redirectUri);
     const connections = await fetchConnections(tokens.accessToken);
 
-    const persisted = {
-      ...tokens,
-      connections,
-      updatedAt: isoNow()
-    };
-    await writeJson(TOKEN_FILE, persisted);
+    const store = await loadTokenStore();
+    const grant = normalizeTokenGrant(tokens, connections);
+    const existingIndex = (store.grants || []).findIndex((item) => item.id === grant.id);
+    if (existingIndex === -1) {
+      store.grants = [...(store.grants || []), grant];
+    } else {
+      store.grants[existingIndex] = normalizeTokenGrant(tokens, connections, store.grants[existingIndex]);
+    }
+    await saveTokenStore(store);
     await writeJson(STATE_FILE, { state: null, clearedAt: isoNow() });
 
     res.redirect('/index.html?xero=connected#settings');
@@ -1280,7 +1472,7 @@ app.get('/api/pending-bills', async (req, res) => {
 
 app.post('/api/pending-bills/:id/assign', async (req, res) => {
   try {
-    const { tenantId, taxType, accountCode } = req.body || {};
+    const { tenantId, taxType, accountCode, supplier, supplierName } = req.body || {};
     if (!tenantId) return res.status(400).json({ error: 'Missing tenantId.' });
 
     const pending = await getPendingBill(req.params.id);
@@ -1304,6 +1496,7 @@ app.post('/api/pending-bills/:id/assign', async (req, res) => {
     }
 
     const billForCreate = { ...pending.bill };
+    if (supplier || supplierName) billForCreate.supplier = supplier || supplierName;
     if (taxType) billForCreate.taxType = taxType;
     if (accountCode) billForCreate.accountCode = accountCode;
     const result = await createDraftBill({ bill: billForCreate, sourceFile, tenantId });
