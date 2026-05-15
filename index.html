@@ -425,6 +425,11 @@
       display: flex; justify-content: flex-end; gap: 0.6rem; flex-wrap: wrap;
       padding: 0 1.15rem 1.15rem;
     }
+    .confirm-prompt-note {
+      padding: 0.75rem 0.85rem; border-radius: var(--fe-radius-sm);
+      background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+      font-size: 0.86rem; font-weight: 600; line-height: 1.5;
+    }
 
     /* ── Step list ── */
     .step-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
@@ -595,6 +600,18 @@
     }
     .bills-status.draft { background: #eff6ff; color: #1d4ed8; }
     .bills-status.authorised { background: #f0fdf4; color: #15803d; }
+    .bills-status.voided, .bills-status.deleted, .bills-status.missing { background: #fef2f2; color: #b91c1c; }
+    .history-filter {
+      display: inline-flex; gap: 0.35rem; padding: 0.25rem;
+      border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
+      background: var(--fe-white);
+    }
+    .history-filter button {
+      border: none; background: transparent; color: var(--fe-muted);
+      font-weight: 700; font-size: 0.82rem; padding: 0.45rem 0.75rem;
+      border-radius: 6px; cursor: pointer;
+    }
+    .history-filter button.active { background: var(--fe-primary); color: white; }
     @media (max-width: 720px) {
       .bills-table thead { display: none; }
       .bills-table, .bills-table tbody, .bills-table tr, .bills-table td { display: block; width: 100%; }
@@ -702,11 +719,11 @@
           </div>
           <div class="card-body">
             <div class="drop-zone" id="billDropZone">
-              <input type="file" id="billFileInput" accept="image/*">
+              <input type="file" id="billFileInput" accept=".png,.jpg,.jpeg,image/png,image/jpeg">
               <div class="drop-icon">📄</div>
               <h3>Drop your bill here</h3>
               <p>or click to browse files</p>
-              <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--fe-muted);">JPG · PNG · WEBP · BMP</div>
+              <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--fe-muted);">PNG · JPG · JPEG</div>
             </div>
 
             <div id="billPreviewWrap" style="display:none;">
@@ -779,6 +796,10 @@
           <h2 class="section-title">Created Bills</h2>
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <div class="history-filter" aria-label="Bill history status filter">
+            <button type="button" class="active" id="historyActiveBtn" onclick="setBillHistoryBucket('active')">Active</button>
+            <button type="button" id="historyArchivedBtn" onclick="setBillHistoryBucket('archived')">Voided / Archived</button>
+          </div>
           <select class="api-bar-select" id="orgFilterSelect" onchange="loadBillsForOrg()" style="min-width:240px;">
             <option value="">All organisations</option>
           </select>
@@ -897,6 +918,20 @@
   </div>
 </div>
 
+<div class="supplier-prompt-backdrop" id="confirmPrompt" aria-hidden="true">
+  <div class="supplier-prompt-panel" role="dialog" aria-modal="true" aria-labelledby="confirmPromptTitle">
+    <div class="supplier-prompt-head" id="confirmPromptTitle">Discard pending bill?</div>
+    <div class="supplier-prompt-body">
+      <p id="confirmPromptMessage" style="font-size:0.92rem;color:var(--fe-muted);">Are you sure?</p>
+      <div class="confirm-prompt-note" id="confirmPromptNote">The original image will be deleted.</div>
+    </div>
+    <div class="supplier-prompt-actions">
+      <button type="button" class="btn-ghost" id="confirmPromptCancel">Cancel</button>
+      <button type="button" class="btn btn-primary btn-sm" id="confirmPromptContinue">Discard</button>
+    </div>
+  </div>
+</div>
+
 <!-- Tesseract.js CDN -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
@@ -953,9 +988,11 @@
   let PROVIDER_CONFIG = {};
   let aiSettings = { provider: 'groq', model: '' };
   let xeroState = { connected: false, tenants: [] };
+  let billHistoryBucket = 'active';
   const tenantTaxRatesCache = {};
   const FALLBACK_SUPPLIER_NAME = 'ImportWazzOCR Supplier';
   let supplierPromptResolve = null;
+  let confirmPromptResolve = null;
 
   function requestSupplierName(initialValue = '') {
     const panel = document.getElementById('supplierPrompt');
@@ -999,6 +1036,41 @@
     if (event.key === 'Escape') {
       event.preventDefault();
       closeSupplierPrompt(null);
+    }
+  });
+
+  function requestConfirm({ title = 'Confirm action', message = 'Are you sure?', note = '', confirmText = 'Continue' } = {}) {
+    document.getElementById('confirmPromptTitle').textContent = title;
+    document.getElementById('confirmPromptMessage').textContent = message;
+    const noteEl = document.getElementById('confirmPromptNote');
+    noteEl.textContent = note;
+    noteEl.style.display = note ? 'block' : 'none';
+    document.getElementById('confirmPromptContinue').textContent = confirmText;
+
+    const panel = document.getElementById('confirmPrompt');
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+
+    return new Promise(resolve => {
+      confirmPromptResolve = resolve;
+    });
+  }
+
+  function closeConfirmPrompt(value) {
+    const panel = document.getElementById('confirmPrompt');
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    const resolve = confirmPromptResolve;
+    confirmPromptResolve = null;
+    if (resolve) resolve(value);
+  }
+
+  document.getElementById('confirmPromptContinue').addEventListener('click', () => closeConfirmPrompt(true));
+  document.getElementById('confirmPromptCancel').addEventListener('click', () => closeConfirmPrompt(false));
+  document.getElementById('confirmPrompt').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeConfirmPrompt(false);
     }
   });
 
@@ -1325,7 +1397,14 @@
   }
 
   async function discardPending(id, btn) {
-    if (!confirm('Discard this pending bill? The original image will be deleted.')) return;
+    const confirmed = await requestConfirm({
+      title: 'Discard pending bill?',
+      message: 'This pending bill will be removed from the unmatched queue.',
+      note: 'The original image will be deleted.',
+      confirmText: 'Discard'
+    });
+    if (!confirmed) return;
+
     btn.disabled = true;
     try {
       const resp = await fetch(`/api/pending-bills/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -1339,18 +1418,28 @@
   }
 
   // ── Per-organisation bills history ──
+  function setBillHistoryBucket(bucket) {
+    billHistoryBucket = bucket === 'archived' ? 'archived' : 'active';
+    document.getElementById('historyActiveBtn').classList.toggle('active', billHistoryBucket === 'active');
+    document.getElementById('historyArchivedBtn').classList.toggle('active', billHistoryBucket === 'archived');
+    loadBillsForOrg();
+  }
+
   async function loadBillsForOrg() {
     const tenantId = document.getElementById('orgFilterSelect').value;
     const listEl = document.getElementById('billsList');
     listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Loading…</p></div>';
     try {
-      const url = tenantId ? `/api/bills?tenantId=${encodeURIComponent(tenantId)}` : '/api/bills';
+      const params = new URLSearchParams({ bucket: billHistoryBucket });
+      if (tenantId) params.set('tenantId', tenantId);
+      const url = `/api/bills?${params.toString()}`;
       const resp = await fetch(url);
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Failed to load bills.');
       const items = data.bills || [];
       if (!items.length) {
-        listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><p>No bills created here yet.</p></div>';
+        const label = billHistoryBucket === 'archived' ? 'voided or archived bills' : 'active bills';
+        listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📭</div><p>No ${label} here yet.</p></div>`;
         return;
       }
       listEl.innerHTML = `
@@ -1391,16 +1480,26 @@
         <td data-label="Total">${esc(total)}</td>
         <td data-label="Status"><span class="bills-status ${statusClass}">${esc(b.status || 'DRAFT')}</span></td>
         <td data-label="Source">${esc(b.source || '-')}</td>
-        <td data-label=""><a href="${esc(b.xeroUrl || '#')}" target="_blank" rel="noopener" class="invoice-link">Open ↗</a></td>
+        <td data-label=""><a href="/api/bills/${encodeURIComponent(b.id)}/open" target="_blank" rel="noopener" class="invoice-link">Open ↗</a></td>
       </tr>`;
   }
 
   // ── Scan flow (web upload) ──
   const billFileInput = document.getElementById('billFileInput');
   const billDropZone  = document.getElementById('billDropZone');
+  const ACCEPTED_BILL_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
+  const ACCEPTED_BILL_IMAGE_EXTS = ['.png', '.jpg', '.jpeg'];
   let billCurrentFile = null;
   let lastBill = null;
   let lastMatchedTenantId = null;
+
+  function isAcceptedBillImage(file) {
+    const name = String(file?.name || '').toLowerCase();
+    return Boolean(file && (
+      ACCEPTED_BILL_IMAGE_TYPES.has(file.type) ||
+      ACCEPTED_BILL_IMAGE_EXTS.some(ext => name.endsWith(ext))
+    ));
+  }
 
   document.addEventListener('paste', e => {
     const items = e.clipboardData?.items;
@@ -1418,11 +1517,16 @@
   billDropZone.addEventListener('drop', e => {
     e.preventDefault(); billDropZone.classList.remove('dragover');
     const f = e.dataTransfer.files[0];
-    if (f && f.type.startsWith('image/')) handleBillFile(f);
+    handleBillFile(f);
   });
 
   function handleBillFile(file) {
     if (!file) return;
+    if (!isAcceptedBillImage(file)) {
+      showBillError('Unsupported file type. Please upload a PNG, JPG, or JPEG image.');
+      billFileInput.value = '';
+      return;
+    }
     billCurrentFile = file;
     const reader = new FileReader();
     reader.onload = e => {

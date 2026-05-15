@@ -39,7 +39,8 @@ const {
   GROQ_API_KEY = '',
   GEMINI_API_KEY = '',
   DEFAULT_AI_PROVIDER = 'groq',
-  WHATSAPP_AUTO_CREATE_XERO_BILLS = 'false'
+  WHATSAPP_AUTO_CREATE_XERO_BILLS = 'false',
+  BILL_STATUS_CRON_SECRET = ''
 } = process.env;
 
 const AI_PROVIDERS = {
@@ -285,6 +286,12 @@ function firstPresent(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== '');
 }
 
+function safeEquals(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
 function escapeXeroString(value) {
   return String(value).replace(/"/g, '\\"');
 }
@@ -299,11 +306,20 @@ function getFirstItem(payload, key) {
 }
 
 const NON_BLOCKING_BILL_STATUSES = new Set(['DELETED', 'VOIDED']);
+const ARCHIVED_BILL_STATUSES = new Set(['DELETED', 'VOIDED', 'MISSING', 'NOT_FOUND']);
 
 function isBlockingDuplicateBill(invoice) {
   if (!invoice?.InvoiceID) return false;
   const status = String(invoice.Status || '').toUpperCase();
   return !NON_BLOCKING_BILL_STATUSES.has(status);
+}
+
+function isArchivedBillStatus(status) {
+  return ARCHIVED_BILL_STATUSES.has(String(status || '').toUpperCase());
+}
+
+function isArchivedBillRecord(record) {
+  return Boolean(record?.archivedAt || isArchivedBillStatus(record?.status));
 }
 
 function collectValidationMessages(node, messages = [], seen = new Set()) {
@@ -400,6 +416,10 @@ async function saveBillRecord(record) {
   list.unshift(record);
   await writeJson(BILLS_FILE, list);
   return record;
+}
+
+async function saveBills(list) {
+  await writeJson(BILLS_FILE, list);
 }
 
 async function loadPendingBills() {
@@ -838,9 +858,18 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     body: JSON.stringify(invoicePayload)
   }, tenantId);
 
-  const invoice = getFirstItem(createdPayload, 'Invoices');
+  let invoice = getFirstItem(createdPayload, 'Invoices');
   if (!invoice?.InvoiceID) {
     throw new Error('Xero did not return an invoice after creation.');
+  }
+
+  try {
+    const freshInvoice = await fetchXeroBill(invoice.InvoiceID, tenantId);
+    if (freshInvoice?.InvoiceID) {
+      invoice = { ...invoice, ...freshInvoice };
+    }
+  } catch (error) {
+    console.error(`Could not refresh created Xero bill ${invoice.InvoiceID}:`, error.message);
   }
 
   let attachment = null;
@@ -859,7 +888,7 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
 
   return {
     invoiceId: invoice.InvoiceID,
-    invoiceNumber: invoice.InvoiceNumber,
+    invoiceNumber: invoice.InvoiceNumber || bill.invoiceNo || null,
     status: invoice.Status,
     contactName: invoice.Contact?.Name || contact.Name,
     total: invoice.Total,
@@ -877,9 +906,9 @@ function buildBillRecord({ bill, result, tenant, source }) {
     tenantName: tenant.tenantName || null,
     billedTo: bill.billedTo || null,
     supplier: bill.supplier || null,
-    invoiceNo: bill.invoiceNo || null,
+    invoiceNo: bill.invoiceNo || result.invoiceNumber || null,
     invoiceId: result.invoiceId,
-    invoiceNumber: result.invoiceNumber || null,
+    invoiceNumber: result.invoiceNumber || bill.invoiceNo || null,
     status: result.status,
     total: result.total,
     currency: result.currency,
@@ -887,6 +916,108 @@ function buildBillRecord({ bill, result, tenant, source }) {
     attachmentName: result.attachment?.fileName || null,
     source: source || 'manual',
     createdAt: isoNow()
+  };
+}
+
+async function fetchXeroBill(invoiceId, tenantId) {
+  const payload = await xeroApi(`/Invoices/${encodeURIComponent(invoiceId)}`, {}, tenantId);
+  return getFirstItem(payload, 'Invoices');
+}
+
+function applyXeroBillStatus(record, invoice, checkedAt) {
+  const status = String(invoice?.Status || record.status || 'UNKNOWN').toUpperCase();
+  const next = {
+    ...record,
+    invoiceNumber: invoice?.InvoiceNumber || record.invoiceNumber || record.invoiceNo,
+    status,
+    total: invoice?.Total ?? record.total,
+    currency: invoice?.CurrencyCode || record.currency,
+    xeroUrl: invoice?.Url || record.xeroUrl,
+    lastStatusCheckedAt: checkedAt,
+    statusCheckError: null
+  };
+
+  if (isArchivedBillStatus(status)) {
+    next.archivedAt = record.archivedAt || checkedAt;
+    next.archiveReason = `Xero status ${status}`;
+  } else {
+    delete next.archivedAt;
+    delete next.archiveReason;
+  }
+
+  return next;
+}
+
+function markBillMissing(record, checkedAt, reason = 'Invoice not found in Xero') {
+  return {
+    ...record,
+    status: 'MISSING',
+    archivedAt: record.archivedAt || checkedAt,
+    archiveReason: reason,
+    lastStatusCheckedAt: checkedAt,
+    statusCheckError: null
+  };
+}
+
+async function refreshStoredBillStatuses({ tenantId = null } = {}) {
+  const checkedAt = isoNow();
+  const bills = await loadBills();
+  let checked = 0;
+  let updated = 0;
+  const errors = [];
+
+  const nextBills = [];
+  for (const record of bills) {
+    if (tenantId && record.tenantId !== tenantId) {
+      nextBills.push(record);
+      continue;
+    }
+    if (!record.invoiceId || !record.tenantId) {
+      nextBills.push(record);
+      continue;
+    }
+
+    checked += 1;
+    try {
+      const invoice = await fetchXeroBill(record.invoiceId, record.tenantId);
+      const next = invoice
+        ? applyXeroBillStatus(record, invoice, checkedAt)
+        : markBillMissing(record, checkedAt);
+      if (JSON.stringify(next) !== JSON.stringify(record)) updated += 1;
+      nextBills.push(next);
+    } catch (error) {
+      if (error.statusCode === 404 || /not\s*found|cannot\s*find|does\s*not\s*exist/i.test(error.message || '')) {
+        const next = markBillMissing(record, checkedAt, error.message || 'Invoice not found in Xero');
+        if (JSON.stringify(next) !== JSON.stringify(record)) updated += 1;
+        nextBills.push(next);
+        continue;
+      }
+
+      errors.push({
+        id: record.id,
+        invoiceId: record.invoiceId,
+        tenantId: record.tenantId,
+        error: error.message
+      });
+      nextBills.push({
+        ...record,
+        lastStatusCheckedAt: checkedAt,
+        statusCheckError: error.message
+      });
+    }
+  }
+
+  if (updated || errors.length) {
+    await saveBills(nextBills);
+  }
+
+  return {
+    ok: errors.length === 0,
+    checked,
+    updated,
+    archived: nextBills.filter(isArchivedBillRecord).length,
+    active: nextBills.filter((bill) => !isArchivedBillRecord(bill)).length,
+    errors
   };
 }
 
@@ -1439,11 +1570,56 @@ app.post('/api/xero/create-bill', upload.single('sourceImage'), async (req, res)
 app.get('/api/bills', async (req, res) => {
   try {
     const tenantId = req.query.tenantId;
+    const bucket = String(req.query.bucket || 'active').toLowerCase();
     const all = await loadBills();
-    const bills = tenantId ? all.filter((b) => b.tenantId === tenantId) : all;
+    let bills = tenantId ? all.filter((b) => b.tenantId === tenantId) : all;
+    if (bucket === 'archived') {
+      bills = bills.filter(isArchivedBillRecord);
+    } else if (bucket !== 'all') {
+      bills = bills.filter((b) => !isArchivedBillRecord(b));
+    }
     res.json({ bills });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/bills/:id/open', async (req, res) => {
+  try {
+    const bills = await loadBills();
+    const record = bills.find((bill) => bill.id === req.params.id);
+    if (!record) return res.status(404).send('Bill history record not found.');
+    if (!record.invoiceId || !record.tenantId) return res.status(400).send('Bill history record is missing Xero invoice information.');
+
+    let targetUrl = record.xeroUrl || `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${encodeURIComponent(record.invoiceId)}`;
+    try {
+      const invoice = await fetchXeroBill(record.invoiceId, record.tenantId);
+      if (invoice?.Url) targetUrl = invoice.Url;
+    } catch (error) {
+      console.error(`Could not refresh Xero open link for ${record.invoiceId}:`, error.message);
+    }
+
+    res.redirect(targetUrl);
+  } catch (error) {
+    res.status(error.statusCode || 500).send(error.message);
+  }
+});
+
+app.all(['/api/cron/check-bill-statuses', '/api/webhook/check-bill-statuses'], async (req, res) => {
+  try {
+    if (BILL_STATUS_CRON_SECRET) {
+      const supplied = req.query.secret || req.get('x-cron-secret') || '';
+      if (!safeEquals(supplied, BILL_STATUS_CRON_SECRET)) {
+        return res.status(401).json({ ok: false, error: 'Invalid cron secret.' });
+      }
+    }
+
+    const result = await refreshStoredBillStatuses({
+      tenantId: req.query.tenantId || null
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, error: error.message });
   }
 });
 
