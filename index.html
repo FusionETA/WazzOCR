@@ -846,7 +846,7 @@
           </div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:0.75rem;">
             <div>
-              <span class="api-bar-status unset" id="xeroStatus">Not connected</span>
+              <span class="api-bar-status unset" id="xeroStatus">Checking Xero connection...</span>
             </div>
             <div id="xeroOrgsWrap" style="display:none;">
               <div class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Connected organisations</div>
@@ -949,6 +949,16 @@
 
   const esc = s => s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+  // ── State ──
+  let PROVIDER_CONFIG = {};
+  let aiSettings = { provider: 'groq', model: '' };
+  let xeroState = { connected: false, tenants: [] };
+  let billHistoryBucket = 'active';
+  const tenantTaxRatesCache = {};
+  const FALLBACK_SUPPLIER_NAME = 'ImportWazzOCR Supplier';
+  let supplierPromptResolve = null;
+  let confirmPromptResolve = null;
+
   // ── Tab handling ──
   const panels = ['scan', 'unmatched', 'organisations', 'settings'];
   function activateTab(name) {
@@ -983,16 +993,6 @@
     el.innerHTML = message;
     el.style.display = 'block';
   }
-
-  // ── State ──
-  let PROVIDER_CONFIG = {};
-  let aiSettings = { provider: 'groq', model: '' };
-  let xeroState = { connected: false, tenants: [] };
-  let billHistoryBucket = 'active';
-  const tenantTaxRatesCache = {};
-  const FALLBACK_SUPPLIER_NAME = 'ImportWazzOCR Supplier';
-  let supplierPromptResolve = null;
-  let confirmPromptResolve = null;
 
   function requestSupplierName(initialValue = '') {
     const panel = document.getElementById('supplierPrompt');
@@ -1179,6 +1179,7 @@
 
   // ── Xero status ──
   async function loadXeroStatus(showInfoMessage = false) {
+    renderXeroStatus({ loading: true });
     try {
       const resp = await fetch('/api/xero/status');
       const data = await resp.json();
@@ -1206,6 +1207,16 @@
     const orgsList = document.getElementById('xeroOrgsList');
 
     const tenants = Array.isArray(status.tenants) ? status.tenants : [];
+
+    if (status.loading) {
+      statusEl.textContent = 'Checking Xero connection...';
+      statusEl.className = 'api-bar-status unset';
+      helpEl.textContent = 'Checking saved Xero tokens and authorised organisations.';
+      connectBtn.textContent = 'Add/Reconnect Xero';
+      orgsWrap.style.display = 'none';
+      orgsList.innerHTML = '';
+      return;
+    }
 
     if (status.connected) {
       const grantText = status.grantCount > 1 ? ` via ${status.grantCount} logins` : '';

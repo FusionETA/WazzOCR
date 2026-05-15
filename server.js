@@ -22,6 +22,7 @@ const STATE_FILE = path.join(DATA_DIR, 'xero-auth-state.json');
 const BILLS_FILE = path.join(DATA_DIR, 'bills.json');
 const PENDING_FILE = path.join(DATA_DIR, 'pending-bills.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
+const BILL_STATUS_CRON_LOG_FILE = path.join(DATA_DIR, 'bill-status-cron.log');
 const XERO_IDENTITY_BASE = 'https://login.xero.com/identity/connect';
 const XERO_API_BASE = 'https://api.xero.com/api.xro/2.0';
 const XERO_CONNECTIONS_URL = 'https://api.xero.com/connections';
@@ -420,6 +421,11 @@ async function saveBillRecord(record) {
 
 async function saveBills(list) {
   await writeJson(BILLS_FILE, list);
+}
+
+async function logBillStatusCron(entry) {
+  await ensureDataDir();
+  await fsp.appendFile(BILL_STATUS_CRON_LOG_FILE, `${JSON.stringify(entry)}\n`);
 }
 
 async function loadPendingBills() {
@@ -1617,8 +1623,19 @@ app.all(['/api/cron/check-bill-statuses', '/api/webhook/check-bill-statuses'], a
     const result = await refreshStoredBillStatuses({
       tenantId: req.query.tenantId || null
     });
+    await logBillStatusCron({
+      timestamp: isoNow(),
+      tenantId: req.query.tenantId || null,
+      ...result
+    });
     res.json(result);
   } catch (error) {
+    await logBillStatusCron({
+      timestamp: isoNow(),
+      tenantId: req.query.tenantId || null,
+      ok: false,
+      error: error.message
+    });
     res.status(error.statusCode || 500).json({ ok: false, error: error.message });
   }
 });
