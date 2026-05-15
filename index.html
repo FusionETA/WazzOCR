@@ -590,6 +590,14 @@
     .bills-table tr:last-child td { border-bottom: none; }
     .bills-table .invoice-link { color: var(--fe-accent); text-decoration: none; font-weight: 600; }
     .bills-table .invoice-link:hover { text-decoration: underline; }
+    .history-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+    .history-trash {
+      border: none; background: #fef2f2; color: #b91c1c;
+      width: 2rem; height: 2rem; border-radius: 8px;
+      cursor: pointer; font-size: 1rem; line-height: 1;
+    }
+    .history-trash:hover { background: #fee2e2; }
+    .history-trash:disabled { opacity: 0.6; cursor: not-allowed; }
     .bills-status {
       display: inline-block;
       font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
@@ -1482,6 +1490,9 @@
     const date = b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '-';
     const total = `${esc(b.currency || '')} ${Number(b.total || 0).toFixed(2)}`.trim();
     const statusClass = String(b.status || '').toLowerCase();
+    const trashButton = billHistoryBucket === 'archived'
+      ? `<button type="button" class="history-trash" title="Remove archived record" onclick="removeArchivedBill('${esc(b.id)}', this)">🗑</button>`
+      : '';
     return `
       <tr>
         <td data-label="Date">${esc(date)}</td>
@@ -1491,8 +1502,30 @@
         <td data-label="Total">${esc(total)}</td>
         <td data-label="Status"><span class="bills-status ${statusClass}">${esc(b.status || 'DRAFT')}</span></td>
         <td data-label="Source">${esc(b.source || '-')}</td>
-        <td data-label=""><a href="/api/bills/${encodeURIComponent(b.id)}/open" target="_blank" rel="noopener" class="invoice-link">Open ↗</a></td>
+        <td data-label=""><div class="history-actions"><a href="/api/bills/${encodeURIComponent(b.id)}/open" target="_blank" rel="noopener" class="invoice-link">Open ↗</a>${trashButton}</div></td>
       </tr>`;
+  }
+
+  async function removeArchivedBill(id, btn) {
+    const confirmed = await requestConfirm({
+      title: 'Remove archived record?',
+      message: 'This removes the record from WazzOCR history only.',
+      note: 'The Xero bill will not be changed.',
+      confirmText: 'Remove'
+    });
+    if (!confirmed) return;
+
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/bills/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to remove archived record.');
+      showGlobalNotice('Archived record removed.', 'success');
+      await loadBillsForOrg();
+    } catch (error) {
+      btn.disabled = false;
+      showGlobalNotice(`Could not remove archived record: ${esc(error.message)}`, 'error');
+    }
   }
 
   // ── Scan flow (web upload) ──

@@ -1611,6 +1611,25 @@ app.get('/api/bills/:id/open', async (req, res) => {
   }
 });
 
+app.delete('/api/bills/:id', async (req, res) => {
+  try {
+    const bills = await loadBills();
+    const idx = bills.findIndex((bill) => bill.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Bill history record not found.' });
+
+    const record = bills[idx];
+    if (!isArchivedBillRecord(record)) {
+      return res.status(409).json({ error: 'Only voided or archived bill history records can be removed.' });
+    }
+
+    const [removed] = bills.splice(idx, 1);
+    await saveBills(bills);
+    res.json({ ok: true, removed: { id: removed.id, invoiceNumber: removed.invoiceNumber || removed.invoiceNo || null } });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
 app.all(['/api/cron/check-bill-statuses', '/api/webhook/check-bill-statuses'], async (req, res) => {
   try {
     if (BILL_STATUS_CRON_SECRET) {
