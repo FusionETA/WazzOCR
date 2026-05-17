@@ -479,7 +479,20 @@ async function saveAiSettings({ provider, model }) {
   return final;
 }
 
-// ── Tenant matching: case-insensitive Levenshtein distance ≤ 1 ──────────────
+// ── Tenant matching: Malaysia-aware multi-strategy scorer ───────────────────
+//
+// Strategies (highest scoring wins, ties → ambiguous → null):
+//   exact (after normalization)               score 100
+//   prefix containment (one starts with other) 95
+//   parenthetical-initials  e.g. (SP) ↔ Sri Petaling
+//                                              92
+//   substring containment                      88
+//   all-tokens-contained (shorter ⊂ longer)    82
+//   Levenshtein distance 1                     78
+//   Levenshtein distance 2 (on long strings)   72
+//   token Jaccard ≥ 0.7                        65
+//
+// Threshold to accept: 70. Ambiguous if top two scores tie within 3 points.
 
 function levenshtein(a, b) {
   if (a === b) return 0;
@@ -487,7 +500,6 @@ function levenshtein(a, b) {
   const bl = b.length;
   if (al === 0) return bl;
   if (bl === 0) return al;
-  if (Math.abs(al - bl) > 1) return Math.abs(al - bl);
 
   const prev = new Array(al + 1);
   const curr = new Array(al + 1);
@@ -508,31 +520,223 @@ function levenshtein(a, b) {
   return prev[al];
 }
 
+// Malaysian + common business legal suffixes. These are LEGAL FORM markers only —
+// we deliberately do NOT include brand-meaningful words like "Holdings", "Group",
+// "Services", "Trading" because those are part of the company's identity, not its
+// legal form, and stripping them collapses distinct companies.
+// Order matters — longer/more-specific tokens first so "sdn bhd" is stripped as a unit.
+const COMPANY_SUFFIX_TOKENS = [
+  'sendirian berhad', 'sdn bhd', 'sendirian bhd', 'sdn berhad',
+  'berhad', 'bhd',
+  'pte ltd', 'private limited', 'pte ltd.',
+  'limited', 'ltd',
+  'plt', 'llp',
+  'corporation', 'corp',
+  'incorporated', 'inc',
+  'gmbh',
+  'company'
+];
+
+// Words that introduce a "care of" / forwarding party — anything after these
+// is NOT part of the billed entity's identity.
+const CARE_OF_MARKERS = [
+  /\s+c\/o\s+.*$/i,
+  /\s+c\\o\s+.*$/i,
+  /\s+care\s+of\s+.*$/i,
+  /\s+attn:?\s+.*$/i,
+  /\s+attention:?\s+.*$/i,
+  /\s+a\/c\s+.*$/i        // "A/C" (account) lines
+];
+
+function stripCareOf(name) {
+  let s = name;
+  for (const re of CARE_OF_MARKERS) s = s.replace(re, '');
+  return s.trim();
+}
+
+// Light normalization — for comparison only. Preserves parenthetical groups so
+// we can detect abbreviations like "(SP)" separately.
 function normalizeName(value) {
   return String(value || '')
     .normalize('NFKC')
     .toLowerCase()
+    .replace(/[,]/g, ' ')
+    .replace(/\./g, '')         // drop periods (sdn. bhd. → sdn bhd)
+    .replace(/&/g, ' and ')
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+// Heavier normalization — strips care-of, parenthetical abbreviations, and
+// trailing legal/business suffix tokens. Used as the "core identity" form.
+function normalizeCompanyCore(value) {
+  let s = normalizeName(value);
+  s = stripCareOf(s);
+  s = s.replace(/\s*\([^)]*\)\s*/g, ' ').trim();   // drop "( ... )" groups
+  s = s.replace(/[()]/g, ' ').trim();
+
+  // Strip trailing suffix tokens iteratively (handles "abc sdn bhd plt")
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const suf of COMPANY_SUFFIX_TOKENS) {
+      const re = new RegExp(`(?:^|\\s)${suf.replace(/\s+/g, '\\s+')}\\s*$`, 'i');
+      if (re.test(s)) {
+        s = s.replace(re, '').trim();
+        changed = true;
+      }
+    }
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+function tokenize(s) {
+  return String(s || '').split(/\s+/).filter(Boolean);
+}
+
+function initialsOf(s) {
+  return tokenize(s).map((t) => t[0] || '').join('');
+}
+
+// Extract a trailing parenthetical group, e.g. "ayu borneo (sp)" → { core: "ayu borneo", abbrev: "sp" }
+function extractParentheticalAbbrev(normalized) {
+  const m = String(normalized || '').match(/^(.*?)\s*\(([a-z0-9]+)\)\s*$/i);
+  if (!m) return { core: normalized, abbrev: null };
+  return { core: m[1].trim(), abbrev: m[2].toLowerCase() };
+}
+
+function scoreMatch(billRaw, tenantRaw) {
+  const billNorm = normalizeName(billRaw);
+  const tenantNorm = normalizeName(tenantRaw);
+  if (!billNorm || !tenantNorm) return { score: 0, reason: 'empty' };
+
+  const billCore = normalizeCompanyCore(billRaw);
+  const tenantCore = normalizeCompanyCore(tenantRaw);
+
+  // Strongest signals first on the "core" identity (suffixes stripped).
+  if (billCore && tenantCore && billCore === tenantCore) {
+    return { score: 100, reason: 'exact-core' };
+  }
+  if (billNorm === tenantNorm) {
+    return { score: 100, reason: 'exact-norm' };
+  }
+
+  // Prefix containment on core (handles "Ayu Borneo Sdn Bhd c/o ABC" → "Ayu Borneo")
+  if (billCore && tenantCore) {
+    if (billCore.startsWith(tenantCore + ' ') || tenantCore.startsWith(billCore + ' ')) {
+      return { score: 95, reason: 'prefix-core' };
+    }
+  }
+  if (billNorm.startsWith(tenantNorm + ' ') || tenantNorm.startsWith(billNorm + ' ')) {
+    return { score: 95, reason: 'prefix-norm' };
+  }
+
+  // Parenthetical-initials match: "Ayu Borneo (SP)" ↔ "Ayu Borneo Sri Petaling"
+  const billPar = extractParentheticalAbbrev(billNorm);
+  const tenPar = extractParentheticalAbbrev(tenantNorm);
+  const checkAbbrev = (abbrev, abbrevCore, otherFull) => {
+    if (!abbrev || !abbrevCore || !otherFull) return false;
+    const otherCore = normalizeCompanyCore(otherFull);
+    const acCore = normalizeCompanyCore(abbrevCore);
+    if (!otherCore.startsWith(acCore)) return false;
+    const rest = otherCore.slice(acCore.length).trim();
+    if (!rest) return false;
+    const initials = initialsOf(rest).toLowerCase();
+    // Direct initials, or contiguous prefix of initials (rare but safe)
+    return initials === abbrev || initials.startsWith(abbrev);
+  };
+  if (checkAbbrev(billPar.abbrev, billPar.core, tenantRaw)) {
+    return { score: 92, reason: 'parenthetical-initials' };
+  }
+  if (checkAbbrev(tenPar.abbrev, tenPar.core, billRaw)) {
+    return { score: 92, reason: 'parenthetical-initials' };
+  }
+
+  // Substring containment on core
+  if (billCore && tenantCore) {
+    if (billCore.includes(tenantCore) || tenantCore.includes(billCore)) {
+      return { score: 88, reason: 'substring-core' };
+    }
+  }
+
+  // All tokens of the shorter side are present in the longer side (handles
+  // word-order shuffles and missing/extra middle words within reason).
+  const billTokens = tokenize(billCore || billNorm);
+  const tenantTokens = tokenize(tenantCore || tenantNorm);
+  if (billTokens.length && tenantTokens.length) {
+    const [shorter, longer] = billTokens.length <= tenantTokens.length
+      ? [billTokens, tenantTokens] : [tenantTokens, billTokens];
+    if (shorter.length >= 2 && shorter.every((t) => longer.includes(t))) {
+      return { score: 82, reason: 'all-tokens-contained' };
+    }
+  }
+
+  // Typo tolerance via Levenshtein on the core identity.
+  const dist = levenshtein(billCore || billNorm, tenantCore || tenantNorm);
+  const maxLen = Math.max((billCore || billNorm).length, (tenantCore || tenantNorm).length);
+  if (dist <= 1) return { score: 78, reason: 'lev-1' };
+  if (dist <= 2 && maxLen >= 10) return { score: 72, reason: 'lev-2' };
+
+  // Token Jaccard similarity as a last-resort fuzzy signal.
+  const setA = new Set(billTokens);
+  const setB = new Set(tenantTokens);
+  if (setA.size && setB.size) {
+    let inter = 0;
+    for (const t of setA) if (setB.has(t)) inter++;
+    const union = new Set([...setA, ...setB]).size;
+    const jaccard = union ? inter / union : 0;
+    if (jaccard >= 0.7) return { score: 65, reason: `jaccard-${jaccard.toFixed(2)}` };
+    return { score: Math.round(jaccard * 50), reason: `weak-${jaccard.toFixed(2)}` };
+  }
+
+  return { score: 0, reason: 'none' };
+}
+
+const MATCH_ACCEPT_THRESHOLD = 70;
+const MATCH_AMBIGUOUS_MARGIN = 3;
 
 function matchTenantByName(billedTo, tenants) {
   if (!billedTo || !Array.isArray(tenants) || !tenants.length) return null;
   const normBill = normalizeName(billedTo);
   if (!normBill) return null;
 
-  const scored = tenants.map((t) => ({
-    tenant: t,
-    distance: levenshtein(normBill, normalizeName(t.tenantName))
-  }));
+  // ── Pre-pass 1: parenthetical abbreviation disambiguation ────────────────
+  // If the bill name has a trailing "(XX)" group, prefer the tenant whose
+  // expanded suffix initials match XX. This overrides the otherwise-tied
+  // "Ayu Borneo" base form when bill says "Ayu Borneo (SP)".
+  const billPar = extractParentheticalAbbrev(normBill);
+  if (billPar.abbrev) {
+    const abbrevCore = normalizeCompanyCore(billPar.core);
+    const abbrevHits = tenants.filter((t) => {
+      const tCore = normalizeCompanyCore(t.tenantName);
+      if (!tCore.startsWith(abbrevCore + ' ')) return false;
+      const rest = tCore.slice(abbrevCore.length).trim();
+      if (!rest) return false;
+      const initials = initialsOf(rest).toLowerCase();
+      return initials === billPar.abbrev || initials.startsWith(billPar.abbrev);
+    });
+    if (abbrevHits.length === 1) return abbrevHits[0];
+    // If multiple expand to the same initials we fall through to scoring,
+    // which will most likely flag it as ambiguous → null.
+  }
 
-  const within = scored.filter((s) => s.distance <= 1);
-  if (within.length === 0) return null;
+  const scored = tenants
+    .map((t) => ({ tenant: t, ...scoreMatch(billedTo, t.tenantName) }))
+    .sort((a, b) => b.score - a.score);
 
-  within.sort((a, b) => a.distance - b.distance);
-  if (within.length === 1) return within[0].tenant;
-  if (within[0].distance < within[1].distance) return within[0].tenant;
-  return null; // ambiguous
+  const best = scored[0];
+  if (!best || best.score < MATCH_ACCEPT_THRESHOLD) return null;
+
+  const second = scored[1];
+  if (second && (best.score - second.score) < MATCH_AMBIGUOUS_MARGIN) {
+    return null; // ambiguous
+  }
+  return best.tenant;
+}
+
+// Expose for unit testing without changing public behaviour.
+function _debugScoreMatch(billedTo, tenantName) {
+  return scoreMatch(billedTo, tenantName);
 }
 
 // ── Xero OAuth & API ────────────────────────────────────────────────────────
@@ -930,6 +1134,69 @@ async function fetchXeroBill(invoiceId, tenantId) {
   return getFirstItem(payload, 'Invoices');
 }
 
+// Fetch attachment metadata for a Xero invoice (no binaries).
+async function listXeroInvoiceAttachments(invoiceId, tenantId) {
+  const payload = await xeroApi(`/Invoices/${encodeURIComponent(invoiceId)}/Attachments`, {}, tenantId);
+  return Array.isArray(payload?.Attachments) ? payload.Attachments : [];
+}
+
+// Download a single attachment by file name (Xero's documented retrieval path).
+async function downloadXeroInvoiceAttachment(invoiceId, fileName, tenantId) {
+  const response = await xeroApi(
+    `/Invoices/${encodeURIComponent(invoiceId)}/Attachments/${encodeURIComponent(fileName)}`,
+    { headers: { Accept: '*/*' }, raw: true },
+    tenantId
+  );
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+// Soft-delete a DRAFT bill by flipping its Status to DELETED. Only valid for DRAFT
+// invoices — Xero will reject this on AUTHORISED/SUBMITTED/PAID, which is exactly
+// the safety net we want (reassign is restricted to DRAFTs upstream).
+async function deleteDraftXeroBill(invoiceId, tenantId) {
+  const payload = {
+    Invoices: [{ InvoiceID: invoiceId, Status: 'DELETED' }]
+  };
+  return xeroApi(`/Invoices/${encodeURIComponent(invoiceId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }, tenantId);
+}
+
+// Rebuild a "bill payload" (the shape createDraftBill consumes) from a freshly
+// fetched Xero invoice + the local record. We re-derive line items from Xero so
+// the new draft is an exact copy, not a summary.
+function reconstructBillFromXeroInvoice(invoice, fallbackRecord) {
+  const lineItems = Array.isArray(invoice?.LineItems)
+    ? invoice.LineItems.map((li) => ({
+        description: li.Description || '',
+        qty: Number(li.Quantity) || 1,
+        unitPrice: Number(li.UnitAmount) || 0,
+        amount: Number(li.LineAmount) || 0,
+        accountCode: li.AccountCode || null,
+        taxType: li.TaxType || null
+      }))
+    : [];
+
+  return normalizeBillPayload({
+    supplier: invoice?.Contact?.Name || fallbackRecord?.supplier || null,
+    billedTo: fallbackRecord?.billedTo || null,
+    invoiceNo: invoice?.InvoiceNumber || fallbackRecord?.invoiceNumber || fallbackRecord?.invoiceNo || null,
+    date: invoice?.DateString || invoice?.Date || null,
+    dueDate: invoice?.DueDateString || invoice?.DueDate || null,
+    currency: invoice?.CurrencyCode || fallbackRecord?.currency || XERO_DEFAULT_CURRENCY,
+    lineItems,
+    subtotal: Number(invoice?.SubTotal) || 0,
+    tax: Number(invoice?.TotalTax) || 0,
+    taxLabel: 'Tax',
+    discount: 0,
+    total: Number(invoice?.Total) || 0,
+    notes: invoice?.Reference || null
+  });
+}
+
 function applyXeroBillStatus(record, invoice, checkedAt) {
   const status = String(invoice?.Status || record.status || 'UNKNOWN').toUpperCase();
   const next = {
@@ -1032,10 +1299,35 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
 function buildBillPrompt(ocrText) {
   return `You are an expert at reading bills, receipts and invoices from OCR-extracted text.
 
+CONTEXT — Malaysian business invoices:
+- Most billed entities are Malaysian companies. Common legal suffixes:
+    * "Sdn Bhd" (Sendirian Berhad) — private limited
+    * "Bhd" (Berhad) — public limited
+    * "PLT" — limited liability partnership
+    * "Enterprise" / "Trading" — sole proprietor / partnership
+- "c/o" (care of) means the bill is forwarded through someone else.
+  The actual BILLED ENTITY is the company BEFORE "c/o" — extract only that.
+  Example: "Ayu Borneo Sdn Bhd c/o XYZ Office" → billedTo = "Ayu Borneo Sdn Bhd"
+- Place names are often abbreviated in parentheses (these abbreviations
+  matter — preserve them as-is so they can be reconciled with the
+  organisation list). Examples:
+    * (SP) = Sri Petaling     * (KL) = Kuala Lumpur
+    * (PJ) = Petaling Jaya    * (JB) = Johor Bahru
+    * (KK) = Kota Kinabalu    * (KCH) = Kuching
+- Default currency is MYR. Common tax label is "SST" (Sales & Service Tax,
+  typically 6% or 8%). Older invoices may say "GST".
+- Dates may be formatted DD/MM/YYYY or DD-MM-YYYY (day first, NOT US format).
+
+EXTRACTION RULES:
+- Always extract the billedTo as the FULL company name as it appears in the
+  document (keep "Sdn Bhd", "(SP)", etc.). Do NOT shorten, expand or rewrite it.
+- If multiple addresses/branches appear, pick the one in the BILL TO / TO /
+  SOLD TO / INVOICE TO block, not the supplier's address.
+
 Given the raw OCR text below, extract and return ONLY a valid JSON object:
 {
   "supplier": "Vendor / supplier company name (the company sending the invoice) or null",
-  "billedTo": "Customer / recipient company name (the company being billed - look for BILL TO, TO, SOLD TO, INVOICE TO sections) or null",
+  "billedTo": "Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o.",
   "invoiceNo": "Invoice number or null",
   "date": "Date string or null",
   "dueDate": "Due date string or null",
@@ -1627,6 +1919,144 @@ app.delete('/api/bills/:id', async (req, res) => {
     res.json({ ok: true, removed: { id: removed.id, invoiceNumber: removed.invoiceNumber || removed.invoiceNo || null } });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+// Reassign a bill from the wrong Xero organisation to the correct one.
+//
+// Flow (create-then-delete order, so a failure leaves the old draft intact):
+//   1. Validate source record and target tenant.
+//   2. Fetch the source invoice from Xero — refuse unless Status is DRAFT.
+//   3. Download attachments from the source invoice.
+//   4. Re-create the bill as a DRAFT in the target tenant (with attachment).
+//   5. Soft-delete the source draft (Status: DELETED).
+//   6. Mark the local record archived with replacedBy pointer; save new record.
+app.post('/api/bills/:id/reassign', async (req, res) => {
+  try {
+    const { tenantId: targetTenantId } = req.body || {};
+    if (!targetTenantId) {
+      return res.status(400).json({ error: 'Missing tenantId for the target organisation.' });
+    }
+
+    const bills = await loadBills();
+    const idx = bills.findIndex((bill) => bill.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Bill history record not found.' });
+    const record = bills[idx];
+
+    if (!record.invoiceId || !record.tenantId) {
+      return res.status(400).json({ error: 'This bill record has no Xero invoice link — cannot reassign.' });
+    }
+    if (record.tenantId === targetTenantId) {
+      return res.status(400).json({ error: 'Source and target organisations are the same.' });
+    }
+    if (isArchivedBillRecord(record)) {
+      return res.status(409).json({ error: 'This bill has already been archived/voided — nothing to reassign.' });
+    }
+
+    const { connections } = await getValidConnections();
+    const sourceTenant = connections.find((c) => c.tenantId === record.tenantId);
+    const targetTenant = connections.find((c) => c.tenantId === targetTenantId);
+    if (!sourceTenant) return res.status(404).json({ error: 'Source Xero organisation is no longer connected.' });
+    if (!targetTenant) return res.status(404).json({ error: 'Target Xero organisation is not in your connections.' });
+
+    // 2. Fetch source invoice and gate on DRAFT.
+    let sourceInvoice;
+    try {
+      sourceInvoice = await fetchXeroBill(record.invoiceId, record.tenantId);
+    } catch (err) {
+      return res.status(err.statusCode || 502).json({
+        error: `Could not load source bill from Xero: ${err.message}`
+      });
+    }
+    if (!sourceInvoice?.InvoiceID) {
+      return res.status(404).json({ error: 'Source bill no longer exists in Xero.' });
+    }
+    const sourceStatus = String(sourceInvoice.Status || '').toUpperCase();
+    if (sourceStatus !== 'DRAFT') {
+      return res.status(409).json({
+        error: `Cannot reassign: source bill is "${sourceStatus}" in Xero, not DRAFT. Reassignment is only allowed while the bill is still a draft. Please handle this in Xero manually.`
+      });
+    }
+
+    // 3. Download first attachment if any (we re-upload one — multi-attachment
+    //    is rare for receipts and keeps the flow simple).
+    let sourceFile = null;
+    try {
+      const attachments = await listXeroInvoiceAttachments(record.invoiceId, record.tenantId);
+      const first = attachments[0];
+      if (first?.FileName) {
+        const buffer = await downloadXeroInvoiceAttachment(record.invoiceId, first.FileName, record.tenantId);
+        if (buffer?.length) {
+          sourceFile = {
+            buffer,
+            mimetype: first.MimeType || 'application/octet-stream',
+            originalname: first.FileName
+          };
+        }
+      }
+    } catch (err) {
+      console.error(`Could not transfer attachment for invoice ${record.invoiceId}:`, err.message);
+    }
+
+    // 4. Create in target tenant.
+    const billForCreate = reconstructBillFromXeroInvoice(sourceInvoice, record);
+    let createResult;
+    try {
+      createResult = await createDraftBill({
+        bill: billForCreate,
+        sourceFile,
+        tenantId: targetTenantId
+      });
+    } catch (err) {
+      return res.status(err.statusCode || 502).json({
+        error: `Could not create bill in ${targetTenant.tenantName}: ${err.message}`,
+        details: err.payload || null
+      });
+    }
+
+    // 5. Delete source draft. If this fails, surface a warning but don't roll
+    //    back the new draft — the user can clean up the old one manually.
+    let deleteWarning = null;
+    try {
+      await deleteDraftXeroBill(record.invoiceId, record.tenantId);
+    } catch (err) {
+      console.error(`Failed to delete source draft ${record.invoiceId}:`, err.message);
+      deleteWarning = `New draft created in ${targetTenant.tenantName}, but could not delete the original in ${sourceTenant.tenantName}: ${err.message}. Please void or delete it in Xero manually.`;
+    }
+
+    // 6. Persist: archive old record, save new record, link them both ways.
+    const newRecord = buildBillRecord({
+      bill: billForCreate,
+      result: createResult,
+      tenant: targetTenant,
+      source: `${record.source || 'manual'}+reassigned`
+    });
+    newRecord.replaces = { id: record.id, tenantId: record.tenantId, tenantName: record.tenantName, invoiceId: record.invoiceId };
+
+    const archivedOld = {
+      ...record,
+      status: deleteWarning ? record.status : 'DELETED',
+      archivedAt: isoNow(),
+      archiveReason: `Reassigned to ${targetTenant.tenantName}${deleteWarning ? ' (delete in Xero failed — see warning)' : ''}`,
+      replacedBy: { id: newRecord.id, tenantId: targetTenant.tenantId, tenantName: targetTenant.tenantName, invoiceId: newRecord.invoiceId }
+    };
+
+    const nextBills = bills.slice();
+    nextBills[idx] = archivedOld;
+    nextBills.push(newRecord);
+    await saveBills(nextBills);
+
+    res.json({
+      ok: true,
+      warning: deleteWarning,
+      from: { id: record.id, tenantId: record.tenantId, tenantName: record.tenantName, invoiceId: record.invoiceId },
+      to: { id: newRecord.id, tenantId: newRecord.tenantId, tenantName: newRecord.tenantName, invoiceId: newRecord.invoiceId, xeroUrl: newRecord.xeroUrl }
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      error: error.message,
+      details: error.payload || null
+    });
   }
 });
 

@@ -598,6 +598,13 @@
     }
     .history-trash:hover { background: #fee2e2; }
     .history-trash:disabled { opacity: 0.6; cursor: not-allowed; }
+    .history-reassign {
+      border: none; background: #eff6ff; color: #1d4ed8;
+      height: 2rem; padding: 0 0.65rem; border-radius: 8px;
+      cursor: pointer; font-size: 0.78rem; font-weight: 600; line-height: 1;
+    }
+    .history-reassign:hover { background: #dbeafe; }
+    .history-reassign:disabled { opacity: 0.6; cursor: not-allowed; }
     .bills-status {
       display: inline-block;
       font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
@@ -936,6 +943,27 @@
     <div class="supplier-prompt-actions">
       <button type="button" class="btn-ghost" id="confirmPromptCancel">Cancel</button>
       <button type="button" class="btn btn-primary btn-sm" id="confirmPromptContinue">Discard</button>
+    </div>
+  </div>
+</div>
+
+<div class="supplier-prompt-backdrop" id="reassignPrompt" aria-hidden="true">
+  <div class="supplier-prompt-panel" role="dialog" aria-modal="true" aria-labelledby="reassignPromptTitle">
+    <div class="supplier-prompt-head" id="reassignPromptTitle">Move bill to another organisation</div>
+    <div class="supplier-prompt-body">
+      <p id="reassignPromptSummary" style="font-size:0.92rem;color:var(--fe-muted);"></p>
+      <div style="margin-top:0.6rem;">
+        <label for="reassignTargetSelect" style="display:block;font-size:0.78rem;color:var(--fe-muted);text-transform:uppercase;font-weight:700;letter-spacing:0.04em;margin-bottom:0.3rem;">Move to</label>
+        <select id="reassignTargetSelect" class="api-bar-select" style="width:100%;"></select>
+      </div>
+      <div class="confirm-prompt-note" style="margin-top:0.6rem;">
+        A new draft bill will be created in the chosen organisation and the original draft will be deleted from Xero. Only DRAFT bills can be moved — authorised or paid bills must be handled in Xero directly.
+      </div>
+      <div class="notice error" id="reassignPromptError" style="display:none;margin-top:0.6rem;"></div>
+    </div>
+    <div class="supplier-prompt-actions">
+      <button type="button" class="btn-ghost" id="reassignPromptCancel">Cancel</button>
+      <button type="button" class="btn btn-primary btn-sm" id="reassignPromptContinue">Move bill</button>
     </div>
   </div>
 </div>
@@ -1490,8 +1518,13 @@
     const date = b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '-';
     const total = `${esc(b.currency || '')} ${Number(b.total || 0).toFixed(2)}`.trim();
     const statusClass = String(b.status || '').toLowerCase();
+    const status = String(b.status || 'DRAFT').toUpperCase();
     const trashButton = billHistoryBucket === 'archived'
       ? `<button type="button" class="history-trash" title="Remove archived record" onclick="removeArchivedBill('${esc(b.id)}', this)">🗑</button>`
+      : '';
+    // Reassign is only meaningful while the bill is still a DRAFT in Xero.
+    const reassignButton = (billHistoryBucket !== 'archived' && status === 'DRAFT')
+      ? `<button type="button" class="history-reassign" title="Move this bill to another organisation" onclick="openReassignPrompt('${esc(b.id)}', '${esc(b.tenantName || b.tenantId || '')}', '${esc(b.tenantId || '')}', '${esc(b.invoiceNumber || b.invoiceNo || '')}', '${esc(b.supplier || '')}')">↔ Move</button>`
       : '';
     return `
       <tr>
@@ -1502,7 +1535,7 @@
         <td data-label="Total">${esc(total)}</td>
         <td data-label="Status"><span class="bills-status ${statusClass}">${esc(b.status || 'DRAFT')}</span></td>
         <td data-label="Source">${esc(b.source || '-')}</td>
-        <td data-label=""><div class="history-actions"><a href="/api/bills/${encodeURIComponent(b.id)}/open" target="_blank" rel="noopener" class="invoice-link">Open ↗</a>${trashButton}</div></td>
+        <td data-label=""><div class="history-actions"><a href="/api/bills/${encodeURIComponent(b.id)}/open" target="_blank" rel="noopener" class="invoice-link">Open ↗</a>${reassignButton}${trashButton}</div></td>
       </tr>`;
   }
 
@@ -1527,6 +1560,93 @@
       showGlobalNotice(`Could not remove archived record: ${esc(error.message)}`, 'error');
     }
   }
+
+  // ── Reassign-to-another-org modal ──
+  let reassignPromptResolve = null;
+  let reassignPromptBillId = null;
+
+  function openReassignPrompt(billId, sourceTenantName, sourceTenantId, invoiceNo, supplier) {
+    reassignPromptBillId = billId;
+    const tenants = (xeroState.tenants || []).filter(t => t.tenantId !== sourceTenantId);
+    const sel = document.getElementById('reassignTargetSelect');
+    if (!tenants.length) {
+      sel.innerHTML = '<option value="">No other connected organisations</option>';
+      sel.disabled = true;
+    } else {
+      sel.disabled = false;
+      sel.innerHTML = tenants.map(t => `<option value="${esc(t.tenantId)}">${esc(t.tenantName || t.tenantId)}</option>`).join('');
+    }
+
+    const summaryParts = [];
+    if (invoiceNo) summaryParts.push(`<strong>${esc(invoiceNo)}</strong>`);
+    if (supplier) summaryParts.push(`from ${esc(supplier)}`);
+    summaryParts.push(`currently in <strong>${esc(sourceTenantName || sourceTenantId || 'unknown')}</strong>`);
+    document.getElementById('reassignPromptSummary').innerHTML = `Moving bill ${summaryParts.join(' ')}.`;
+
+    const errEl = document.getElementById('reassignPromptError');
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+
+    const continueBtn = document.getElementById('reassignPromptContinue');
+    continueBtn.disabled = tenants.length === 0;
+    continueBtn.textContent = 'Move bill';
+
+    const panel = document.getElementById('reassignPrompt');
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeReassignPrompt() {
+    const panel = document.getElementById('reassignPrompt');
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    reassignPromptBillId = null;
+  }
+
+  async function submitReassign() {
+    if (!reassignPromptBillId) return;
+    const sel = document.getElementById('reassignTargetSelect');
+    const targetTenantId = sel.value;
+    if (!targetTenantId) return;
+
+    const continueBtn = document.getElementById('reassignPromptContinue');
+    const errEl = document.getElementById('reassignPromptError');
+    continueBtn.disabled = true;
+    continueBtn.textContent = 'Moving…';
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+
+    try {
+      const resp = await fetch(`/api/bills/${encodeURIComponent(reassignPromptBillId)}/reassign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: targetTenantId })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Failed to reassign bill.');
+
+      closeReassignPrompt();
+      const msg = data.warning
+        ? `Moved to ${data.to?.tenantName || 'the new organisation'}, but with a warning: ${data.warning}`
+        : `Bill moved to ${data.to?.tenantName || 'the new organisation'}.`;
+      showGlobalNotice(msg, data.warning ? 'error' : 'success');
+      await loadBillsForOrg();
+    } catch (error) {
+      continueBtn.disabled = false;
+      continueBtn.textContent = 'Move bill';
+      errEl.textContent = error.message;
+      errEl.style.display = 'block';
+    }
+  }
+
+  document.getElementById('reassignPromptContinue').addEventListener('click', submitReassign);
+  document.getElementById('reassignPromptCancel').addEventListener('click', closeReassignPrompt);
+  document.getElementById('reassignPrompt').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeReassignPrompt();
+    }
+  });
 
   // ── Scan flow (web upload) ──
   const billFileInput = document.getElementById('billFileInput');
