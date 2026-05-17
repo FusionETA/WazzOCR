@@ -614,31 +614,36 @@
     .bills-table .col-org strong { font-weight: 600; }
     .bills-table .col-org,
     .bills-table .col-supplier { word-break: break-word; overflow-wrap: anywhere; }
-    .bills-table .col-actions { text-align: right; white-space: nowrap; }
+    .bills-table .col-actions {
+      text-align: right; white-space: nowrap;
+      padding-left: 0.4rem; padding-right: 0.6rem;
+    }
 
     .bills-table .invoice-link {
       color: var(--fe-accent); text-decoration: none; font-weight: 600;
-      font-size: 0.78rem; padding: 0.35rem 0.6rem; border-radius: 6px;
-      background: #f1f5f9; display: inline-flex; align-items: center; gap: 0.2rem;
+      font-size: 0.75rem; padding: 0.3rem 0.55rem; border-radius: 6px;
+      background: #f1f5f9; display: inline-flex; align-items: center; gap: 0.15rem;
+      line-height: 1;
     }
     .bills-table .invoice-link:hover { background: #e2e8f0; }
 
     .history-actions {
-      display: inline-flex; align-items: center; gap: 0.4rem;
+      display: inline-flex; align-items: center; gap: 0.35rem;
       flex-wrap: nowrap; justify-content: flex-end;
     }
     .history-trash {
       border: none; background: #fef2f2; color: #b91c1c;
-      width: 2rem; height: 2rem; border-radius: 6px;
-      cursor: pointer; font-size: 1rem; line-height: 1;
+      width: 1.85rem; height: 1.85rem; border-radius: 6px;
+      cursor: pointer; font-size: 0.95rem; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
     }
     .history-trash:hover { background: #fee2e2; }
     .history-trash:disabled { opacity: 0.6; cursor: not-allowed; }
     .history-reassign {
       border: none; background: #eff6ff; color: #1d4ed8;
-      height: 2rem; padding: 0 0.6rem; border-radius: 6px;
-      cursor: pointer; font-size: 0.75rem; font-weight: 600; line-height: 1;
-      display: inline-flex; align-items: center; gap: 0.2rem;
+      height: 1.85rem; padding: 0 0.55rem; border-radius: 6px;
+      cursor: pointer; font-size: 0.72rem; font-weight: 600; line-height: 1;
+      display: inline-flex; align-items: center; gap: 0.15rem;
     }
     .history-reassign:hover { background: #dbeafe; }
     .history-reassign:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -1546,14 +1551,14 @@
         <div class="bills-table-wrap">
           <table class="bills-table">
             <colgroup>
-              <col style="width:7rem;">     <!-- Date -->
-              <col style="width:18%;">      <!-- Organisation -->
+              <col style="width:6.5rem;">   <!-- Date -->
+              <col style="width:16%;">      <!-- Organisation -->
               <col>                          <!-- Supplier (flex) -->
-              <col style="width:9rem;">     <!-- Invoice # -->
-              <col style="width:7.5rem;">   <!-- Total -->
-              <col style="width:6.5rem;">   <!-- Status -->
-              <col style="width:8.5rem;">   <!-- Source -->
-              <col style="width:9rem;">     <!-- Actions -->
+              <col style="width:8rem;">     <!-- Invoice # -->
+              <col style="width:7rem;">     <!-- Total -->
+              <col style="width:6rem;">     <!-- Status -->
+              <col style="width:7.5rem;">   <!-- Source -->
+              <col style="width:11.5rem;">  <!-- Actions -->
             </colgroup>
             <thead>
               <tr>
