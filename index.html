@@ -568,43 +568,93 @@
     }
     .pending-attachment.has { color: var(--fe-success); }
 
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+
     /* ── Bills table ── */
     .bills-table-wrap {
       background: white; border: 1px solid var(--fe-border);
       border-radius: var(--fe-radius); overflow: hidden;
       box-shadow: var(--fe-shadow-sm);
     }
-    .bills-table { width: 100%; border-collapse: collapse; }
+    .bills-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .bills-table th {
       background: var(--fe-light);
       font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.06em; color: var(--fe-muted);
-      padding: 0.7rem 0.875rem; text-align: left;
+      padding: 0.65rem 0.85rem; text-align: left;
       border-bottom: 1px solid var(--fe-border);
+      white-space: nowrap;
     }
     .bills-table td {
-      padding: 0.75rem 0.875rem; font-size: 0.85rem;
+      padding: 0.7rem 0.85rem; font-size: 0.875rem;
       border-bottom: 1px solid var(--fe-light);
-      vertical-align: top;
+      vertical-align: middle;
+      color: var(--fe-text);
     }
+    .bills-table tbody tr:hover td { background: #fafbfc; }
     .bills-table tr:last-child td { border-bottom: none; }
-    .bills-table .invoice-link { color: var(--fe-accent); text-decoration: none; font-weight: 600; }
-    .bills-table .invoice-link:hover { text-decoration: underline; }
-    .history-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+    /* Column-specific behaviours */
+    .bills-table .col-date,
+    .bills-table .col-invoice,
+    .bills-table .col-total,
+    .bills-table .col-status,
+    .bills-table .col-source { white-space: nowrap; }
+    .bills-table .col-total {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+    .bills-table .col-date {
+      color: var(--fe-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .bills-table .col-org strong { font-weight: 600; }
+    .bills-table .col-org,
+    .bills-table .col-supplier { word-break: break-word; overflow-wrap: anywhere; }
+    .bills-table .col-actions { text-align: right; white-space: nowrap; }
+
+    .bills-table .invoice-link {
+      color: var(--fe-accent); text-decoration: none; font-weight: 600;
+      font-size: 0.78rem; padding: 0.35rem 0.6rem; border-radius: 6px;
+      background: #f1f5f9; display: inline-flex; align-items: center; gap: 0.2rem;
+    }
+    .bills-table .invoice-link:hover { background: #e2e8f0; }
+
+    .history-actions {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      flex-wrap: nowrap; justify-content: flex-end;
+    }
     .history-trash {
       border: none; background: #fef2f2; color: #b91c1c;
-      width: 2rem; height: 2rem; border-radius: 8px;
+      width: 2rem; height: 2rem; border-radius: 6px;
       cursor: pointer; font-size: 1rem; line-height: 1;
     }
     .history-trash:hover { background: #fee2e2; }
     .history-trash:disabled { opacity: 0.6; cursor: not-allowed; }
     .history-reassign {
       border: none; background: #eff6ff; color: #1d4ed8;
-      height: 2rem; padding: 0 0.65rem; border-radius: 8px;
-      cursor: pointer; font-size: 0.78rem; font-weight: 600; line-height: 1;
+      height: 2rem; padding: 0 0.6rem; border-radius: 6px;
+      cursor: pointer; font-size: 0.75rem; font-weight: 600; line-height: 1;
+      display: inline-flex; align-items: center; gap: 0.2rem;
     }
     .history-reassign:hover { background: #dbeafe; }
     .history-reassign:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* Source pill — friendly badge instead of raw "whatsapp+manual-assign" */
+    .source-pill {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      font-size: 0.72rem; font-weight: 600;
+      padding: 0.2rem 0.55rem; border-radius: 999px;
+      background: var(--fe-light); color: var(--fe-muted);
+      white-space: nowrap;
+    }
+    .source-pill.whatsapp  { background: #ecfdf5; color: #047857; }
+    .source-pill.manual    { background: #fef3c7; color: #92400e; }
+    .source-pill.web       { background: #eff6ff; color: #1d4ed8; }
+    .source-pill.reassigned { background: #f5f3ff; color: #6d28d9; }
     .bills-status {
       display: inline-block;
       font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
@@ -628,11 +678,14 @@
     }
     .history-filter button.active { background: var(--fe-primary); color: white; }
     @media (max-width: 720px) {
+      .bills-table { table-layout: auto; }
       .bills-table thead { display: none; }
       .bills-table, .bills-table tbody, .bills-table tr, .bills-table td { display: block; width: 100%; }
       .bills-table tr { border-bottom: 1px solid var(--fe-border); padding: 0.5rem 0; }
       .bills-table td { padding: 0.35rem 0.875rem; border: none; }
       .bills-table td::before { content: attr(data-label) ': '; font-size: 0.7rem; text-transform: uppercase; color: var(--fe-muted); font-weight: 700; }
+      .bills-table .col-total, .bills-table .col-actions { text-align: left; }
+      .bills-table .history-actions { justify-content: flex-start; }
     }
 
     /* ── Settings panels ── */
@@ -1492,16 +1545,26 @@
       listEl.innerHTML = `
         <div class="bills-table-wrap">
           <table class="bills-table">
+            <colgroup>
+              <col style="width:7rem;">     <!-- Date -->
+              <col style="width:18%;">      <!-- Organisation -->
+              <col>                          <!-- Supplier (flex) -->
+              <col style="width:9rem;">     <!-- Invoice # -->
+              <col style="width:7.5rem;">   <!-- Total -->
+              <col style="width:6.5rem;">   <!-- Status -->
+              <col style="width:8.5rem;">   <!-- Source -->
+              <col style="width:9rem;">     <!-- Actions -->
+            </colgroup>
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Organisation</th>
-                <th>Supplier</th>
-                <th>Invoice #</th>
-                <th>Total</th>
-                <th>Status</th>
-                <th>Source</th>
-                <th></th>
+                <th class="col-date">Date</th>
+                <th class="col-org">Organisation</th>
+                <th class="col-supplier">Supplier</th>
+                <th class="col-invoice">Invoice #</th>
+                <th class="col-total">Total</th>
+                <th class="col-status">Status</th>
+                <th class="col-source">Source</th>
+                <th class="col-actions"><span class="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -1514,9 +1577,33 @@
     }
   }
 
+  // Date as e.g. "15 May 2026" — compact, unambiguous, no locale-format wrap.
+  function formatBillDate(iso) {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (isNaN(d)) return '-';
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  // Turn raw source tokens like "whatsapp+manual-assign" into a friendly chip.
+  // We pick the most specific label (manual/reassigned/web/whatsapp) and a colour.
+  function renderSourcePill(source) {
+    const raw = String(source || '').toLowerCase();
+    if (!raw) return '<span class="source-pill">—</span>';
+    let cls = '';
+    let label = '';
+    if (raw.includes('reassign'))           { cls = 'reassigned'; label = '↔ Moved'; }
+    else if (raw.includes('manual-assign')) { cls = 'manual';     label = '✋ Manual'; }
+    else if (raw.includes('whatsapp'))      { cls = 'whatsapp';   label = '💬 WhatsApp'; }
+    else if (raw.includes('web'))           { cls = 'web';        label = '🌐 Web'; }
+    else                                    { cls = '';           label = source; }
+    return `<span class="source-pill ${cls}" title="${esc(source)}">${esc(label)}</span>`;
+  }
+
   function renderBillRow(b) {
-    const date = b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '-';
-    const total = `${esc(b.currency || '')} ${Number(b.total || 0).toFixed(2)}`.trim();
+    const date = formatBillDate(b.createdAt);
+    const amount = Number(b.total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const currency = esc(b.currency || '');
     const statusClass = String(b.status || '').toLowerCase();
     const status = String(b.status || 'DRAFT').toUpperCase();
     const trashButton = billHistoryBucket === 'archived'
@@ -1528,14 +1615,14 @@
       : '';
     return `
       <tr>
-        <td data-label="Date">${esc(date)}</td>
-        <td data-label="Org"><strong>${esc(b.tenantName || b.tenantId || '-')}</strong></td>
-        <td data-label="Supplier">${esc(b.supplier || '-')}</td>
-        <td data-label="Invoice">${esc(b.invoiceNumber || b.invoiceNo || '-')}</td>
-        <td data-label="Total">${esc(total)}</td>
-        <td data-label="Status"><span class="bills-status ${statusClass}">${esc(b.status || 'DRAFT')}</span></td>
-        <td data-label="Source">${esc(b.source || '-')}</td>
-        <td data-label=""><div class="history-actions"><a href="/api/bills/${encodeURIComponent(b.id)}/open" target="_blank" rel="noopener" class="invoice-link">Open ↗</a>${reassignButton}${trashButton}</div></td>
+        <td class="col-date" data-label="Date">${esc(date)}</td>
+        <td class="col-org" data-label="Org"><strong>${esc(b.tenantName || b.tenantId || '-')}</strong></td>
+        <td class="col-supplier" data-label="Supplier">${esc(b.supplier || '-')}</td>
+        <td class="col-invoice" data-label="Invoice">${esc(b.invoiceNumber || b.invoiceNo || '-')}</td>
+        <td class="col-total" data-label="Total"><span style="color:var(--fe-muted);font-weight:500;margin-right:0.25rem;">${currency}</span>${esc(amount)}</td>
+        <td class="col-status" data-label="Status"><span class="bills-status ${statusClass}">${esc(b.status || 'DRAFT')}</span></td>
+        <td class="col-source" data-label="Source">${renderSourcePill(b.source)}</td>
+        <td class="col-actions" data-label=""><div class="history-actions"><a href="/api/bills/${encodeURIComponent(b.id)}/open" target="_blank" rel="noopener" class="invoice-link">Open ↗</a>${reassignButton}${trashButton}</div></td>
       </tr>`;
   }
 
