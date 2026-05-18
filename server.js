@@ -1312,6 +1312,16 @@ do not lowercase.
 ${knownOrgs.map((name, i) => `${i + 1}. ${name}`).join('\n')}
 
 Matching rules — read carefully:
+0. ★ "c/o" (care of) rule — CRITICAL:
+   The actual billed entity is ALWAYS the company BEFORE "c/o" / "C/O" / "C\\O".
+   Drop everything from "c/o" onwards. The "c/o" target is just an address
+   forwarder, NOT the bill recipient.
+   Example: "AYU BORNEO (SP) SDN BHD C/O EMJ RENOVATION SDN BHD"
+            → billedTo = "Ayu Borneo (SP) Sdn Bhd"   ← match this in the list
+            → billedToVerbatim = "AYU BORNEO (SP) SDN BHD C/O EMJ RENOVATION SDN BHD"
+   Example: "Nova Spa & Wellness Sdn Bhd c/o Universe Wellness HQ"
+            → billedTo = "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
+            → billedToVerbatim = "Nova Spa & Wellness Sdn Bhd c/o Universe Wellness HQ"
 1. Parenthetical abbreviations identify the BRANCH. Match them strictly:
      "(SP)" = Sri Petaling     "(KL)" = Kuala Lumpur
      "(PJ)" = Petaling Jaya    "(JB)" = Johor Bahru
@@ -1420,10 +1430,31 @@ function normalizeBillPayload(bill) {
       })
     : [];
 
+  // Strip "c/o ..." suffix if the AI ignored the prompt rule.
+  //   "AYU BORNEO (SP) SDN BHD C/O EMJ RENOVATION SDN BHD"
+  //   → billedTo:         "AYU BORNEO (SP) SDN BHD"
+  //   → billedToVerbatim: original (so the user can see what the invoice said)
+  // Handles c/o, C/O, c / o, C\O, etc. Splits on whitespace + slash variants.
+  let cleanedBilledTo = bill?.billedTo || null;
+  let preservedVerbatim = bill?.billedToVerbatim || null;
+  if (cleanedBilledTo) {
+    const coRegex = /\s+c\s*[\/\\]\s*o\s+/i;
+    if (coRegex.test(cleanedBilledTo)) {
+      const original = cleanedBilledTo;
+      // Split on c/o, then strip trailing punctuation/whitespace so the
+      // result can exact-match a tenant name (no trailing commas etc).
+      cleanedBilledTo = original
+        .split(coRegex)[0]
+        .replace(/[\s,;.\-]+$/, '')
+        .trim();
+      if (!preservedVerbatim) preservedVerbatim = original;
+    }
+  }
+
   const normalized = {
     supplier: bill?.supplier || null,
-    billedTo: bill?.billedTo || null,
-    billedToVerbatim: bill?.billedToVerbatim || null,
+    billedTo: cleanedBilledTo,
+    billedToVerbatim: preservedVerbatim,
     invoiceNo: bill?.invoiceNo || null,
     date: bill?.date || null,
     dueDate: bill?.dueDate || null,
