@@ -1297,7 +1297,49 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
 
 // ── AI bill analysis ────────────────────────────────────────────────────────
 
-function buildBillPrompt(ocrText) {
+function buildBillPrompt(ocrText, knownOrgs = []) {
+  const hasOrgList = Array.isArray(knownOrgs) && knownOrgs.length > 0;
+
+  const orgListBlock = hasOrgList
+    ? `
+
+─── CONNECTED XERO ORGANISATIONS ───
+The billedTo MUST be one of the organisations below. Copy the name VERBATIM
+from this list (same spelling, spacing, capitalisation, punctuation, "Sdn Bhd",
+parentheses — everything). Do not paraphrase, do not strip "fka" suffixes,
+do not lowercase.
+
+${knownOrgs.map((name, i) => `${i + 1}. ${name}`).join('\n')}
+
+Matching rules — read carefully:
+1. Parenthetical abbreviations identify the BRANCH. Match them strictly:
+     "(SP)" = Sri Petaling     "(KL)" = Kuala Lumpur
+     "(PJ)" = Petaling Jaya    "(JB)" = Johor Bahru
+     "(KK)" = Kota Kinabalu    "(KCH)" = Kuching
+     "(KJ)" = Kelana Jaya      "(SJ)" = Subang Jaya
+     "(AP)" = Ampang           "(BLK)" = Bandar Bukit Tinggi/relevant branch
+     "(BSP)" = Bandar Sri Permaisuri
+   If the invoice says "Ayu Borneo Sri Petaling" → return "Ayu Borneo (SP) Sdn Bhd".
+   If the invoice says "Ayu Borneo SP" → return "Ayu Borneo (SP) Sdn Bhd".
+2. "fka" means "formerly known as". The invoice may use the OLD name.
+   Example: invoice says "Nova Spa & Wellness Sdn Bhd"
+            → return "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
+   Example: invoice says "Ayu Borneo (VC3) Sdn Bhd"
+            → return "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
+3. If the BILL TO field is blank/ambiguous, infer from the delivery address,
+   site name, or branch hints elsewhere in the invoice (e.g. "site: Sri Petaling"
+   → "(SP) Sdn Bhd"; "shipped to Nova Spa" → the Nova entry above).
+4. Plain "Ayu Borneo Sdn Bhd" with NO branch indicator → entry #5 only.
+5. If two entries could plausibly match, prefer the one whose location matches
+   the invoice's delivery address or branch banner.
+6. If genuinely none of the listed orgs fit, set billedTo to null AND put your
+   reasoning in "notes" (e.g. "Bill says 'XYZ Trading' which is not a connected
+   org — manual review needed").
+
+Also return a "billedToVerbatim" field with the original BILL TO text exactly
+as it appears on the invoice, so a human can sanity-check the mapping.`
+    : '';
+
   return `You are an expert at reading bills, receipts and invoices from OCR-extracted text.
 
 CONTEXT — Malaysian business invoices:
@@ -1320,15 +1362,17 @@ CONTEXT — Malaysian business invoices:
 - Dates may be formatted DD/MM/YYYY or DD-MM-YYYY (day first, NOT US format).
 
 EXTRACTION RULES:
-- Always extract the billedTo as the FULL company name as it appears in the
-  document (keep "Sdn Bhd", "(SP)", etc.). Do NOT shorten, expand or rewrite it.
+- ${hasOrgList
+      ? 'billedTo MUST be an exact entry from the CONNECTED XERO ORGANISATIONS list below — copy it verbatim. Use "billedToVerbatim" for what the invoice actually says.'
+      : 'Always extract the billedTo as the FULL company name as it appears in the document (keep "Sdn Bhd", "(SP)", etc.). Do NOT shorten, expand or rewrite it.'}
 - If multiple addresses/branches appear, pick the one in the BILL TO / TO /
   SOLD TO / INVOICE TO block, not the supplier's address.
 
 Given the raw OCR text below, extract and return ONLY a valid JSON object:
 {
   "supplier": "Vendor / supplier company name (the company sending the invoice) or null",
-  "billedTo": "Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o.",
+  "billedTo": ${hasOrgList ? '"EXACT name copied from the CONNECTED XERO ORGANISATIONS list below, or null if no entry fits"' : '"Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o."'},
+  ${hasOrgList ? '"billedToVerbatim": "Original BILL TO text from the invoice (for human verification) or null",' : ''}
   "invoiceNo": "Invoice number or null",
   "date": "Date string or null",
   "dueDate": "Due date string or null",
@@ -1341,7 +1385,7 @@ Given the raw OCR text below, extract and return ONLY a valid JSON object:
   "total": 0.00,
   "notes": "string or null"
 }
-Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.
+Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}
 
 OCR Text:
 ${ocrText}`;
@@ -1379,6 +1423,7 @@ function normalizeBillPayload(bill) {
   const normalized = {
     supplier: bill?.supplier || null,
     billedTo: bill?.billedTo || null,
+    billedToVerbatim: bill?.billedToVerbatim || null,
     invoiceNo: bill?.invoiceNo || null,
     date: bill?.date || null,
     dueDate: bill?.dueDate || null,
@@ -1401,7 +1446,7 @@ function normalizeBillPayload(bill) {
   return normalized;
 }
 
-async function callGroqBill(ocrText, model) {
+async function callGroqBill(ocrText, model, knownOrgs = []) {
   if (!GROQ_API_KEY) {
     throw new Error('Missing GROQ_API_KEY in .env.');
   }
@@ -1414,7 +1459,7 @@ async function callGroqBill(ocrText, model) {
     },
     body: JSON.stringify({
       model: model || AI_PROVIDERS.groq.defaultModel,
-      messages: [{ role: 'user', content: buildBillPrompt(ocrText) }],
+      messages: [{ role: 'user', content: buildBillPrompt(ocrText, knownOrgs) }],
       temperature: 0.1,
       max_tokens: 1500
     })
@@ -1428,7 +1473,7 @@ async function callGroqBill(ocrText, model) {
   return normalizeBillPayload(JSON.parse(extractJsonText(payload.choices?.[0]?.message?.content)));
 }
 
-async function callGeminiBill(ocrText, model) {
+async function callGeminiBill(ocrText, model, knownOrgs = []) {
   if (!GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY in .env.');
   }
@@ -1443,7 +1488,7 @@ async function callGeminiBill(ocrText, model) {
       contents: [
         {
           role: 'user',
-          parts: [{ text: buildBillPrompt(ocrText) }]
+          parts: [{ text: buildBillPrompt(ocrText, knownOrgs) }]
         }
       ],
       generationConfig: {
@@ -1463,7 +1508,7 @@ async function callGeminiBill(ocrText, model) {
   return normalizeBillPayload(JSON.parse(extractJsonText(text)));
 }
 
-async function analyzeBillText({ text, provider, model }) {
+async function analyzeBillText({ text, provider, model, knownOrgs = [] }) {
   const trimmed = String(text || '').trim();
   if (!trimmed) {
     throw new Error('OCR text is required for AI analysis.');
@@ -1474,9 +1519,9 @@ async function analyzeBillText({ text, provider, model }) {
 
   const selectedProvider = AI_PROVIDERS[useProvider] ? useProvider : settings.provider;
   if (selectedProvider === 'gemini') {
-    return callGeminiBill(trimmed, useModel);
+    return callGeminiBill(trimmed, useModel, knownOrgs);
   }
-  return callGroqBill(trimmed, useModel);
+  return callGroqBill(trimmed, useModel, knownOrgs);
 }
 
 // ── Tesseract OCR pipeline (replaces Gemini for WhatsApp file → text) ──────
@@ -1872,7 +1917,16 @@ app.post('/api/ai/settings', async (req, res) => {
 
 app.post('/api/ai/analyze-bill', async (req, res) => {
   try {
-    const bill = await analyzeBillText(req.body || {});
+    // Fetch connected orgs so the AI can pick billedTo from a known list.
+    // Silently skip if Xero isn't connected — falls back to original behaviour.
+    let knownOrgs = [];
+    try {
+      const { connections } = await getValidConnections();
+      knownOrgs = connections.map((c) => c.tenantName).filter(Boolean);
+    } catch (err) {
+      console.error('analyze-bill: could not fetch Xero orgs (ok, fallback):', err.message);
+    }
+    const bill = await analyzeBillText({ ...(req.body || {}), knownOrgs });
     res.json({ ok: true, bill });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });
@@ -1909,8 +1963,7 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
       }
     }
 
-    const bill = await analyzeBillText({ text, provider, model });
-
+    // Fetch connected orgs FIRST so the AI can pick billedTo from the known list.
     let connections = [];
     let xeroAvailable = false;
     try {
@@ -1920,6 +1973,9 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
     } catch (err) {
       console.error('Could not refresh Xero connections for analyze-ocr:', err.message);
     }
+    const knownOrgs = connections.map((c) => c.tenantName).filter(Boolean);
+
+    const bill = await analyzeBillText({ text, provider, model, knownOrgs });
 
     const matchedTenant = matchTenantByName(bill.billedTo, connections);
     const candidatesList = connections.map((c) => ({
@@ -2065,10 +2121,21 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       return res.json({ ok: true, status: 'empty', ocrText: '' });
     }
 
-    // Structure via Groq
+    // Fetch connected orgs so the AI can pick billedTo from the known list.
+    // This is what makes "Nova Spa & Wellness" → "Ayu Borneo Nova SB fka Nova Spa..."
+    // work, plus all the "(SP)", "(VC3)" etc. branch matching.
+    let knownOrgs = [];
+    try {
+      const { connections } = await getValidConnections();
+      knownOrgs = (connections || []).map((c) => c.tenantName).filter(Boolean);
+    } catch (err) {
+      console.error('process-file: could not fetch Xero orgs (ok, fallback):', err.message);
+    }
+
+    // Structure via Groq, with the org list in the prompt
     let bill;
     try {
-      bill = await analyzeBillText({ text: ocrText, provider: 'groq' });
+      bill = await analyzeBillText({ text: ocrText, provider: 'groq', knownOrgs });
     } catch (analysisErr) {
       console.error('Groq bill analysis failed:', analysisErr.message);
       await deleteUploadedFile(filename);

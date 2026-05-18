@@ -386,13 +386,22 @@ function format_bridge_outcome(array $result): string
         "🤖 *AI bill analysis*",
         "Supplier: " . ($bill['supplier'] ?? 'Unknown'),
         "Bill To: " . ($bill['billedTo'] ?? '-'),
+    ];
+
+    // Show the original BILL TO text from the invoice when it differs from
+    // the AI's mapped Xero org name (helps spot wrong mappings).
+    if (!empty($bill['billedToVerbatim']) && $bill['billedToVerbatim'] !== ($bill['billedTo'] ?? '')) {
+        $lines[] = "  _(invoice said: " . $bill['billedToVerbatim'] . ")_";
+    }
+
+    $lines = array_merge($lines, [
         "Invoice No: " . ($bill['invoiceNo'] ?? '-'),
         "Date: " . ($bill['date'] ?? '-'),
         "Currency: " . ($bill['currency'] ?? 'MYR'),
         "Subtotal: " . format_money_value($bill['subtotal'] ?? 0),
         "Tax: " . format_money_value($bill['tax'] ?? 0),
         "*Total: " . format_money_value($bill['total'] ?? 0) . "*",
-    ];
+    ]);
 
     if (!empty($bill['lineItems']) && is_array($bill['lineItems'])) {
         $lines[] = "";
