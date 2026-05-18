@@ -38,8 +38,12 @@ define('WAZZUP_API_KEY',    env_value('WAZZUP_API_KEY'));
 define('WAZZUP_CHANNEL_ID', env_value('WAZZUP_CHANNEL_ID'));
 define('WEBHOOK_SECRET',    env_value('WEBHOOK_SECRET'));
 define('XERO_BRIDGE_URL',   env_value('XERO_BRIDGE_URL', 'http://localhost:3000/api/whatsapp/analyze-ocr'));
+// New tesseract → Groq pipeline endpoints (added 2026-05-18)
+define('XERO_BRIDGE_BASE',  env_value('XERO_BRIDGE_BASE', 'http://localhost:3000'));
+define('BRIDGE_PROCESS_URL', XERO_BRIDGE_BASE . '/api/whatsapp/process-file');
+define('BRIDGE_CHAT_URL',    XERO_BRIDGE_BASE . '/api/whatsapp/chat');
 define('WHATSAPP_AUTO_CREATE_XERO_BILLS', env_value('WHATSAPP_AUTO_CREATE_XERO_BILLS', 'false') === 'true');
-define('MAX_FILE_BYTES',    15 * 1024 * 1024); // 15 MB Gemini inline_data limit
+define('MAX_FILE_BYTES',    15 * 1024 * 1024); // 15 MB upload limit
 define('WEBHOOK_LOG_FILE',  __DIR__ . '/webhook.log');
 
 function wlog(string $msg): void
@@ -204,11 +208,11 @@ function handle_text(string $chatId, string $chatType, array $msg): void
 
     wlog("WAZZOCR TEXT: chatId=$chatId text=" . substr($text, 0, 100));
 
-    // ── Keyword shortcuts ──────────────────────────────────────────────────
+    // ── Local keyword shortcuts (cheap, no bridge call) ───────────────────
     $lower = mb_strtolower($text);
 
     // Greetings → welcome message
-    $greetings = ['hi', 'hello', 'hey', 'halo', 'hai', 'start', 'helo', 'yo', 'help'];
+    $greetings = ['hi', 'hello', 'hey', 'halo', 'hai', 'start', 'helo', 'yo'];
     foreach ($greetings as $g) {
         if ($lower === $g || str_starts_with($lower, $g . ' ') || str_starts_with($lower, $g . ',')) {
             wazzup_send($chatId, $chatType, WELCOME_MSG);
@@ -216,19 +220,8 @@ function handle_text(string $chatId, string $chatType, array $msg): void
         }
     }
 
-    // Capability / help queries
-    $capWords = ['capability', 'capabilities', 'what can you do', 'features', 'function',
-                 'boleh buat apa', 'apa boleh', 'what do you do', 'how does this work',
-                 'how do you work', 'what are you', 'who are you'];
-    foreach ($capWords as $w) {
-        if (str_contains($lower, $w)) {
-            wazzup_send($chatId, $chatType, CAPABILITY_MSG);
-            return;
-        }
-    }
-
-    // ── AI Chat (Gemini) ───────────────────────────────────────────────────
-    $reply = gemini_chat($text);
+    // ── Everything else → bridge (handles picker reply, commands, Groq chat)
+    $reply = forward_text_to_bridge($chatId, $text);
 
     if ($reply === null) {
         wazzup_send($chatId, $chatType,
@@ -239,6 +232,33 @@ function handle_text(string $chatId, string $chatType, array $msg): void
     }
 
     wazzup_send($chatId, $chatType, $reply);
+}
+
+// Forward a text message to server.js — it decides if it's a picker reply,
+// a command (orgs/pending/help), or a general Groq chat.
+function forward_text_to_bridge(string $chatId, string $text): ?string
+{
+    $payload = ['chatId' => $chatId, 'text' => $text];
+
+    $ch = curl_init(BRIDGE_CHAT_URL);
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_TIMEOUT        => 45,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr || $httpCode < 200 || $httpCode >= 300) {
+        wlog("WAZZOCR BRIDGE CHAT ERROR: http=$httpCode err=$curlErr resp=" . substr((string)$response, 0, 300));
+        return null;
+    }
+    $data = json_decode($response, true);
+    return $data['reply'] ?? null;
 }
 
 // ─── FILE HANDLER (IMAGE / PDF) ───────────────────────────────────────────────
@@ -280,34 +300,165 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
         $file['mime'] = 'application/pdf';
     }
 
-    wlog("WAZZOCR GEMINI: calling with mime={$file['mime']}");
-    $result = call_gemini_with_file($file);
+    // New pipeline: send the raw file to server.js → tesseract.js → Groq → match
+    wlog("WAZZOCR BRIDGE PROCESS: posting file to " . BRIDGE_PROCESS_URL);
+    $result = process_file_via_bridge($chatId, $file, $filename);
 
     if ($result === null) {
-        wazzup_send($chatId, $chatType, "❌ Sorry, I had trouble reading the {$typeLabel}. Please try again.");
+        wazzup_send($chatId, $chatType,
+            "❌ Sorry, I had trouble reading the {$typeLabel}. Please try again.\n\n" .
+            "_(The OCR server may be down or busy.)_"
+        );
         return;
     }
 
-    if (trim($result['text']) === '') {
+    if (!empty($result['error'])) {
+        wazzup_send($chatId, $chatType, "❌ {$result['error']}");
+        return;
+    }
+
+    $status = $result['status'] ?? 'unknown';
+
+    if ($status === 'empty') {
         wazzup_send($chatId, $chatType, "📄 I couldn't find any text in this {$typeLabel}.");
         return;
     }
 
-    wlog("WAZZOCR SUCCESS: extracted " . mb_strlen($result['text']) . " chars");
-    wlog("WAZZOCR EXTRACTED TEXT:\n" . $result['text']);
+    $output = format_bridge_outcome($result);
 
-    $analysis = analyze_with_xero_bridge($result['text'], $file['bytes'], $file['mime'], $filename);
-
-    if ($analysis !== null && ($analysis['ok'] ?? false)) {
-        $output = format_bridge_analysis($analysis);
-    } else {
-        $output = $result['output'];
-        if ($analysis !== null && !empty($analysis['error'])) {
-            $output .= "\n\n⚠️ *AI/Xero draft failed*\n" . $analysis['error'];
-        }
+    // If pending → also send picker
+    if ($status === 'pending' && !empty($result['candidates'])) {
+        wazzup_send($chatId, $chatType, $output);
+        send_org_picker($chatId, $chatType, $result['candidates'], $result['bill']['billedTo'] ?? '');
+        return;
     }
 
     wazzup_send($chatId, $chatType, $output);
+}
+
+// POSTs the binary file to server.js as JSON (base64) along with chatId,
+// so the bridge can remember "this chat is awaiting picker reply" if needed.
+function process_file_via_bridge(string $chatId, array $file, string $filename = ''): ?array
+{
+    $payload = [
+        'chatId'     => $chatId,
+        'fileBase64' => base64_encode($file['bytes']),
+        'mime'       => $file['mime'],
+        'fileName'   => $filename,
+    ];
+
+    $ch = curl_init(BRIDGE_PROCESS_URL);
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_TIMEOUT        => 180, // tesseract can be slow on multi-page PDFs
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr  = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr) {
+        wlog("WAZZOCR BRIDGE PROCESS CURL ERROR: $curlErr");
+        return null;
+    }
+    if ($httpCode < 200 || $httpCode >= 300) {
+        $data = json_decode((string)$response, true);
+        wlog("WAZZOCR BRIDGE PROCESS HTTP $httpCode: " . substr((string)$response, 0, 400));
+        return ['error' => $data['error'] ?? "Bridge server returned HTTP {$httpCode}"];
+    }
+    $data = json_decode((string)$response, true);
+    if (!is_array($data)) {
+        return ['error' => 'Bridge server returned an invalid response.'];
+    }
+    return $data;
+}
+
+// Format the response from /api/whatsapp/process-file into a WhatsApp message.
+function format_bridge_outcome(array $result): string
+{
+    $bill = $result['bill'] ?? [];
+    if (!is_array($bill)) $bill = [];
+
+    $lines = [
+        "🤖 *AI bill analysis*",
+        "Supplier: " . ($bill['supplier'] ?? 'Unknown'),
+        "Bill To: " . ($bill['billedTo'] ?? '-'),
+        "Invoice No: " . ($bill['invoiceNo'] ?? '-'),
+        "Date: " . ($bill['date'] ?? '-'),
+        "Currency: " . ($bill['currency'] ?? 'MYR'),
+        "Subtotal: " . format_money_value($bill['subtotal'] ?? 0),
+        "Tax: " . format_money_value($bill['tax'] ?? 0),
+        "*Total: " . format_money_value($bill['total'] ?? 0) . "*",
+    ];
+
+    if (!empty($bill['lineItems']) && is_array($bill['lineItems'])) {
+        $lines[] = "";
+        $lines[] = "*Line items*";
+        foreach (array_slice($bill['lineItems'], 0, 8) as $index => $item) {
+            $description = $item['description'] ?? ('Item ' . ($index + 1));
+            $amount = format_money_value($item['amount'] ?? 0);
+            $lines[] = ($index + 1) . ". {$description} — {$amount}";
+        }
+    }
+
+    $status = $result['status'] ?? '';
+    $matched = $result['matchedTenant'] ?? null;
+    $xero    = $result['xero'] ?? null;
+    $pending = $result['pending'] ?? null;
+
+    if ($status === 'created' && is_array($xero) && !empty($xero['invoiceId'])) {
+        $lines[] = "";
+        $lines[] = "✅ *Xero draft bill created*";
+        $orgName = $xero['tenantName'] ?? ($matched['tenantName'] ?? 'Xero');
+        $lines[] = "Organisation: " . $orgName;
+        if (!empty($xero['contactName'])) {
+            $lines[] = "Supplier: " . $xero['contactName'];
+        }
+        $lines[] = "Invoice: " . ($xero['invoiceNumber'] ?? $xero['invoiceId']);
+        if (isset($xero['total']) && $xero['total'] !== null) {
+            $currency = $xero['currency'] ?? '';
+            $lines[] = "Total: " . trim($currency . ' ' . format_money_value($xero['total']));
+        }
+        $lines[] = "Status: " . ($xero['status'] ?? 'DRAFT');
+        $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
+    } elseif ($status === 'pending' && is_array($pending)) {
+        $lines[] = "";
+        $lines[] = "⚠️ *Action needed: pick the organisation*";
+        $lines[] = $pending['reason'] ?? 'Could not match this bill to any connected Xero organisation.';
+    } elseif ($status === 'no-xero') {
+        $lines[] = "";
+        $lines[] = "⚠️ Xero is not connected yet. Open the dashboard to connect.";
+    }
+
+    return implode("\n", $lines);
+}
+
+// Send a numbered org-picker over WhatsApp. The user replies with a number;
+// /api/whatsapp/chat picks that up via the stored picker state.
+//
+// TODO(interactive-buttons): Wazzup24 docs are gated; once the exact JSON
+// schema for WhatsApp interactive buttons is confirmed, swap the text body
+// below for wazzup_send_buttons() — webhook.php will still see the reply as
+// regular text, so the resolver stays unchanged.
+function send_org_picker(string $chatId, string $chatType, array $candidates, string $billedTo = ''): void
+{
+    $lines = [];
+    $lines[] = "👉 *Which Xero organisation should this go to?*";
+    if ($billedTo !== '') {
+        $lines[] = "Bill says: _" . $billedTo . "_";
+    }
+    $lines[] = "";
+    foreach (array_slice($candidates, 0, 12) as $i => $c) {
+        $name = $c['tenantName'] ?? '(unnamed)';
+        $lines[] = ($i + 1) . ". " . $name;
+    }
+    $lines[] = "";
+    $lines[] = "_Reply with the number (e.g. *1*), or type *cancel* to skip._";
+
+    wazzup_send($chatId, $chatType, implode("\n", $lines));
 }
 
 // ─── GEMINI: AI CHAT ─────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ const BILLS_FILE = path.join(DATA_DIR, 'bills.json');
 const PENDING_FILE = path.join(DATA_DIR, 'pending-bills.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
 const BILL_STATUS_CRON_LOG_FILE = path.join(DATA_DIR, 'bill-status-cron.log');
+const WHATSAPP_STATE_FILE = path.join(DATA_DIR, 'whatsapp-state.json');
 const XERO_IDENTITY_BASE = 'https://login.xero.com/identity/connect';
 const XERO_API_BASE = 'https://api.xero.com/api.xro/2.0';
 const XERO_CONNECTIONS_URL = 'https://api.xero.com/connections';
@@ -1478,6 +1479,328 @@ async function analyzeBillText({ text, provider, model }) {
   return callGroqBill(trimmed, useModel);
 }
 
+// ── Tesseract OCR pipeline (replaces Gemini for WhatsApp file → text) ──────
+//
+// Inputs: a raw image buffer (image/*) OR a PDF buffer (application/pdf).
+// PDFs are first rasterized one page at a time to PNG via pdf-to-png-converter,
+// then each page is OCR'd with tesseract.js. Text from all pages is joined.
+
+let _tesseractWorker = null;
+async function getTesseractWorker() {
+  if (_tesseractWorker) return _tesseractWorker;
+  const Tesseract = require('tesseract.js');
+  // 'eng' is enough for English / Malay Latin script. Add 'msa' here later
+  // if you need a Malay language model — it requires downloading extra data.
+  const worker = await Tesseract.createWorker('eng');
+  _tesseractWorker = worker;
+  return worker;
+}
+
+async function rasterizePdfToPngs(pdfBuffer) {
+  const { pdfToPng } = require('pdf-to-png-converter');
+  const pages = await pdfToPng(pdfBuffer, {
+    viewportScale: 2.0, // 2x = ~144 DPI, balances OCR quality vs memory
+    disableFontFace: true,
+    useSystemFonts: false
+  });
+  return pages.map((p) => p.content); // array of Buffers (PNG)
+}
+
+async function runTesseractOcr(buffer, mime) {
+  if (!buffer || !buffer.length) {
+    throw new Error('Empty file: nothing to OCR.');
+  }
+  const worker = await getTesseractWorker();
+  const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
+    || buffer.slice(0, 4).toString() === '%PDF';
+
+  const images = isPdf ? await rasterizePdfToPngs(buffer) : [buffer];
+  if (!images.length) return '';
+
+  const texts = [];
+  for (let i = 0; i < images.length; i++) {
+    const { data } = await worker.recognize(images[i]);
+    const pageText = (data?.text || '').trim();
+    if (pageText) {
+      texts.push(images.length > 1 ? `─── Page ${i + 1} ───\n${pageText}` : pageText);
+    }
+  }
+  return texts.join('\n\n');
+}
+
+// ── WhatsApp conversation state (per-chat picker / context) ─────────────────
+
+async function loadWhatsappState() {
+  return (await readJson(WHATSAPP_STATE_FILE, {})) || {};
+}
+
+async function saveWhatsappState(state) {
+  await writeJson(WHATSAPP_STATE_FILE, state);
+}
+
+async function getChatState(chatId) {
+  const all = await loadWhatsappState();
+  return all[chatId] || null;
+}
+
+async function setChatState(chatId, patch) {
+  const all = await loadWhatsappState();
+  const current = all[chatId] || {};
+  all[chatId] = { ...current, ...patch, updatedAt: isoNow() };
+  await saveWhatsappState(all);
+  return all[chatId];
+}
+
+async function clearChatState(chatId, key = null) {
+  const all = await loadWhatsappState();
+  if (!all[chatId]) return;
+  if (key) {
+    delete all[chatId][key];
+    all[chatId].updatedAt = isoNow();
+  } else {
+    delete all[chatId];
+  }
+  await saveWhatsappState(all);
+}
+
+// ── Groq general chat (replaces Gemini chat for non-bill WhatsApp messages) ─
+
+async function callGroqChat(userMessage, history = []) {
+  if (!GROQ_API_KEY) {
+    throw new Error('Missing GROQ_API_KEY in .env.');
+  }
+  const systemPrompt = `You are WazzOCR, FusionETA's friendly WhatsApp assistant for bookkeeping.
+
+You help users:
+- Process invoices/receipts they send as images or PDFs (auto-extracted to Xero drafts)
+- Answer questions about their bills, Xero organisations, and bookkeeping basics
+- Chat naturally in English, Malay (Bahasa Malaysia), or Chinese
+
+Style: friendly, professional, very concise (this is WhatsApp). Keep replies under 6 short lines unless asked for detail. Use light WhatsApp markdown (*bold*, _italic_) sparingly.
+
+Commands the user can type:
+- "orgs" — list connected Xero organisations
+- "pending" — list bills awaiting org assignment
+- "help" — show what you can do
+
+When asked who you are: "I'm WazzOCR by FusionETA — I read your invoices and post them to Xero."`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history.slice(-6),
+    { role: 'user', content: userMessage }
+  ];
+
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${GROQ_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: AI_PROVIDERS.groq.defaultModel,
+      messages,
+      temperature: 0.7,
+      max_tokens: 600
+    })
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Groq chat failed (${response.status}).`);
+  }
+  return (payload.choices?.[0]?.message?.content || '').trim();
+}
+
+// ── WhatsApp processing core (shared by /process-file and resolver) ─────────
+
+async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp' }) {
+  let connections = [];
+  let xeroAvailable = false;
+  try {
+    const conn = await getValidConnections();
+    connections = conn.connections;
+    xeroAvailable = Boolean(conn.tokens?.accessToken);
+  } catch (err) {
+    console.error('Could not refresh Xero connections:', err.message);
+  }
+
+  const matchedTenant = matchTenantByName(bill.billedTo, connections);
+  const candidatesList = connections.map((c) => ({
+    tenantId: c.tenantId,
+    tenantName: c.tenantName
+  }));
+
+  if (matchedTenant && xeroAvailable) {
+    let sourceFile = null;
+    if (attachment) {
+      try {
+        sourceFile = {
+          buffer: await readUploadedFile(attachment.filename),
+          mimetype: attachment.mime,
+          originalname: attachment.originalName
+        };
+      } catch (err) {
+        console.error('Could not read attachment for matched bill:', err.message);
+      }
+    }
+    try {
+      const result = await createDraftBill({
+        bill,
+        sourceFile,
+        tenantId: matchedTenant.tenantId
+      });
+      await saveBillRecord(buildBillRecord({
+        bill,
+        result,
+        tenant: matchedTenant,
+        source
+      }));
+      if (attachment) {
+        await deleteUploadedFile(attachment.filename);
+      }
+      // Matched → clear any picker state for this chat
+      if (chatId) await clearChatState(chatId, 'awaitingPicker');
+      return {
+        status: 'created',
+        bill,
+        matchedTenant: { tenantId: matchedTenant.tenantId, tenantName: matchedTenant.tenantName },
+        xero: { ...result, tenantId: matchedTenant.tenantId, tenantName: matchedTenant.tenantName },
+        candidates: candidatesList
+      };
+    } catch (xeroError) {
+      const pending = await appendPendingBill({
+        id: crypto.randomUUID(),
+        bill,
+        billedTo: bill.billedTo,
+        attachedFile: attachment,
+        reason: `Auto-create failed in ${matchedTenant.tenantName}: ${xeroError.message}`,
+        suggestedTenantId: matchedTenant.tenantId,
+        candidates: candidatesList,
+        source,
+        createdAt: isoNow()
+      });
+      if (chatId) {
+        await setChatState(chatId, {
+          awaitingPicker: { pendingBillId: pending.id, candidates: candidatesList }
+        });
+      }
+      return {
+        status: 'pending',
+        bill,
+        matchedTenant: { tenantId: matchedTenant.tenantId, tenantName: matchedTenant.tenantName },
+        pending: { id: pending.id, reason: pending.reason, candidates: candidatesList },
+        candidates: candidatesList
+      };
+    }
+  }
+
+  if (xeroAvailable) {
+    const pending = await appendPendingBill({
+      id: crypto.randomUUID(),
+      bill,
+      billedTo: bill.billedTo,
+      attachedFile: attachment,
+      reason: 'No matching organisation found for "' + (bill.billedTo || '(empty BILL TO)') + '".',
+      suggestedTenantId: null,
+      candidates: candidatesList,
+      source,
+      createdAt: isoNow()
+    });
+    if (chatId) {
+      await setChatState(chatId, {
+        awaitingPicker: { pendingBillId: pending.id, candidates: candidatesList }
+      });
+    }
+    return {
+      status: 'pending',
+      bill,
+      matchedTenant: null,
+      pending: { id: pending.id, reason: pending.reason, candidates: candidatesList },
+      candidates: candidatesList
+    };
+  }
+
+  // Xero not connected — return bill only
+  return {
+    status: 'no-xero',
+    bill,
+    matchedTenant: null,
+    candidates: []
+  };
+}
+
+async function resolvePickerForChat(chatId, choice) {
+  const state = await getChatState(chatId);
+  if (!state?.awaitingPicker?.pendingBillId) return null;
+
+  const { pendingBillId, candidates } = state.awaitingPicker;
+  let tenantId = null;
+
+  // Numbered choice (1-based)
+  const num = Number.parseInt(String(choice).trim(), 10);
+  if (!Number.isNaN(num) && num >= 1 && num <= candidates.length) {
+    tenantId = candidates[num - 1].tenantId;
+  } else {
+    // Match by tenantId directly, or fuzzy by name
+    const choiceLc = String(choice).trim().toLowerCase();
+    const byId = candidates.find((c) => c.tenantId === choice);
+    if (byId) {
+      tenantId = byId.tenantId;
+    } else {
+      const byName = candidates.find((c) =>
+        String(c.tenantName || '').toLowerCase().includes(choiceLc) && choiceLc.length >= 3
+      );
+      if (byName) tenantId = byName.tenantId;
+    }
+  }
+  if (!tenantId) return { resolved: false, reason: 'No matching choice' };
+
+  const pending = await getPendingBill(pendingBillId);
+  if (!pending) {
+    await clearChatState(chatId, 'awaitingPicker');
+    return { resolved: false, reason: 'Pending bill no longer exists' };
+  }
+
+  const { connections } = await getValidConnections();
+  const tenant = connections.find((c) => c.tenantId === tenantId);
+  if (!tenant) return { resolved: false, reason: 'Tenant not connected anymore' };
+
+  let sourceFile = null;
+  if (pending.attachedFile) {
+    try {
+      sourceFile = {
+        buffer: await readUploadedFile(pending.attachedFile.filename),
+        mimetype: pending.attachedFile.mime,
+        originalname: pending.attachedFile.originalName
+      };
+    } catch (err) {
+      console.error('Pending attachment missing on disk:', err.message);
+    }
+  }
+
+  const result = await createDraftBill({
+    bill: pending.bill,
+    sourceFile,
+    tenantId
+  });
+  await saveBillRecord(buildBillRecord({
+    bill: pending.bill,
+    result,
+    tenant,
+    source: pending.source ? `${pending.source}+whatsapp-picker` : 'whatsapp-picker'
+  }));
+  await removePendingBill(pendingBillId);
+  if (pending.attachedFile) await deleteUploadedFile(pending.attachedFile.filename);
+  await clearChatState(chatId, 'awaitingPicker');
+
+  return {
+    resolved: true,
+    tenant: { tenantId: tenant.tenantId, tenantName: tenant.tenantName },
+    xero: { ...result, tenantId: tenant.tenantId, tenantName: tenant.tenantName },
+    bill: pending.bill
+  };
+}
+
 // ── Express routes ──────────────────────────────────────────────────────────
 
 app.use(express.json({ limit: '20mb' }));
@@ -1692,6 +2015,173 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
       details: error.payload || null,
       needsReconnect: Boolean(error.statusCode === 401 || String(error.message || '').toLowerCase().includes('reconnect xero'))
     });
+  }
+});
+
+// ── WhatsApp full-pipeline endpoints (tesseract → Groq → match) ─────────────
+
+// Accepts the raw file (base64) from webhook.php OR a multipart upload.
+// Runs tesseract → Groq → tenant match. If matched, creates the Xero draft.
+// If unmatched, stores pending bill AND sets per-chat picker state.
+app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const chatId = (body.chatId || '').toString().trim();
+    const fileName = body.fileName || body.filename || (req.file?.originalname) || '';
+
+    let buffer = null;
+    let mime = body.mime || body.imageMime || req.file?.mimetype || 'application/octet-stream';
+
+    if (req.file?.buffer) {
+      buffer = req.file.buffer;
+    } else if (body.fileBase64 || body.imageBase64) {
+      buffer = Buffer.from(body.fileBase64 || body.imageBase64, 'base64');
+    }
+
+    if (!buffer || !buffer.length) {
+      return res.status(400).json({ error: 'No file provided (expect multipart "file" or JSON fileBase64).' });
+    }
+
+    // Persist attachment so it can be reused by picker resolution / Xero attach
+    const filename = await saveUploadedBuffer(buffer, mime);
+    const attachment = {
+      filename,
+      mime,
+      originalName: fileName || filename
+    };
+
+    // OCR via tesseract.js (PDFs are rasterized to PNG first)
+    let ocrText = '';
+    try {
+      ocrText = await runTesseractOcr(buffer, mime);
+    } catch (ocrErr) {
+      console.error('Tesseract OCR failed:', ocrErr.message);
+      await deleteUploadedFile(filename);
+      return res.status(500).json({ error: `OCR failed: ${ocrErr.message}` });
+    }
+
+    if (!ocrText.trim()) {
+      await deleteUploadedFile(filename);
+      return res.json({ ok: true, status: 'empty', ocrText: '' });
+    }
+
+    // Structure via Groq
+    let bill;
+    try {
+      bill = await analyzeBillText({ text: ocrText, provider: 'groq' });
+    } catch (analysisErr) {
+      console.error('Groq bill analysis failed:', analysisErr.message);
+      await deleteUploadedFile(filename);
+      return res.status(500).json({ error: `AI analysis failed: ${analysisErr.message}`, ocrText });
+    }
+
+    const outcome = await processBillForChat({
+      bill,
+      attachment,
+      chatId,
+      source: 'whatsapp'
+    });
+
+    res.json({ ok: true, ocrText, ...outcome });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      error: error.message,
+      needsReconnect: Boolean(error.statusCode === 401 || String(error.message || '').toLowerCase().includes('reconnect xero'))
+    });
+  }
+});
+
+// Accepts a free-text WhatsApp message. Routing priority:
+//   1) Picker state for this chat — resolve to a tenant choice if reply matches
+//   2) Built-in commands (orgs / pending / help)
+//   3) General Groq chat
+app.post('/api/whatsapp/chat', async (req, res) => {
+  try {
+    const { chatId, text } = req.body || {};
+    const message = String(text || '').trim();
+    if (!chatId || !message) {
+      return res.status(400).json({ error: 'Missing chatId or text.' });
+    }
+
+    // 1) Picker resolution
+    const state = await getChatState(chatId);
+    if (state?.awaitingPicker?.pendingBillId) {
+      const lower = message.toLowerCase();
+      if (['cancel', 'batal', 'skip', 'stop'].includes(lower)) {
+        await clearChatState(chatId, 'awaitingPicker');
+        return res.json({ ok: true, kind: 'picker-cancelled', reply: '👍 Cancelled. The bill is still in *Pending* — open the dashboard to assign it later.' });
+      }
+      const result = await resolvePickerForChat(chatId, message);
+      if (result?.resolved) {
+        const lines = [
+          '✅ *Xero draft bill created*',
+          `Organisation: ${result.tenant.tenantName}`,
+          `Supplier: ${result.xero.contactName || result.bill.supplier || '-'}`,
+          `Invoice: ${result.xero.invoiceNumber || result.xero.invoiceId}`
+        ];
+        if (result.xero.total != null) {
+          lines.push(`Total: ${result.bill.currency || ''} ${Number(result.xero.total).toFixed(2)}`.trim());
+        }
+        lines.push(`View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${result.xero.invoiceId}`);
+        return res.json({ ok: true, kind: 'picker-resolved', reply: lines.join('\n'), xero: result.xero });
+      }
+      // Could not resolve → fall through to chat but include a hint
+      if (result && !result.resolved && result.reason !== 'No matching choice') {
+        await clearChatState(chatId, 'awaitingPicker');
+        return res.json({ ok: true, kind: 'picker-error', reply: `⚠️ ${result.reason}. The pick has been cancelled.` });
+      }
+      // Reply did not look like a choice — keep picker state and fall through to chat
+    }
+
+    // 2) Commands
+    const lower = message.toLowerCase();
+    if (['orgs', 'organisations', 'organizations', 'tenants'].includes(lower)) {
+      const { connections } = await getValidConnections();
+      if (!connections.length) {
+        return res.json({ ok: true, kind: 'command', reply: '⚠️ No Xero organisations connected yet. Open the dashboard to connect.' });
+      }
+      const list = connections.map((c, i) => `${i + 1}. ${c.tenantName}`).join('\n');
+      return res.json({ ok: true, kind: 'command', reply: `🏢 *Connected Xero organisations:*\n${list}` });
+    }
+    if (['pending', 'unmatched', 'queue'].includes(lower)) {
+      const list = await loadPendingBills();
+      if (!list.length) {
+        return res.json({ ok: true, kind: 'command', reply: '✅ No pending bills. All clean.' });
+      }
+      const lines = list.slice(0, 8).map((p, i) =>
+        `${i + 1}. ${p.bill?.supplier || 'Unknown'} → ${p.billedTo || '(no billed to)'} (${(p.bill?.currency || '')} ${Number(p.bill?.total || 0).toFixed(2)})`
+      );
+      return res.json({ ok: true, kind: 'command', reply: `📋 *Pending bills (${list.length}):*\n${lines.join('\n')}` });
+    }
+    if (['help', 'commands', '?'].includes(lower)) {
+      return res.json({
+        ok: true,
+        kind: 'command',
+        reply: '🤖 *WazzOCR commands*\n• Send an image/PDF — I extract & post to Xero\n• `orgs` — list connected Xero organisations\n• `pending` — list bills awaiting assignment\n• `help` — this message\n\nOr just chat naturally — ask me anything!'
+      });
+    }
+
+    // 3) General Groq chat
+    const reply = await callGroqChat(message);
+    return res.json({ ok: true, kind: 'chat', reply });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+// Direct picker resolution endpoint (alternative to the chat-routing path).
+// Useful if webhook.php parses a button reply explicitly.
+app.post('/api/whatsapp/picker/resolve', async (req, res) => {
+  try {
+    const { chatId, choice } = req.body || {};
+    if (!chatId || choice == null) {
+      return res.status(400).json({ error: 'Missing chatId or choice.' });
+    }
+    const result = await resolvePickerForChat(chatId, choice);
+    if (!result) return res.status(404).json({ error: 'No picker awaiting for this chat.' });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 
