@@ -995,12 +995,23 @@ function deriveLineItems(bill, defaults) {
   }
 
   const normalized = provided.map((item, index) => {
-    const quantity = normalizeNumber(firstPresent(item.qty, item.quantity, item.Quantity), 1) || 1;
+    let quantity = normalizeNumber(firstPresent(item.qty, item.quantity, item.Quantity), 1) || 1;
     const amount = normalizeNumber(firstPresent(item.amount, item.lineAmount, item.LineAmount, item.total, item.Total), 0);
-    const unitPrice = normalizeNumber(
+    let unitPrice = normalizeNumber(
       firstPresent(item.unitPrice, item.unitAmount, item.UnitAmount, item.price, item.rate),
       amount > 0 ? amount / quantity : 0
     );
+
+    // Consistency repair: Xero requires Quantity × UnitAmount = LineAmount.
+    // If the AI gave inconsistent figures (e.g. confusing usage-quantity with
+    // unit price on an AWS-style invoice), trust the `amount` and normalise
+    // to qty=1 + UnitAmount=amount. Avoids "line total does not match" errors.
+    if (amount > 0 && Math.abs((quantity * unitPrice) - amount) > 0.01) {
+      console.warn(`[lineItems] Item ${index + 1} inconsistent (qty=${quantity}, unit=${unitPrice}, amt=${amount}). Repairing to qty=1, unit=${amount}.`);
+      quantity = 1;
+      unitPrice = amount;
+    }
+
     const resolvedAccount = item.accountCode || accountCode;
     const resolvedTax = item.taxType || taxType;
     const lineItem = {
@@ -1010,12 +1021,39 @@ function deriveLineItems(bill, defaults) {
     };
     if (resolvedAccount) lineItem.AccountCode = resolvedAccount;
     if (resolvedTax) lineItem.TaxType = resolvedTax;
-    if (amount > 0) lineItem.LineAmount = Number(amount.toFixed(2));
+    // Intentionally NOT sending LineAmount — let Xero compute it from
+    // Quantity × UnitAmount. Sending it ourselves only creates a way to
+    // disagree with Xero's own computation (and there's no upside).
     return lineItem;
-  }).filter((item) => item.UnitAmount > 0 || item.LineAmount > 0);
+  }).filter((item) => item.UnitAmount > 0);
 
   if (!normalized.length) {
     throw new Error('No usable line items were found for the bill.');
+  }
+
+  // Top-level math sanity: if the sum of line items doesn't match the bill's
+  // subtotal/total (e.g. AWS invoice where tesseract+AI hallucinated some
+  // amounts), fall back to a single summary line using the trusted total.
+  // Better one correct line than many wrong ones.
+  const billSubtotal = normalizeNumber(bill.subtotal);
+  const billTotal = normalizeNumber(bill.total);
+  const expected = billSubtotal > 0 ? billSubtotal : billTotal;
+  if (expected > 0) {
+    const lineSum = normalized.reduce((s, li) => s + (li.Quantity * li.UnitAmount), 0);
+    const diff = Math.abs(lineSum - expected);
+    const tolerance = Math.max(1, expected * 0.02); // 2% or RM 1
+    if (diff > tolerance) {
+      console.warn(`[lineItems] Sum ${lineSum.toFixed(2)} ≠ expected ${expected.toFixed(2)} (diff ${diff.toFixed(2)}). Falling back to single summary line.`);
+      const useAmount = billTotal > 0 ? billTotal : expected;
+      const fallback = {
+        Description: `Bill total${bill.invoiceNo ? ` (${bill.invoiceNo})` : ''} — line items inconsistent`,
+        Quantity: 1,
+        UnitAmount: Number(useAmount.toFixed(2))
+      };
+      if (accountCode) fallback.AccountCode = accountCode;
+      if (taxType) fallback.TaxType = taxType;
+      return [fallback];
+    }
   }
 
   return normalized;
@@ -1873,11 +1911,26 @@ async function resolvePickerForChat(chatId, choice) {
     }
   }
 
-  const result = await createDraftBill({
-    bill: pending.bill,
-    sourceFile,
-    tenantId
-  });
+  let result;
+  try {
+    result = await createDraftBill({
+      bill: pending.bill,
+      sourceFile,
+      tenantId
+    });
+  } catch (xeroErr) {
+    // Common case: Xero validation error (e.g. line totals don't match).
+    // Keep the picker state alive so the user can retry with a different
+    // org / cancel — and tell them WHY it failed.
+    console.error(`[picker] createDraftBill failed for tenant ${tenant.tenantName}:`, xeroErr.message);
+    return {
+      resolved: false,
+      reason: `Xero rejected this in ${tenant.tenantName}: ${xeroErr.message}`,
+      keepState: true,
+      tenant: { tenantId: tenant.tenantId, tenantName: tenant.tenantName }
+    };
+  }
+
   await saveBillRecord(buildBillRecord({
     bill: pending.bill,
     result,
@@ -2252,10 +2305,24 @@ app.post('/api/whatsapp/chat', async (req, res) => {
         lines.push(`View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${result.xero.invoiceId}`);
         return res.json({ ok: true, kind: 'picker-resolved', reply: lines.join('\n'), xero: result.xero });
       }
-      // Could not resolve → fall through to chat but include a hint
-      if (result && !result.resolved && result.reason !== 'No matching choice') {
-        await clearChatState(chatId, 'awaitingPicker');
-        return res.json({ ok: true, kind: 'picker-error', reply: `⚠️ ${result.reason}. The pick has been cancelled.` });
+      // Picker resolver returned an error.
+      if (result && !result.resolved) {
+        // Xero-side error (e.g. line totals don't match) — keep state so the
+        // user can try another org or cancel. Surface the actual reason.
+        if (result.keepState) {
+          return res.json({
+            ok: true,
+            kind: 'picker-error',
+            reply:
+              `⚠️ ${result.reason}\n\n` +
+              `Reply with a *different number*, or type *cancel* to skip and assign it from the dashboard.`
+          });
+        }
+        // Hard error (pending bill gone, tenant disconnected, etc.) — clear state.
+        if (result.reason !== 'No matching choice') {
+          await clearChatState(chatId, 'awaitingPicker');
+          return res.json({ ok: true, kind: 'picker-error', reply: `⚠️ ${result.reason}. The pick has been cancelled.` });
+        }
       }
       // Reply did not look like a choice — keep picker state and fall through to chat
     }
