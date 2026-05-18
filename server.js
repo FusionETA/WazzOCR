@@ -1801,6 +1801,9 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
         candidates: candidatesList
       };
     } catch (xeroError) {
+      // AI matched the org confidently — Xero rejected the bill DATA, not
+      // the org choice. Don't ask the user to pick (picking a different org
+      // won't help). Park as pending so they can fix it from the dashboard.
       const pending = await appendPendingBill({
         id: crypto.randomUUID(),
         bill,
@@ -1812,15 +1815,12 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
         source,
         createdAt: isoNow()
       });
-      if (chatId) {
-        await setChatState(chatId, {
-          awaitingPicker: { pendingBillId: pending.id, candidates: candidatesList }
-        });
-      }
+      // Note: NOT setting awaitingPicker — the org is correct, the data is the problem.
       return {
-        status: 'pending',
+        status: 'xero-error',
         bill,
         matchedTenant: { tenantId: matchedTenant.tenantId, tenantName: matchedTenant.tenantName },
+        xeroError: xeroError.message,
         pending: { id: pending.id, reason: pending.reason, candidates: candidatesList },
         candidates: candidatesList
       };

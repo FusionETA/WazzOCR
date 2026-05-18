@@ -437,6 +437,18 @@ function format_bridge_outcome(array $result): string
         $lines[] = "";
         $lines[] = "⚠️ *Action needed: pick the organisation*";
         $lines[] = $pending['reason'] ?? 'Could not match this bill to any connected Xero organisation.';
+    } elseif ($status === 'xero-error') {
+        // AI matched the org confidently — Xero rejected the bill DATA.
+        // No picker (picking another org won't help); user fixes from dashboard.
+        $orgName = $matched['tenantName'] ?? 'the matched organisation';
+        $lines[] = "";
+        $lines[] = "❌ *Xero rejected this bill*";
+        $lines[] = "Matched org: " . $orgName . " (AI was confident — not an org problem)";
+        if (!empty($result['xeroError'])) {
+            $lines[] = "Reason: " . $result['xeroError'];
+        }
+        $lines[] = "";
+        $lines[] = "_The bill is in *Pending* — fix it from the dashboard, or send a corrected file._";
     } elseif ($status === 'no-xero') {
         $lines[] = "";
         $lines[] = "⚠️ Xero is not connected yet. Open the dashboard to connect.";
