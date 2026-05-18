@@ -1669,7 +1669,26 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
     console.error('Could not refresh Xero connections:', err.message);
   }
 
-  const matchedTenant = matchTenantByName(bill.billedTo, connections);
+  // Trust the AI when it returns a billedTo that EXACTLY matches a connected
+  // org name — the AI was given the org list in its prompt, so an exact-name
+  // hit is authoritative. Falls back to fuzzy matchTenantByName for legacy /
+  // edge cases (AI dropped a paren, slightly different casing, etc.).
+  let matchedTenant = null;
+  if (bill.billedTo && connections.length) {
+    const target = String(bill.billedTo).trim().toLowerCase();
+    matchedTenant = connections.find(
+      (c) => String(c.tenantName || '').trim().toLowerCase() === target
+    ) || null;
+    if (matchedTenant) {
+      console.log(`[match] AI exact-name hit → ${matchedTenant.tenantName}`);
+    }
+  }
+  if (!matchedTenant) {
+    matchedTenant = matchTenantByName(bill.billedTo, connections);
+    if (matchedTenant) {
+      console.log(`[match] fuzzy fallback hit → ${matchedTenant.tenantName}`);
+    }
+  }
   const candidatesList = connections.map((c) => ({
     tenantId: c.tenantId,
     tenantName: c.tenantName
@@ -1977,7 +1996,17 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
 
     const bill = await analyzeBillText({ text, provider, model, knownOrgs });
 
-    const matchedTenant = matchTenantByName(bill.billedTo, connections);
+    // Exact-name short-circuit (the AI was given the org list — trust it)
+    let matchedTenant = null;
+    if (bill.billedTo && connections.length) {
+      const target = String(bill.billedTo).trim().toLowerCase();
+      matchedTenant = connections.find(
+        (c) => String(c.tenantName || '').trim().toLowerCase() === target
+      ) || null;
+    }
+    if (!matchedTenant) {
+      matchedTenant = matchTenantByName(bill.billedTo, connections);
+    }
     const candidatesList = connections.map((c) => ({
       tenantId: c.tenantId,
       tenantName: c.tenantName
