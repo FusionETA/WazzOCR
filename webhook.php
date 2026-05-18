@@ -382,11 +382,19 @@ function format_bridge_outcome(array $result): string
     $bill = $result['bill'] ?? [];
     if (!is_array($bill)) $bill = [];
 
-    $lines = [
-        "🤖 *AI bill analysis*",
+    // Surface which extraction path was used (helps debug bad invoices)
+    $extractedBy = '';
+    switch ($result['extractionMethod'] ?? '') {
+        case 'pdf-text':   $extractedBy = "_(extracted via PDF text — exact)_"; break;
+        case 'tesseract':  $extractedBy = "_(extracted via Tesseract OCR — may have errors)_"; break;
+    }
+
+    $lines = ["🤖 *AI bill analysis*"];
+    if ($extractedBy !== '') $lines[] = $extractedBy;
+    $lines = array_merge($lines, [
         "Supplier: " . ($bill['supplier'] ?? 'Unknown'),
         "Bill To: " . ($bill['billedTo'] ?? '-'),
-    ];
+    ]);
 
     // Show the original BILL TO text from the invoice when it differs from
     // the AI's mapped Xero org name (helps spot wrong mappings).

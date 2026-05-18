@@ -1642,6 +1642,53 @@ async function runTesseractOcr(buffer, mime) {
   return texts.join('\n\n');
 }
 
+// Extracts embedded text from digital PDFs (no OCR). Returns '' if the PDF
+// has no extractable text (e.g. scanned image of paper). Free, instant, and
+// 100% accurate for digitally-generated PDFs like AWS / Xero / QuickBooks /
+// most accounting-software invoices.
+async function extractPdfEmbeddedText(buffer) {
+  const { PDFParse } = require('pdf-parse');
+  let parser;
+  try {
+    parser = new PDFParse({ data: buffer });
+    const result = await parser.getText();
+    return (result?.text || '').trim();
+  } catch (err) {
+    console.error('[pdf-text] embedded extraction failed:', err.message);
+    return '';
+  } finally {
+    try { await parser?.destroy?.(); } catch (_) { /* ignore */ }
+  }
+}
+
+// Smart entry point: try embedded text first (free, instant, accurate);
+// fall back to tesseract OCR only for scanned/photographed PDFs and for
+// regular image uploads (which have no embedded text by definition).
+// Returns { text, method } so the caller can tell the user (and the logs)
+// which path was used.
+async function extractTextFromFile(buffer, mime) {
+  if (!buffer || !buffer.length) {
+    throw new Error('Empty file: nothing to extract.');
+  }
+  const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
+    || buffer.slice(0, 4).toString() === '%PDF';
+
+  if (isPdf) {
+    const embedded = await extractPdfEmbeddedText(buffer);
+    // Threshold: if we got more than ~50 useful chars, treat the PDF as
+    // digital and skip OCR. Scanned PDFs typically yield 0 or a handful of
+    // stray glyphs, well below this.
+    if (embedded && embedded.replace(/\s+/g, ' ').length >= 50) {
+      console.log(`[extract] PDF embedded text used (${embedded.length} chars) — skipping tesseract.`);
+      return { text: embedded, method: 'pdf-text' };
+    }
+    console.log('[extract] PDF has no usable embedded text — falling back to tesseract OCR.');
+  }
+
+  const text = await runTesseractOcr(buffer, mime);
+  return { text, method: 'tesseract' };
+}
+
 // ── WhatsApp conversation state (per-chat picker / context) ─────────────────
 
 async function loadWhatsappState() {
@@ -2219,19 +2266,24 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       originalName: fileName || filename
     };
 
-    // OCR via tesseract.js (PDFs are rasterized to PNG first)
+    // Smart text extraction:
+    //   • Digital PDFs (AWS, Xero, QuickBooks, etc.) → embedded text (instant, exact)
+    //   • Scanned PDFs and image uploads → tesseract OCR
     let ocrText = '';
+    let extractionMethod = 'unknown';
     try {
-      ocrText = await runTesseractOcr(buffer, mime);
+      const out = await extractTextFromFile(buffer, mime);
+      ocrText = out.text;
+      extractionMethod = out.method;
     } catch (ocrErr) {
-      console.error('Tesseract OCR failed:', ocrErr.message);
+      console.error('Text extraction failed:', ocrErr.message);
       await deleteUploadedFile(filename);
-      return res.status(500).json({ error: `OCR failed: ${ocrErr.message}` });
+      return res.status(500).json({ error: `Text extraction failed: ${ocrErr.message}` });
     }
 
     if (!ocrText.trim()) {
       await deleteUploadedFile(filename);
-      return res.json({ ok: true, status: 'empty', ocrText: '' });
+      return res.json({ ok: true, status: 'empty', ocrText: '', extractionMethod });
     }
 
     // Fetch connected orgs so the AI can pick billedTo from the known list.
@@ -2262,7 +2314,7 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       source: 'whatsapp'
     });
 
-    res.json({ ok: true, ocrText, ...outcome });
+    res.json({ ok: true, ocrText, extractionMethod, ...outcome });
   } catch (error) {
     res.status(error.statusCode || 500).json({
       error: error.message,
