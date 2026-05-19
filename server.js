@@ -938,6 +938,46 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
 
 // ── Xero bill creation (per-tenant) ─────────────────────────────────────────
 
+// Per-tenant cache for tax rates (TTL: process lifetime). Tax rates change
+// rarely, no need to hit /TaxRates on every bill.
+const _taxRateCache = new Map();
+
+async function getTenantTaxRates(tenantId) {
+  if (_taxRateCache.has(tenantId)) return _taxRateCache.get(tenantId);
+  try {
+    const payload = await xeroApi('/TaxRates', {}, tenantId);
+    const rates = (payload.TaxRates || [])
+      .filter((r) => r.Status !== 'DELETED' && r.CanApplyToExpenses !== false)
+      .map((r) => ({
+        taxType: r.TaxType,
+        name: r.Name,
+        displayTaxRate: parseFloat(r.DisplayTaxRate),
+        effectiveRate: parseFloat(r.EffectiveRate)
+      }))
+      .filter((r) => Number.isFinite(r.effectiveRate));
+    _taxRateCache.set(tenantId, rates);
+    return rates;
+  } catch (err) {
+    console.error(`[tax] could not fetch tax rates for tenant ${tenantId}:`, err.message);
+    return [];
+  }
+}
+
+// Map a percentage (e.g. 6 for "6% SST") to an actual Xero TaxType code for
+// the given tenant. Returns null if no rate is within 0.5% of the target.
+async function findTaxTypeForPercent(tenantId, percent) {
+  if (!Number.isFinite(percent) || percent < 0.5) return null; // < 0.5% → treat as no tax
+  const rates = await getTenantTaxRates(tenantId);
+  let best = null;
+  for (const r of rates) {
+    const diff = Math.abs(r.effectiveRate - percent);
+    if (diff < 0.5 && (!best || diff < best.diff)) {
+      best = { ...r, diff };
+    }
+  }
+  return best ? best.taxType : null;
+}
+
 async function findOrCreateContact(bill, tenantId) {
   const supplierName = String(bill.supplier || FALLBACK_SUPPLIER_NAME).trim() || FALLBACK_SUPPLIER_NAME;
 
@@ -1003,12 +1043,18 @@ function deriveLineItems(bill, defaults) {
       amount !== 0 ? amount / quantity : 0
     );
 
-    // Consistency repair: Xero requires Quantity × UnitAmount = LineAmount.
-    // If the AI gave inconsistent figures (e.g. confusing usage-quantity with
-    // unit price on an AWS-style invoice), trust the `amount` and normalise
-    // to qty=1 + UnitAmount=amount. Works for negative amounts too.
-    if (amount !== 0 && Math.abs((quantity * unitPrice) - amount) > 0.01) {
-      console.warn(`[lineItems] Item ${index + 1} inconsistent (qty=${quantity}, unit=${unitPrice}, amt=${amount}). Repairing to qty=1, unit=${amount}.`);
+    // Consistency repair: Xero requires Quantity × UnitAmount = LineAmount,
+    // and we round UnitAmount to 2dp before sending. Two failure modes:
+    //   (a) AI gave inconsistent figures (qty × unit ≠ amount in raw values).
+    //   (b) Rounding unit to 2dp loses precision when qty > 1
+    //       (e.g. qty=35, unit=1.0143, amount=35.50 → rounded unit 1.01 →
+    //        Xero computes 35×1.01=35.35, losing RM 0.15).
+    // In either case, normalise to qty=1 + UnitAmount=amount so Xero's
+    // computation matches the invoice exactly. Works for negative amounts too.
+    const tentativeRoundedUnit = Number(unitPrice.toFixed(2));
+    const computedFromRoundedUnit = quantity * tentativeRoundedUnit;
+    if (amount !== 0 && Math.abs(computedFromRoundedUnit - amount) > 0.005) {
+      console.warn(`[lineItems] Item ${index + 1} qty=${quantity} × unit≈${tentativeRoundedUnit} = ${computedFromRoundedUnit.toFixed(2)} ≠ amount ${amount}. Normalising to qty=1, unit=${amount}.`);
       quantity = 1;
       unitPrice = amount;
     }
@@ -1086,9 +1132,28 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     throw error;
   }
 
+  // Determine the right Xero TaxType for this bill based on its declared
+  // tax %. Example: invoice has subtotal 772.50 + tax 46.35 = 6% → find the
+  // tenant's tax rate that's closest to 6% and apply it to every line. Falls
+  // back to XERO_DEFAULT_TAX_TYPE ("NONE") if the bill has no tax or no rate
+  // matches. Per-line `taxType` from the AI still wins if it sets one.
+  let resolvedTaxType = XERO_DEFAULT_TAX_TYPE;
+  const billSubtotal = normalizeNumber(bill.subtotal);
+  const billTaxAmount = normalizeNumber(bill.tax);
+  if (billSubtotal > 0 && billTaxAmount > 0) {
+    const percent = (billTaxAmount / billSubtotal) * 100;
+    const matched = await findTaxTypeForPercent(tenantId, percent);
+    if (matched) {
+      console.log(`[tax] bill tax ${percent.toFixed(2)}% → TaxType ${matched}`);
+      resolvedTaxType = matched;
+    } else {
+      console.warn(`[tax] bill tax ${percent.toFixed(2)}% — no matching Xero tax rate; using ${XERO_DEFAULT_TAX_TYPE}`);
+    }
+  }
+
   const lineItems = deriveLineItems(bill, {
     accountCode: XERO_DEFAULT_ACCOUNT_CODE,
-    taxType: XERO_DEFAULT_TAX_TYPE
+    taxType: resolvedTaxType
   });
 
   const invoicePayload = {
