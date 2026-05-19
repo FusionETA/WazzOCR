@@ -999,23 +999,25 @@ function deriveLineItems(bill, defaults) {
     const amount = normalizeNumber(firstPresent(item.amount, item.lineAmount, item.LineAmount, item.total, item.Total), 0);
     let unitPrice = normalizeNumber(
       firstPresent(item.unitPrice, item.unitAmount, item.UnitAmount, item.price, item.rate),
-      amount > 0 ? amount / quantity : 0
+      // Derive from amount for BOTH positive and negative (negative = discount/credit).
+      amount !== 0 ? amount / quantity : 0
     );
 
     // Consistency repair: Xero requires Quantity × UnitAmount = LineAmount.
     // If the AI gave inconsistent figures (e.g. confusing usage-quantity with
     // unit price on an AWS-style invoice), trust the `amount` and normalise
-    // to qty=1 + UnitAmount=amount. Avoids "line total does not match" errors.
-    if (amount > 0 && Math.abs((quantity * unitPrice) - amount) > 0.01) {
+    // to qty=1 + UnitAmount=amount. Works for negative amounts too.
+    if (amount !== 0 && Math.abs((quantity * unitPrice) - amount) > 0.01) {
       console.warn(`[lineItems] Item ${index + 1} inconsistent (qty=${quantity}, unit=${unitPrice}, amt=${amount}). Repairing to qty=1, unit=${amount}.`);
       quantity = 1;
       unitPrice = amount;
     }
 
+    const description = String(firstPresent(item.description, item.Description, item.name) || `Line item ${index + 1}`).trim();
     const resolvedAccount = item.accountCode || accountCode;
     const resolvedTax = item.taxType || taxType;
     const lineItem = {
-      Description: String(firstPresent(item.description, item.Description, item.name) || `Line item ${index + 1}`),
+      Description: description || `Line item ${index + 1}`,
       Quantity: quantity,
       UnitAmount: Number(unitPrice.toFixed(2))
     };
@@ -1025,7 +1027,12 @@ function deriveLineItems(bill, defaults) {
     // Quantity × UnitAmount. Sending it ourselves only creates a way to
     // disagree with Xero's own computation (and there's no upside).
     return lineItem;
-  }).filter((item) => item.UnitAmount > 0);
+  }).filter((item) => {
+    // Keep zero-priced lines (e.g. free-tier AWS services, informational entries)
+    // and negative lines (discounts / Savings-Plan credits). Drop only garbage:
+    // non-finite UnitAmount or items with no description at all.
+    return Number.isFinite(item.UnitAmount) && item.Description && item.Description.trim().length > 0;
+  });
 
   if (!normalized.length) {
     throw new Error('No usable line items were found for the bill.');
