@@ -40,7 +40,7 @@ const {
   XERO_DEFAULT_CURRENCY = 'MYR',
   GROQ_API_KEY = '',
   GEMINI_API_KEY = '',
-  DEFAULT_AI_PROVIDER = 'groq',
+  DEFAULT_AI_PROVIDER = 'gemini',
   WHATSAPP_AUTO_CREATE_XERO_BILLS = 'false',
   BILL_STATUS_CRON_SECRET = ''
 } = process.env;
@@ -463,7 +463,7 @@ async function loadAiSettings() {
       model: validModels.includes(stored.model) ? stored.model : AI_PROVIDERS[stored.provider].defaultModel
     };
   }
-  const fallback = AI_PROVIDERS[DEFAULT_AI_PROVIDER] ? DEFAULT_AI_PROVIDER : 'groq';
+  const fallback = AI_PROVIDERS[DEFAULT_AI_PROVIDER] ? DEFAULT_AI_PROVIDER : 'gemini';
   return { provider: fallback, model: AI_PROVIDERS[fallback].defaultModel };
 }
 
@@ -1619,7 +1619,8 @@ async function callGeminiBill(ocrText, model, knownOrgs = []) {
     throw new Error('Missing GEMINI_API_KEY in .env.');
   }
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || AI_PROVIDERS.gemini.defaultModel)}:generateContent`, {
+  const useModel = model || AI_PROVIDERS.gemini.defaultModel;
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(useModel)}:generateContent`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1634,8 +1635,14 @@ async function callGeminiBill(ocrText, model, knownOrgs = []) {
       ],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 1500,
-        response_mime_type: 'application/json'
+        // 8192 leaves headroom for big bills; thinking is disabled below so
+        // this budget is for actual output only.
+        maxOutputTokens: 8192,
+        responseMimeType: 'application/json',
+        // 2.5-series models spend "thinking" tokens that count against
+        // maxOutputTokens. For deterministic JSON extraction we don't need
+        // them — turn them off so the budget is spent on the answer.
+        thinkingConfig: { thinkingBudget: 0 }
       }
     })
   });
@@ -1645,8 +1652,19 @@ async function callGeminiBill(ocrText, model, knownOrgs = []) {
     throw new Error(payload?.error?.message || `Gemini analysis failed (${response.status}).`);
   }
 
-  const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
-  return normalizeBillPayload(JSON.parse(extractJsonText(text)));
+  const candidate = payload.candidates?.[0];
+  const text = candidate?.content?.parts?.map((part) => part.text || '').join('') || '';
+  if (!text.trim()) {
+    const reason = candidate?.finishReason || 'no text returned';
+    const safety = candidate?.safetyRatings ? ` safetyRatings=${JSON.stringify(candidate.safetyRatings)}` : '';
+    throw new Error(`Gemini returned empty response (finishReason=${reason}).${safety}`);
+  }
+  try {
+    return normalizeBillPayload(JSON.parse(extractJsonText(text)));
+  } catch (err) {
+    console.error('Gemini raw response (first 500 chars):', text.slice(0, 500));
+    throw err;
+  }
 }
 
 async function analyzeBillText({ text, provider, model, knownOrgs = [] }) {
@@ -1796,13 +1814,10 @@ async function clearChatState(chatId, key = null) {
   await saveWhatsappState(all);
 }
 
-// ── Groq general chat (replaces Gemini chat for non-bill WhatsApp messages) ─
+// ── General chat for non-bill WhatsApp messages ────────────────────────────
+// Dispatches to the currently-configured AI provider.
 
-async function callGroqChat(userMessage, history = []) {
-  if (!GROQ_API_KEY) {
-    throw new Error('Missing GROQ_API_KEY in .env.');
-  }
-  const systemPrompt = `You are WazzOCR, FusionETA's friendly WhatsApp assistant for bookkeeping.
+const WAZZOCR_CHAT_SYSTEM_PROMPT = `You are WazzOCR, FusionETA's friendly WhatsApp assistant for bookkeeping.
 
 You help users:
 - Process invoices/receipts they send as images or PDFs (auto-extracted to Xero drafts)
@@ -1818,8 +1833,12 @@ Commands the user can type:
 
 When asked who you are: "I'm WazzOCR by FusionETA — I read your invoices and post them to Xero."`;
 
+async function callGroqChat(userMessage, history = []) {
+  if (!GROQ_API_KEY) {
+    throw new Error('Missing GROQ_API_KEY in .env.');
+  }
   const messages = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: WAZZOCR_CHAT_SYSTEM_PROMPT },
     ...history.slice(-6),
     { role: 'user', content: userMessage }
   ];
@@ -1842,6 +1861,52 @@ When asked who you are: "I'm WazzOCR by FusionETA — I read your invoices and p
     throw new Error(payload?.error?.message || `Groq chat failed (${response.status}).`);
   }
   return (payload.choices?.[0]?.message?.content || '').trim();
+}
+
+async function callGeminiChat(userMessage, history = []) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Missing GEMINI_API_KEY in .env.');
+  }
+  // Gemini uses "user" / "model" roles and folds the system prompt into
+  // a top-level systemInstruction field.
+  const contents = [
+    ...history.slice(-6).map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: String(m.content || '') }]
+    })),
+    { role: 'user', parts: [{ text: userMessage }] }
+  ];
+
+  const model = AI_PROVIDERS.gemini.defaultModel;
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': GEMINI_API_KEY
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: WAZZOCR_CHAT_SYSTEM_PROMPT }] },
+      contents,
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 600
+      }
+    })
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Gemini chat failed (${response.status}).`);
+  }
+  const text = payload.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+  return text.trim();
+}
+
+async function callAiChat(userMessage, history = []) {
+  const settings = await loadAiSettings();
+  if (settings.provider === 'groq') {
+    return callGroqChat(userMessage, history);
+  }
+  return callGeminiChat(userMessage, history);
 }
 
 // ── WhatsApp processing core (shared by /process-file and resolver) ─────────
@@ -2112,7 +2177,7 @@ app.get('/api/ai/config', (req, res) => {
   );
 
   res.json({
-    defaultProvider: AI_PROVIDERS[DEFAULT_AI_PROVIDER] ? DEFAULT_AI_PROVIDER : 'groq',
+    defaultProvider: AI_PROVIDERS[DEFAULT_AI_PROVIDER] ? DEFAULT_AI_PROVIDER : 'gemini',
     providers
   });
 });
@@ -2306,10 +2371,10 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
   }
 });
 
-// ── WhatsApp full-pipeline endpoints (tesseract → Groq → match) ─────────────
+// ── WhatsApp full-pipeline endpoints (tesseract → AI → match) ──────────────
 
 // Accepts the raw file (base64) from webhook.php OR a multipart upload.
-// Runs tesseract → Groq → tenant match. If matched, creates the Xero draft.
+// Runs tesseract → AI → tenant match. If matched, creates the Xero draft.
 // If unmatched, stores pending bill AND sets per-chat picker state.
 app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) => {
   try {
@@ -2369,12 +2434,13 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       console.error('process-file: could not fetch Xero orgs (ok, fallback):', err.message);
     }
 
-    // Structure via Groq, with the org list in the prompt
+    // Structure via the configured AI provider (Gemini by default), with the
+    // org list in the prompt
     let bill;
     try {
-      bill = await analyzeBillText({ text: ocrText, provider: 'groq', knownOrgs });
+      bill = await analyzeBillText({ text: ocrText, knownOrgs });
     } catch (analysisErr) {
-      console.error('Groq bill analysis failed:', analysisErr.message);
+      console.error('AI bill analysis failed:', analysisErr.message);
       await deleteUploadedFile(filename);
       return res.status(500).json({ error: `AI analysis failed: ${analysisErr.message}`, ocrText });
     }
@@ -2398,7 +2464,7 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
 // Accepts a free-text WhatsApp message. Routing priority:
 //   1) Picker state for this chat — resolve to a tenant choice if reply matches
 //   2) Built-in commands (orgs / pending / help)
-//   3) General Groq chat
+//   3) General AI chat
 app.post('/api/whatsapp/chat', async (req, res) => {
   try {
     const { chatId, text } = req.body || {};
@@ -2479,8 +2545,8 @@ app.post('/api/whatsapp/chat', async (req, res) => {
       });
     }
 
-    // 3) General Groq chat
-    const reply = await callGroqChat(message);
+    // 3) General AI chat (provider per loadAiSettings — Gemini by default)
+    const reply = await callAiChat(message);
     return res.json({ ok: true, kind: 'chat', reply });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });

@@ -1045,7 +1045,7 @@
 
   // ── State ──
   let PROVIDER_CONFIG = {};
-  let aiSettings = { provider: 'groq', model: '' };
+  let aiSettings = { provider: 'gemini', model: '' };
   let xeroState = { connected: false, tenants: [] };
   let billHistoryBucket = 'active';
   const tenantTaxRatesCache = {};
@@ -1219,7 +1219,7 @@
       if (settings && settings.provider && PROVIDER_CONFIG[settings.provider]) {
         aiSettings = settings;
       } else {
-        const fallback = cfg.defaultProvider || 'groq';
+        const fallback = cfg.defaultProvider || 'gemini';
         aiSettings = { provider: fallback, model: PROVIDER_CONFIG[fallback]?.defaultModel || '' };
       }
     } catch (err) {
