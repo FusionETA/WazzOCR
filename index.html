@@ -711,6 +711,40 @@
     }
     .org-pill::before { content: '🏢'; font-size: 0.75rem; }
 
+    /* ── Searchable orgs dropdown ── */
+    .org-dropdown { position: relative; max-width: 360px; }
+    .org-dropdown-toggle {
+      display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+      width: 100%; cursor: pointer; text-align: left;
+      border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
+      padding: 0.5rem 0.875rem; font-size: 0.82rem; color: var(--fe-text);
+      background: white; transition: border-color var(--fe-transition);
+    }
+    .org-dropdown-toggle:hover,
+    .org-dropdown.open .org-dropdown-toggle { border-color: var(--fe-primary); }
+    .org-dropdown-caret { color: var(--fe-muted); font-size: 0.7rem; transition: transform var(--fe-transition); }
+    .org-dropdown.open .org-dropdown-caret { transform: rotate(180deg); }
+    .org-dropdown-menu {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50;
+      background: white; border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12); padding: 0.5rem;
+    }
+    .org-dropdown-search {
+      width: 100%; box-sizing: border-box; border: 1px solid var(--fe-border);
+      border-radius: var(--fe-radius-sm); padding: 0.45rem 0.7rem; font-size: 0.82rem;
+      color: var(--fe-text); outline: none; margin-bottom: 0.4rem;
+    }
+    .org-dropdown-search:focus { border-color: var(--fe-primary); }
+    .org-dropdown-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.15rem; }
+    .org-dropdown-item {
+      display: flex; align-items: center; gap: 0.4rem;
+      padding: 0.4rem 0.5rem; border-radius: var(--fe-radius-sm);
+      font-size: 0.8rem; color: var(--fe-text);
+    }
+    .org-dropdown-item:hover { background: var(--fe-light); }
+    .org-dropdown-item::before { content: '🏢'; font-size: 0.75rem; }
+    .org-dropdown-empty { padding: 0.5rem; font-size: 0.78rem; color: var(--fe-muted); text-align: center; }
+
     /* ── Footer ── */
     .footer {
       background: #0F1C4D;
@@ -922,8 +956,17 @@
               <span class="api-bar-status unset" id="xeroStatus">Checking Xero connection...</span>
             </div>
             <div id="xeroOrgsWrap" style="display:none;">
-              <div class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Connected organisations</div>
-              <div id="xeroOrgsList"></div>
+              <div class="api-bar-label" style="display:block;margin-bottom:0.4rem;">Connected organisations (<span id="xeroOrgsCount">0</span>)</div>
+              <div class="org-dropdown" id="xeroOrgsDropdown">
+                <button type="button" class="org-dropdown-toggle" id="xeroOrgsToggle" aria-expanded="false" onclick="toggleOrgsDropdown()">
+                  <span id="xeroOrgsToggleLabel">Browse organisations…</span>
+                  <span class="org-dropdown-caret">▾</span>
+                </button>
+                <div class="org-dropdown-menu" id="xeroOrgsMenu" hidden>
+                  <input type="text" class="org-dropdown-search" id="xeroOrgsSearch" placeholder="Search organisations…" autocomplete="off" oninput="renderOrgsDropdownList()">
+                  <div class="org-dropdown-list" id="xeroOrgsList"></div>
+                </div>
+              </div>
             </div>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
               <a href="/api/xero/connect" class="btn btn-primary btn-sm" id="xeroConnectBtn">Add Xero Connection</a>
@@ -1319,10 +1362,8 @@
       helpEl.innerHTML = `Bills are routed to whichever organisation matches the bill's <strong>BILL TO</strong> name (case-insensitive, ≤1 character difference). Adding another Xero login keeps the existing organisations.${status.redirectUri ? `<br>OAuth callback: <code>${esc(status.redirectUri)}</code>` : ''}`;
       connectBtn.textContent = 'Add/Reconnect Xero';
       orgsWrap.style.display = tenants.length ? 'block' : 'none';
-      orgsList.innerHTML = tenants.map(t => {
-        const title = t.connectedBy ? ` title="Connected by ${esc(t.connectedBy)}"` : '';
-        return `<span class="org-pill"${title}>${esc(t.tenantName || t.tenantId)}</span>`;
-      }).join('');
+      document.getElementById('xeroOrgsCount').textContent = tenants.length;
+      renderOrgsDropdownList();
 
       const accountEl = document.getElementById('xeroAccountCode');
       const taxEl = document.getElementById('xeroTaxType');
@@ -1335,7 +1376,50 @@
       connectBtn.textContent = 'Add Xero Connection';
       orgsWrap.style.display = 'none';
       orgsList.innerHTML = '';
+      closeOrgsDropdown();
     }
+  }
+
+  function renderOrgsDropdownList() {
+    const list = document.getElementById('xeroOrgsList');
+    if (!list) return;
+    const tenants = xeroState.tenants || [];
+    const q = (document.getElementById('xeroOrgsSearch').value || '').trim().toLowerCase();
+    const matches = tenants.filter(t => (t.tenantName || t.tenantId || '').toLowerCase().includes(q));
+    if (!matches.length) {
+      list.innerHTML = `<div class="org-dropdown-empty">${q ? 'No organisations match your search.' : 'No organisations connected.'}</div>`;
+      return;
+    }
+    list.innerHTML = matches.map(t => {
+      const title = t.connectedBy ? ` title="Connected by ${esc(t.connectedBy)}"` : '';
+      return `<div class="org-dropdown-item"${title}>${esc(t.tenantName || t.tenantId)}</div>`;
+    }).join('');
+  }
+
+  function toggleOrgsDropdown() {
+    const dd = document.getElementById('xeroOrgsDropdown');
+    if (dd.classList.contains('open')) { closeOrgsDropdown(); return; }
+    dd.classList.add('open');
+    document.getElementById('xeroOrgsToggle').setAttribute('aria-expanded', 'true');
+    document.getElementById('xeroOrgsMenu').hidden = false;
+    const search = document.getElementById('xeroOrgsSearch');
+    search.value = '';
+    renderOrgsDropdownList();
+    search.focus();
+    document.addEventListener('mousedown', orgsDropdownOutsideClick);
+  }
+
+  function closeOrgsDropdown() {
+    const dd = document.getElementById('xeroOrgsDropdown');
+    if (!dd) return;
+    dd.classList.remove('open');
+    document.getElementById('xeroOrgsToggle').setAttribute('aria-expanded', 'false');
+    document.getElementById('xeroOrgsMenu').hidden = true;
+    document.removeEventListener('mousedown', orgsDropdownOutsideClick);
+  }
+
+  function orgsDropdownOutsideClick(e) {
+    if (!document.getElementById('xeroOrgsDropdown').contains(e.target)) closeOrgsDropdown();
   }
 
   function populateOrgFilter(tenants) {
