@@ -1617,7 +1617,11 @@ function extractJsonText(raw) {
   if (start === -1 || end === -1 || end < start) {
     throw new Error('The model did not return valid JSON.');
   }
-  return cleaned.slice(start, end + 1);
+  // LLMs (especially on bigger multi-bill payloads) often emit a trailing comma
+  // before a closing } or ], which V8's JSON.parse rejects with
+  // "Expected double-quoted property name...". A comma immediately before a
+  // closing brace/bracket is never valid JSON, so stripping it only repairs.
+  return cleaned.slice(start, end + 1).replace(/,(\s*[}\]])/g, '$1');
 }
 
 function normalizeBillPayload(bill) {
