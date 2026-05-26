@@ -963,6 +963,18 @@ async function getTenantTaxRates(tenantId) {
   }
 }
 
+// Tax rates sometimes arrive as decimal fractions (e.g. 0.08 meaning 8%)
+// instead of whole-number percents (8) — the OCR/AI is inconsistent. Anything
+// in (0,1) is treated as a fraction and scaled to a percent. Real SST/GST/VAT
+// rates are all >= 1%, so this is safe and fixes bills where 8% was emitted as
+// "0.08", which previously fell below the 0.5% floor → no TaxType match → tax
+// dumped into a separate line item instead of applied as a per-line rate.
+function normalizeRatePercent(value) {
+  const n = normalizeNumber(value, 0);
+  if (n > 0 && n < 1) return n * 100;
+  return n;
+}
+
 // Map a percentage (e.g. 6 for "6% SST") to an actual Xero TaxType code for
 // the given tenant. Returns null if no rate is within 0.5% of the target.
 async function findTaxTypeForPercent(tenantId, percent) {
@@ -979,7 +991,7 @@ async function findTaxTypeForPercent(tenantId, percent) {
 }
 
 function deriveBillTaxPercent(bill) {
-  const explicitRate = normalizeNumber(firstPresent(bill?.taxRate, bill?.taxPercent, bill?.serviceTaxRate, bill?.sstRate), 0);
+  const explicitRate = normalizeRatePercent(firstPresent(bill?.taxRate, bill?.taxPercent, bill?.serviceTaxRate, bill?.sstRate));
   if (explicitRate > 0) return explicitRate;
 
   const taxAmount = normalizeNumber(bill?.tax);
@@ -989,7 +1001,7 @@ function deriveBillTaxPercent(bill) {
   if (taxableAmount > 0) return (taxAmount / taxableAmount) * 100;
 
   const lineTaxRate = (Array.isArray(bill?.lineItems) ? bill.lineItems : [])
-    .map((item) => normalizeNumber(firstPresent(item.taxRate, item.taxPercent, item.serviceTaxRate, item.sstRate), 0))
+    .map((item) => normalizeRatePercent(firstPresent(item.taxRate, item.taxPercent, item.serviceTaxRate, item.sstRate)))
     .find((rate) => rate > 0);
   if (lineTaxRate) return lineTaxRate;
 
@@ -1015,7 +1027,7 @@ async function resolveBillTaxTypes(bill, tenantId, fallbackTaxType) {
     const line = { ...item };
     const amount = normalizeNumber(firstPresent(line.amount, line.lineAmount, line.LineAmount, line.total, line.Total), 0);
     const taxAmount = normalizeNumber(firstPresent(line.taxAmount, line.TaxAmount, line.tax), 0);
-    let taxRate = normalizeNumber(firstPresent(line.taxRate, line.taxPercent, line.serviceTaxRate, line.sstRate), 0);
+    let taxRate = normalizeRatePercent(firstPresent(line.taxRate, line.taxPercent, line.serviceTaxRate, line.sstRate));
     if (!taxRate && amount > 0 && taxAmount > 0) {
       taxRate = (taxAmount / amount) * 100;
     }
