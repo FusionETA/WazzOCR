@@ -978,6 +978,61 @@ async function findTaxTypeForPercent(tenantId, percent) {
   return best ? best.taxType : null;
 }
 
+function deriveBillTaxPercent(bill) {
+  const explicitRate = normalizeNumber(firstPresent(bill?.taxRate, bill?.taxPercent, bill?.serviceTaxRate, bill?.sstRate), 0);
+  if (explicitRate > 0) return explicitRate;
+
+  const taxAmount = normalizeNumber(bill?.tax);
+  if (taxAmount <= 0) return 0;
+
+  const taxableAmount = normalizeNumber(firstPresent(bill?.taxableAmount, bill?.taxableBase, bill?.taxableSubtotal), 0);
+  if (taxableAmount > 0) return (taxAmount / taxableAmount) * 100;
+
+  const lineTaxRate = (Array.isArray(bill?.lineItems) ? bill.lineItems : [])
+    .map((item) => normalizeNumber(firstPresent(item.taxRate, item.taxPercent, item.serviceTaxRate, item.sstRate), 0))
+    .find((rate) => rate > 0);
+  if (lineTaxRate) return lineTaxRate;
+
+  const subtotal = normalizeNumber(bill?.subtotal);
+  return subtotal > 0 ? (taxAmount / subtotal) * 100 : 0;
+}
+
+async function resolveBillTaxTypes(bill, tenantId, fallbackTaxType) {
+  const resolved = { ...bill };
+  if (!Array.isArray(resolved.lineItems)) return resolved;
+
+  const taxTypeByRate = new Map();
+  async function getTaxTypeForRate(rate) {
+    const rounded = Number(rate.toFixed(4));
+    if (!taxTypeByRate.has(rounded)) {
+      taxTypeByRate.set(rounded, await findTaxTypeForPercent(tenantId, rounded));
+    }
+    return taxTypeByRate.get(rounded);
+  }
+
+  resolved.lineItems = [];
+  for (const item of bill.lineItems) {
+    const line = { ...item };
+    const amount = normalizeNumber(firstPresent(line.amount, line.lineAmount, line.LineAmount, line.total, line.Total), 0);
+    const taxAmount = normalizeNumber(firstPresent(line.taxAmount, line.TaxAmount, line.tax), 0);
+    let taxRate = normalizeNumber(firstPresent(line.taxRate, line.taxPercent, line.serviceTaxRate, line.sstRate), 0);
+    if (!taxRate && amount > 0 && taxAmount > 0) {
+      taxRate = (taxAmount / amount) * 100;
+    }
+
+    if (!line.taxType && taxRate > 0) {
+      line.taxType = await getTaxTypeForRate(taxRate);
+    }
+    if (!line.taxType && taxAmount > 0 && fallbackTaxType && fallbackTaxType !== 'NONE') {
+      line.taxType = fallbackTaxType;
+    }
+
+    resolved.lineItems.push(line);
+  }
+
+  return resolved;
+}
+
 async function findOrCreateContact(bill, tenantId) {
   const supplierName = String(bill.supplier || FALLBACK_SUPPLIER_NAME).trim() || FALLBACK_SUPPLIER_NAME;
 
@@ -1024,10 +1079,13 @@ function deriveLineItems(bill, defaults) {
   const taxType = bill.taxType || defaults.taxType || null;
 
   if (!provided.length && normalizeNumber(bill.total) > 0) {
+    const fallbackAmount = taxType && normalizeNumber(bill.subtotal) > 0
+      ? normalizeNumber(bill.subtotal)
+      : normalizeNumber(bill.total);
     const lineItem = {
       Description: `Receipt total${bill.invoiceNo ? ` for ${bill.invoiceNo}` : ''}`,
       Quantity: 1,
-      UnitAmount: normalizeNumber(bill.total)
+      UnitAmount: fallbackAmount
     };
     if (accountCode) lineItem.AccountCode = accountCode;
     if (taxType) lineItem.TaxType = taxType;
@@ -1061,7 +1119,20 @@ function deriveLineItems(bill, defaults) {
 
     const description = String(firstPresent(item.description, item.Description, item.name) || `Line item ${index + 1}`).trim();
     const resolvedAccount = item.accountCode || accountCode;
-    const resolvedTax = item.taxType || taxType;
+    const taxRateValue = firstPresent(item.taxRate, item.taxPercent, item.serviceTaxRate, item.sstRate);
+    const taxAmountValue = firstPresent(item.taxAmount, item.TaxAmount, item.tax);
+    const hasExplicitTaxRate = item.taxRateExplicit === true || (item.taxRateExplicit === undefined &&
+      taxRateValue !== undefined && taxRateValue !== null && taxRateValue !== ''
+    );
+    const hasExplicitTaxAmount = item.taxAmountExplicit === true || (item.taxAmountExplicit === undefined &&
+      taxAmountValue !== undefined && taxAmountValue !== null && taxAmountValue !== ''
+    );
+    const lineExplicitlyNoTax = (
+      hasExplicitTaxRate && normalizeNumber(taxRateValue, 0) <= 0
+    ) || (
+      hasExplicitTaxAmount && normalizeNumber(taxAmountValue, 0) <= 0 && normalizeNumber(taxRateValue, 0) <= 0
+    );
+    const resolvedTax = item.taxType || (lineExplicitlyNoTax ? null : taxType);
     const lineItem = {
       Description: description || `Line item ${index + 1}`,
       Quantity: quantity,
@@ -1097,7 +1168,7 @@ function deriveLineItems(bill, defaults) {
     const tolerance = Math.max(1, expected * 0.02); // 2% or RM 1
     if (diff > tolerance) {
       console.warn(`[lineItems] Sum ${lineSum.toFixed(2)} ≠ expected ${expected.toFixed(2)} (diff ${diff.toFixed(2)}). Falling back to single summary line.`);
-      const useAmount = billTotal > 0 ? billTotal : expected;
+      const useAmount = taxType && expected > 0 ? expected : (billTotal > 0 ? billTotal : expected);
       const fallback = {
         Description: `Bill total${bill.invoiceNo ? ` (${bill.invoiceNo})` : ''} — line items inconsistent`,
         Quantity: 1,
@@ -1138,10 +1209,8 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
   // back to XERO_DEFAULT_TAX_TYPE ("NONE") if the bill has no tax or no rate
   // matches. Per-line `taxType` from the AI still wins if it sets one.
   let resolvedTaxType = XERO_DEFAULT_TAX_TYPE;
-  const billSubtotal = normalizeNumber(bill.subtotal);
-  const billTaxAmount = normalizeNumber(bill.tax);
-  if (billSubtotal > 0 && billTaxAmount > 0) {
-    const percent = (billTaxAmount / billSubtotal) * 100;
+  const percent = deriveBillTaxPercent(bill);
+  if (percent > 0) {
     const matched = await findTaxTypeForPercent(tenantId, percent);
     if (matched) {
       console.log(`[tax] bill tax ${percent.toFixed(2)}% → TaxType ${matched}`);
@@ -1151,10 +1220,25 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     }
   }
 
-  const lineItems = deriveLineItems(bill, {
+  const billForLines = await resolveBillTaxTypes(bill, tenantId, resolvedTaxType);
+  const lineItems = deriveLineItems(billForLines, {
     accountCode: XERO_DEFAULT_ACCOUNT_CODE,
     taxType: resolvedTaxType
   });
+  const hasAppliedTaxType = lineItems.some((line) => {
+    const code = String(line.TaxType || '').trim().toUpperCase();
+    return code && code !== 'NONE' && code !== 'EXEMPT';
+  });
+  const billTaxAmount = normalizeNumber(bill.tax);
+  if (billTaxAmount > 0 && !hasAppliedTaxType) {
+    const taxLine = {
+      Description: `${bill.taxLabel || 'Tax'}${bill.invoiceNo ? ` for ${bill.invoiceNo}` : ''}`,
+      Quantity: 1,
+      UnitAmount: Number(billTaxAmount.toFixed(2))
+    };
+    if (XERO_DEFAULT_ACCOUNT_CODE) taxLine.AccountCode = XERO_DEFAULT_ACCOUNT_CODE;
+    lineItems.push(taxLine);
+  }
 
   const invoicePayload = {
     Invoices: [
@@ -1481,31 +1565,44 @@ CONTEXT — Malaysian business invoices:
   typically 6% or 8%). Older invoices may say "GST".
 - Dates may be formatted DD/MM/YYYY or DD-MM-YYYY (day first, NOT US format).
 
-EXTRACTION RULES:
-- ${hasOrgList
-      ? 'billedTo MUST be an exact entry from the CONNECTED XERO ORGANISATIONS list below — copy it verbatim. Use "billedToVerbatim" for what the invoice actually says.'
-      : 'Always extract the billedTo as the FULL company name as it appears in the document (keep "Sdn Bhd", "(SP)", etc.). Do NOT shorten, expand or rewrite it.'}
-- If multiple addresses/branches appear, pick the one in the BILL TO / TO /
-  SOLD TO / INVOICE TO block, not the supplier's address.
+	EXTRACTION RULES:
+	- ${hasOrgList
+	      ? 'billedTo MUST be an exact entry from the CONNECTED XERO ORGANISATIONS list below — copy it verbatim. Use "billedToVerbatim" for what the invoice actually says.'
+	      : 'Always extract the billedTo as the FULL company name as it appears in the document (keep "Sdn Bhd", "(SP)", etc.). Do NOT shorten, expand or rewrite it.'}
+	- If multiple addresses/branches appear, pick the one in the BILL TO / TO /
+	  SOLD TO / INVOICE TO block, not the supplier's address.
+	- If the text contains multiple separate invoices/bills (for example different
+	  invoice numbers, separate page headers, or "Page 1 of 1" repeated), return
+	  one object per invoice in "bills". Do NOT merge their line items or totals.
+	- Preserve tax per line item. If a document has tax codes such as SV-8, SST-8,
+	  SR-8, GST, or "Service Tax @ 8% on 220.00", set taxRate/taxAmount only on
+	  the taxable line items. Lines outside the taxable base should have taxRate 0
+	  and taxAmount 0.
 
-Given the raw OCR text below, extract and return ONLY a valid JSON object:
-{
-  "supplier": "Vendor / supplier company name (the company sending the invoice) or null",
-  "billedTo": ${hasOrgList ? '"EXACT name copied from the CONNECTED XERO ORGANISATIONS list below, or null if no entry fits"' : '"Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o."'},
-  ${hasOrgList ? '"billedToVerbatim": "Original BILL TO text from the invoice (for human verification) or null",' : ''}
-  "invoiceNo": "Invoice number or null",
-  "date": "Date string or null",
-  "dueDate": "Due date string or null",
-  "currency": "MYR/USD/SGD etc, default MYR",
-  "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00 }],
-  "subtotal": 0.00,
-  "tax": 0.00,
-  "taxLabel": "SST/GST/VAT/Tax",
-  "discount": 0.00,
-  "total": 0.00,
-  "notes": "string or null"
-}
-Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}
+	Given the raw OCR text below, extract and return ONLY a valid JSON object:
+	{
+	  "bills": [
+	    {
+	      "supplier": "Vendor / supplier company name (the company sending the invoice) or null",
+	      "billedTo": ${hasOrgList ? '"EXACT name copied from the CONNECTED XERO ORGANISATIONS list below, or null if no entry fits"' : '"Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o."'},
+	      ${hasOrgList ? '"billedToVerbatim": "Original BILL TO text from the invoice (for human verification) or null",' : ''}
+	      "invoiceNo": "Invoice number or null",
+	      "date": "Date string or null",
+	      "dueDate": "Due date string or null",
+	      "currency": "MYR/USD/SGD etc, default MYR",
+	      "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00, "taxCode": "SV-8/SST-8/etc or null", "taxRate": 0.00, "taxAmount": 0.00 }],
+	      "subtotal": 0.00,
+	      "tax": 0.00,
+	      "taxRate": 0.00,
+	      "taxableAmount": 0.00,
+	      "taxLabel": "SST/GST/VAT/Tax",
+	      "discount": 0.00,
+	      "total": 0.00,
+	      "notes": "string or null"
+	    }
+	  ]
+	}
+	Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}
 
 OCR Text:
 ${ocrText}`;
@@ -1513,8 +1610,10 @@ ${ocrText}`;
 
 function extractJsonText(raw) {
   const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
+  const objectStart = cleaned.indexOf('{');
+  const arrayStart = cleaned.indexOf('[');
+  const start = [objectStart, arrayStart].filter((idx) => idx >= 0).sort((a, b) => a - b)[0] ?? -1;
+  const end = cleaned[start] === '[' ? cleaned.lastIndexOf(']') : cleaned.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
     throw new Error('The model did not return valid JSON.');
   }
@@ -1526,6 +1625,8 @@ function normalizeBillPayload(bill) {
     ? bill.lineItems.map((item) => {
         const qty = normalizeNumber(firstPresent(item.qty, item.quantity, item.Quantity), 1) || 1;
         const amount = normalizeNumber(firstPresent(item.amount, item.lineAmount, item.LineAmount, item.total, item.Total), 0);
+        const taxRateRaw = firstPresent(item.taxRate, item.taxPercent, item.serviceTaxRate, item.sstRate);
+        const taxAmountRaw = firstPresent(item.taxAmount, item.TaxAmount, item.tax);
         const unitPrice = normalizeNumber(
           firstPresent(item.unitPrice, item.unitAmount, item.UnitAmount, item.price, item.rate),
           amount > 0 ? amount / qty : 0
@@ -1535,7 +1636,13 @@ function normalizeBillPayload(bill) {
           description: firstPresent(item.description, item.Description, item.name) || '',
           qty,
           unitPrice,
-          amount
+          amount,
+          taxCode: firstPresent(item.taxCode, item.TaxCode, item.taxLabel) || null,
+          taxType: firstPresent(item.taxType, item.TaxType) || null,
+          taxRate: normalizeNumber(taxRateRaw, 0),
+          taxAmount: normalizeNumber(taxAmountRaw, 0),
+          taxRateExplicit: taxRateRaw !== undefined && taxRateRaw !== null && taxRateRaw !== '',
+          taxAmountExplicit: taxAmountRaw !== undefined && taxAmountRaw !== null && taxAmountRaw !== ''
         };
       })
     : [];
@@ -1572,6 +1679,8 @@ function normalizeBillPayload(bill) {
     lineItems,
     subtotal: normalizeNumber(bill?.subtotal),
     tax: normalizeNumber(bill?.tax),
+    taxRate: normalizeNumber(firstPresent(bill?.taxRate, bill?.taxPercent, bill?.serviceTaxRate, bill?.sstRate), 0),
+    taxableAmount: normalizeNumber(firstPresent(bill?.taxableAmount, bill?.taxableBase, bill?.taxableSubtotal), 0),
     taxLabel: bill?.taxLabel || 'Tax',
     discount: normalizeNumber(bill?.discount),
     total: normalizeNumber(bill?.total),
@@ -1587,7 +1696,27 @@ function normalizeBillPayload(bill) {
   return normalized;
 }
 
-async function callGroqBill(ocrText, model, knownOrgs = []) {
+function normalizeBillPayloads(payload) {
+  const rawBills = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.bills)
+      ? payload.bills
+      : payload?.bill
+        ? [payload.bill]
+        : [payload];
+
+  return rawBills
+    .map((bill) => normalizeBillPayload(bill))
+    .filter((bill) => (
+      bill.supplier ||
+      bill.billedTo ||
+      bill.invoiceNo ||
+      bill.total > 0 ||
+      bill.lineItems.length > 0
+    ));
+}
+
+async function callGroqBillPayload(ocrText, model, knownOrgs = []) {
   if (!GROQ_API_KEY) {
     throw new Error('Missing GROQ_API_KEY in .env.');
   }
@@ -1602,7 +1731,7 @@ async function callGroqBill(ocrText, model, knownOrgs = []) {
       model: model || AI_PROVIDERS.groq.defaultModel,
       messages: [{ role: 'user', content: buildBillPrompt(ocrText, knownOrgs) }],
       temperature: 0.1,
-      max_tokens: 1500
+      max_tokens: 4096
     })
   });
 
@@ -1611,10 +1740,18 @@ async function callGroqBill(ocrText, model, knownOrgs = []) {
     throw new Error(payload?.error?.message || `Groq analysis failed (${response.status}).`);
   }
 
-  return normalizeBillPayload(JSON.parse(extractJsonText(payload.choices?.[0]?.message?.content)));
+  return JSON.parse(extractJsonText(payload.choices?.[0]?.message?.content));
 }
 
-async function callGeminiBill(ocrText, model, knownOrgs = []) {
+async function callGroqBills(ocrText, model, knownOrgs = []) {
+  return normalizeBillPayloads(await callGroqBillPayload(ocrText, model, knownOrgs));
+}
+
+async function callGroqBill(ocrText, model, knownOrgs = []) {
+  return callGroqBills(ocrText, model, knownOrgs).then((bills) => bills[0] || normalizeBillPayload({}));
+}
+
+async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
   if (!GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY in .env.');
   }
@@ -1660,11 +1797,19 @@ async function callGeminiBill(ocrText, model, knownOrgs = []) {
     throw new Error(`Gemini returned empty response (finishReason=${reason}).${safety}`);
   }
   try {
-    return normalizeBillPayload(JSON.parse(extractJsonText(text)));
+    return JSON.parse(extractJsonText(text));
   } catch (err) {
     console.error('Gemini raw response (first 500 chars):', text.slice(0, 500));
     throw err;
   }
+}
+
+async function callGeminiBills(ocrText, model, knownOrgs = []) {
+  return normalizeBillPayloads(await callGeminiBillPayload(ocrText, model, knownOrgs));
+}
+
+async function callGeminiBill(ocrText, model, knownOrgs = []) {
+  return callGeminiBills(ocrText, model, knownOrgs).then((bills) => bills[0] || normalizeBillPayload({}));
 }
 
 async function analyzeBillText({ text, provider, model, knownOrgs = [] }) {
@@ -1681,6 +1826,23 @@ async function analyzeBillText({ text, provider, model, knownOrgs = [] }) {
     return callGeminiBill(trimmed, useModel, knownOrgs);
   }
   return callGroqBill(trimmed, useModel, knownOrgs);
+}
+
+async function analyzeBillsText({ text, provider, model, knownOrgs = [] }) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) {
+    throw new Error('OCR text is required for AI analysis.');
+  }
+  const settings = await loadAiSettings();
+  const useProvider = provider || settings.provider;
+  const useModel = model || settings.model;
+
+  const selectedProvider = AI_PROVIDERS[useProvider] ? useProvider : settings.provider;
+  const bills = selectedProvider === 'gemini'
+    ? await callGeminiBills(trimmed, useModel, knownOrgs)
+    : await callGroqBills(trimmed, useModel, knownOrgs);
+
+  return bills.length ? bills : [normalizeBillPayload({})];
 }
 
 // ── Tesseract OCR pipeline (replaces Gemini for WhatsApp file → text) ──────
@@ -1791,7 +1953,9 @@ async function extractPdfEmbeddedText(buffer) {
           if (y !== null) lastY = y;
         }
         const pageText = chunks.join('').replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
-        if (pageText) pages.push(pageText);
+        if (pageText) {
+          pages.push(doc.numPages > 1 ? `─── Page ${i} of ${doc.numPages} ───\n${pageText}` : pageText);
+        }
       } finally {
         page.cleanup();
       }
@@ -2491,23 +2655,58 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
 
     // Structure via the configured AI provider (Gemini by default), with the
     // org list in the prompt
-    let bill;
+    let bills;
     try {
-      bill = await analyzeBillText({ text: ocrText, knownOrgs });
+      bills = await analyzeBillsText({ text: ocrText, knownOrgs });
     } catch (analysisErr) {
       console.error('AI bill analysis failed:', analysisErr.message);
       await deleteUploadedFile(filename);
       return res.status(500).json({ error: `AI analysis failed: ${analysisErr.message}`, ocrText });
     }
 
-    const outcome = await processBillForChat({
-      bill,
-      attachment,
-      chatId,
-      source: 'whatsapp'
-    });
+    const outcomes = [];
+    if (bills.length <= 1) {
+      outcomes.push(await processBillForChat({
+        bill: bills[0],
+        attachment,
+        chatId,
+        source: 'whatsapp'
+      }));
+      attachment = null;
+    } else {
+      await deleteUploadedFile(filename);
+      attachment = null;
+      for (const bill of bills) {
+        const clonedFilename = await saveUploadedBuffer(buffer, mime);
+        const clonedAttachment = {
+          filename: clonedFilename,
+          mime,
+          originalName: fileName || clonedFilename
+        };
+        try {
+          outcomes.push(await processBillForChat({
+            bill,
+            attachment: clonedAttachment,
+            chatId,
+            source: 'whatsapp+multi-bill'
+          }));
+        } catch (err) {
+          await deleteUploadedFile(clonedFilename);
+          throw err;
+        }
+      }
+    }
 
-    res.json({ ok: true, ocrText, extractionMethod, ...outcome });
+    const primary = outcomes[0] || { status: 'empty', bill: bills[0] || normalizeBillPayload({}) };
+    res.json({
+      ok: true,
+      ocrText,
+      extractionMethod,
+      multiBillCount: bills.length,
+      bills,
+      outcomes,
+      ...primary
+    });
   } catch (error) {
     res.status(error.statusCode || 500).json({
       error: error.message,

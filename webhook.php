@@ -379,6 +379,38 @@ function process_file_via_bridge(string $chatId, array $file, string $filename =
 // Format the response from /api/whatsapp/process-file into a WhatsApp message.
 function format_bridge_outcome(array $result): string
 {
+    if (!empty($result['outcomes']) && is_array($result['outcomes']) && count($result['outcomes']) > 1) {
+        $lines = [
+            "🤖 *AI bill analysis*",
+            "Detected " . count($result['outcomes']) . " separate bills in this file.",
+        ];
+        foreach ($result['outcomes'] as $index => $outcome) {
+            if (!is_array($outcome)) continue;
+            $bill = $outcome['bill'] ?? [];
+            if (!is_array($bill)) $bill = [];
+            $xero = $outcome['xero'] ?? null;
+            $pending = $outcome['pending'] ?? null;
+            $status = $outcome['status'] ?? '';
+            $lines[] = "";
+            $lines[] = "*Bill " . ($index + 1) . "/" . count($result['outcomes']) . "*";
+            $lines[] = "Supplier: " . ($bill['supplier'] ?? 'Unknown');
+            $lines[] = "Bill To: " . ($bill['billedTo'] ?? '-');
+            $lines[] = "Invoice No: " . ($bill['invoiceNo'] ?? '-');
+            $lines[] = "Tax: " . format_money_value($bill['tax'] ?? 0);
+            $lines[] = "*Total: " . format_money_value($bill['total'] ?? 0) . "*";
+            if ($status === 'created' && is_array($xero) && !empty($xero['invoiceId'])) {
+                $orgName = $xero['tenantName'] ?? 'Xero';
+                $lines[] = "✅ Created in " . $orgName;
+                $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
+            } elseif ($status === 'pending' && is_array($pending)) {
+                $lines[] = "⚠️ Pending: " . ($pending['reason'] ?? 'Organisation assignment needed.');
+            } elseif ($status === 'xero-error') {
+                $lines[] = "❌ Xero rejected: " . ($outcome['xeroError'] ?? 'Unknown error');
+            }
+        }
+        return implode("\n", $lines);
+    }
+
     $bill = $result['bill'] ?? [];
     if (!is_array($bill)) $bill = [];
 
