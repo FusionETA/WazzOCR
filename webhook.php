@@ -480,7 +480,7 @@ function send_org_picker(string $chatId, string $chatType, array $candidates, st
         $lines[] = "Bill says: _" . $billedTo . "_";
     }
     $lines[] = "";
-    foreach (array_slice($candidates, 0, 12) as $i => $c) {
+    foreach ($candidates as $i => $c) {
         $name = $c['tenantName'] ?? '(unnamed)';
         $lines[] = ($i + 1) . ". " . $name;
     }
