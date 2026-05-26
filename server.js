@@ -1700,14 +1700,40 @@ async function getTesseractWorker() {
   return worker;
 }
 
+function resetPdfJsGlobalWorker() {
+  try {
+    delete globalThis.pdfjsWorker;
+  } catch (_) {
+    globalThis.pdfjsWorker = undefined;
+  }
+}
+
+let _pdfJsLibPromise = null;
+async function getPdfJsLib() {
+  resetPdfJsGlobalWorker();
+  if (!_pdfJsLibPromise) {
+    _pdfJsLibPromise = import('pdfjs-dist/legacy/build/pdf.mjs');
+  }
+  return _pdfJsLibPromise;
+}
+
+function toStandaloneUint8Array(buffer) {
+  return new Uint8Array(buffer);
+}
+
 async function rasterizePdfToPngs(pdfBuffer) {
+  resetPdfJsGlobalWorker();
   const { pdfToPng } = require('pdf-to-png-converter');
-  const pages = await pdfToPng(pdfBuffer, {
-    viewportScale: 2.0, // 2x = ~144 DPI, balances OCR quality vs memory
-    disableFontFace: true,
-    useSystemFonts: false
-  });
-  return pages.map((p) => p.content); // array of Buffers (PNG)
+  try {
+    const pages = await pdfToPng(toStandaloneUint8Array(pdfBuffer), {
+      viewportScale: 2.0, // 2x = ~144 DPI, balances OCR quality vs memory
+      disableFontFace: true,
+      useSystemFonts: false
+    });
+    return pages.map((p) => p.content); // array of Buffers (PNG)
+  } finally {
+    resetPdfJsGlobalWorker();
+  }
 }
 
 async function runTesseractOcr(buffer, mime) {
@@ -1737,17 +1763,46 @@ async function runTesseractOcr(buffer, mime) {
 // 100% accurate for digitally-generated PDFs like AWS / Xero / QuickBooks /
 // most accounting-software invoices.
 async function extractPdfEmbeddedText(buffer) {
-  const { PDFParse } = require('pdf-parse');
-  let parser;
+  let doc;
   try {
-    parser = new PDFParse({ data: buffer });
-    const result = await parser.getText();
-    return (result?.text || '').trim();
+    const { getDocument } = await getPdfJsLib();
+    doc = await getDocument({
+      data: toStandaloneUint8Array(buffer),
+      disableFontFace: true,
+      useSystemFonts: false
+    }).promise;
+
+    const pages = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      try {
+        const content = await page.getTextContent({ disableNormalization: false });
+        const chunks = [];
+        let lastY = null;
+        for (const item of content.items || []) {
+          if (!item || typeof item.str !== 'string') continue;
+          const y = Array.isArray(item.transform) ? item.transform[5] : null;
+          if (lastY !== null && y !== null && Math.abs(lastY - y) > 4 && chunks.length) {
+            chunks.push('\n');
+          }
+          chunks.push(item.str);
+          if (item.hasEOL) chunks.push('\n');
+          else chunks.push(' ');
+          if (y !== null) lastY = y;
+        }
+        const pageText = chunks.join('').replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
+        if (pageText) pages.push(pageText);
+      } finally {
+        page.cleanup();
+      }
+    }
+    return pages.join('\n\n').trim();
   } catch (err) {
     console.error('[pdf-text] embedded extraction failed:', err.message);
     return '';
   } finally {
-    try { await parser?.destroy?.(); } catch (_) { /* ignore */ }
+    try { await doc?.destroy?.(); } catch (_) { /* ignore */ }
+    resetPdfJsGlobalWorker();
   }
 }
 
