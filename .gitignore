@@ -3,3 +3,4 @@ env.js
 data/
 node_modules/
 webhook.log
+gemini-diag.log

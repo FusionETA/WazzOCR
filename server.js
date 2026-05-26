@@ -1803,7 +1803,16 @@ async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
   try {
     return JSON.parse(extractJsonText(text));
   } catch (err) {
-    console.error('Gemini raw response (first 500 chars):', text.slice(0, 500));
+    const extracted = (() => { try { return extractJsonText(text); } catch { return text; } })();
+    const pos = Number((/position (\d+)/.exec(err.message || '') || [])[1]);
+    const diag = [
+      `[gemini-diag] finishReason=${candidate?.finishReason} rawLen=${text.length} extractedLen=${extracted.length}`,
+      Number.isFinite(pos)
+        ? `[gemini-diag] window@${pos}: ${JSON.stringify(extracted.slice(Math.max(0, pos - 50), pos + 20))}`
+        : `[gemini-diag] tail: ${JSON.stringify(extracted.slice(-80))}`
+    ].join('\n');
+    console.error(diag);
+    try { require('fs').appendFileSync(__dirname + '/gemini-diag.log', new Date().toISOString() + ' ' + diag + '\n'); } catch {}
     throw err;
   }
 }
@@ -2620,7 +2629,7 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
 
     // Persist attachment so it can be reused by picker resolution / Xero attach
     const filename = await saveUploadedBuffer(buffer, mime);
-    const attachment = {
+    let attachment = {
       filename,
       mime,
       originalName: fileName || filename
