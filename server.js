@@ -269,8 +269,32 @@ function normalizeDateString(value) {
   if (!value) return undefined;
   const trimmed = String(value).trim();
   if (!trimmed) return undefined;
-  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (match) return trimmed;
+
+  // Already ISO (YYYY-MM-DD): use as-is.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+  // Day-first numeric formats common on Malaysian invoices:
+  //   DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (also 2-digit year).
+  // `new Date()` reads these as US month-first, so 20/04/2026 becomes an
+  // Invalid Date (no month 20) and the date silently drops. Parse explicitly.
+  const dmy = trimmed.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/);
+  if (dmy) {
+    let day = parseInt(dmy[1], 10);
+    let month = parseInt(dmy[2], 10);
+    let year = parseInt(dmy[3], 10);
+    if (year < 100) year += 2000;
+    // Assume day-first. Only flip to month-first when the layout proves it
+    // (second field > 12, so it can only be the day).
+    if (month > 12 && day <= 12) {
+      [day, month] = [month, day];
+    }
+    if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+    const dt = new Date(Date.UTC(year, month - 1, day));
+    if (Number.isNaN(dt.getTime())) return undefined;
+    return dt.toISOString().slice(0, 10);
+  }
+
+  // Fallback for textual dates like "30 Apr 2026" / "April 30, 2026".
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return undefined;
   return parsed.toISOString().slice(0, 10);
@@ -1259,7 +1283,7 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
         Status: 'DRAFT',
         Contact: { ContactID: contact.ContactID },
         DateString: normalizeDateString(bill.date),
-        DueDateString: normalizeDateString(bill.dueDate),
+        // Due date intentionally not set — leave it to Xero / org defaults.
         InvoiceNumber: bill.invoiceNo || undefined,
         CurrencyCode: bill.currency || XERO_DEFAULT_CURRENCY,
         Reference: bill.notes || undefined,
