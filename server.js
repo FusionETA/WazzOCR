@@ -1561,11 +1561,41 @@ Matching rules — read carefully:
      "(BSP)" = Bandar Sri Permaisuri
    If the invoice says "Ayu Borneo Sri Petaling" → return "Ayu Borneo (SP) Sdn Bhd".
    If the invoice says "Ayu Borneo SP" → return "Ayu Borneo (SP) Sdn Bhd".
-2. "fka" means "formerly known as". The invoice may use the OLD name.
-   Example: invoice says "Nova Spa & Wellness Sdn Bhd"
-            → return "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
-   Example: invoice says "Ayu Borneo (VC3) Sdn Bhd"
-            → return "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
+2. "fka" means "formerly known as", and "SB" is the short form of "Sdn Bhd".
+   For any entry of the form  "<CURRENT NAME> [SB|Sdn Bhd] fka <OLD NAME>":
+     • <CURRENT NAME> is the company's NEW / current legal name.
+     • <OLD NAME>     is what it used to be called.
+     • "SB" and "Sdn Bhd" are interchangeable — treat them as equal.
+   So  "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
+   means the company is CURRENTLY called "Borneo Oasis Wellness Sdn Bhd"
+   and was FORMERLY called "Ayu Borneo (VC3) Sdn Bhd".
+
+   The invoice may use EITHER the current name OR the old name. Match accordingly:
+   ★ Invoice uses the CURRENT name:
+       Example: invoice says "Borneo Oasis Wellness Sdn Bhd"
+                → return "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
+                  (because "Borneo Oasis Wellness Sdn Bhd" == the part before "fka",
+                   with SB expanded to Sdn Bhd)
+       Example: invoice says "Ayu Borneo Nova Sdn Bhd"
+                → return "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
+   ★ Invoice uses the OLD name:
+       Example: invoice says "Ayu Borneo (VC3) Sdn Bhd"
+                → return "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
+       Example: invoice says "Nova Spa & Wellness Sdn Bhd"
+                → return "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
+
+   ★ CRITICAL — prefix-collision warning:
+   Two listed orgs may share a prefix in their CURRENT name but be DIFFERENT
+   companies. Do NOT pick the longer one when the invoice matches the shorter
+   current name. Examples in this org list:
+     • "Borneo Oasis Wellness SB fka …(VC3)…"     ← current = Borneo Oasis Wellness Sdn Bhd
+     • "Borneo Oasis Wellness & Spa SB fka …(VC4)…" ← current = Borneo Oasis Wellness & Spa Sdn Bhd
+   If the invoice says exactly "Borneo Oasis Wellness Sdn Bhd" (no "& Spa"),
+   it is the VC3 entity, NOT the VC4 "& Spa" entity. Only pick "& Spa" when
+   the invoice itself contains "& Spa" or "and Spa".
+   When in doubt between two prefix-colliding entries and the invoice text
+   doesn't contain the disambiguator, return billedTo = null and explain
+   in "notes" so a human can pick.
 3. If the BILL TO field is blank/ambiguous, infer from the delivery address,
    site name, or branch hints elsewhere in the invoice (e.g. "site: Sri Petaling"
    → "(SP) Sdn Bhd"; "shipped to Nova Spa" → the Nova entry above).
