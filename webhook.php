@@ -38,7 +38,7 @@ define('WAZZUP_API_KEY',    env_value('WAZZUP_API_KEY'));
 define('WAZZUP_CHANNEL_ID', env_value('WAZZUP_CHANNEL_ID'));
 define('WEBHOOK_SECRET',    env_value('WEBHOOK_SECRET'));
 define('XERO_BRIDGE_URL',   env_value('XERO_BRIDGE_URL', 'http://localhost:3000/api/whatsapp/analyze-ocr'));
-// New tesseract → Groq pipeline endpoints (added 2026-05-18)
+// File → AI pipeline endpoints (added 2026-05-18)
 define('XERO_BRIDGE_BASE',  env_value('XERO_BRIDGE_BASE', 'http://localhost:3000'));
 define('BRIDGE_PROCESS_URL', XERO_BRIDGE_BASE . '/api/whatsapp/process-file');
 define('BRIDGE_CHAT_URL',    XERO_BRIDGE_BASE . '/api/whatsapp/chat');
@@ -300,7 +300,7 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
         $file['mime'] = 'application/pdf';
     }
 
-    // New pipeline: send the raw file to server.js → tesseract.js → Groq → match
+    // Pipeline: send the raw file to server.js → extract/Gemini-vision → AI → match
     wlog("WAZZOCR BRIDGE PROCESS: posting file to " . BRIDGE_PROCESS_URL);
     $result = process_file_via_bridge($chatId, $file, $filename);
 
@@ -353,7 +353,7 @@ function process_file_via_bridge(string $chatId, array $file, string $filename =
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
         CURLOPT_POSTFIELDS     => json_encode($payload),
-        CURLOPT_TIMEOUT        => 180, // tesseract can be slow on multi-page PDFs
+        CURLOPT_TIMEOUT        => 180, // vision/multi-page PDFs can be slow
     ]);
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -417,8 +417,8 @@ function format_bridge_outcome(array $result): string
     // Surface which extraction path was used (helps debug bad invoices)
     $extractedBy = '';
     switch ($result['extractionMethod'] ?? '') {
-        case 'pdf-text':   $extractedBy = "_(extracted via PDF text — exact)_"; break;
-        case 'tesseract':  $extractedBy = "_(extracted via Tesseract OCR — may have errors)_"; break;
+        case 'pdf-text':       $extractedBy = "_(extracted via PDF text — exact)_"; break;
+        case 'gemini-vision':  $extractedBy = "_(read directly by Gemini vision)_"; break;
     }
 
     $lines = ["🤖 *AI bill analysis*"];

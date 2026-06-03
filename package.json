@@ -14,8 +14,6 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "multer": "^2.0.0",
-    "pdfjs-dist": "5.6.205",
-    "pdf-to-png-converter": "^3.6.0",
-    "tesseract.js": "^5.1.1"
+    "pdfjs-dist": "5.6.205"
   }
 }

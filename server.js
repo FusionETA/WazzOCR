@@ -1527,7 +1527,7 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
 
 // ── AI bill analysis ────────────────────────────────────────────────────────
 
-function buildBillPrompt(ocrText, knownOrgs = []) {
+function buildBillPrompt(ocrText, knownOrgs = [], { vision = false } = {}) {
   const hasOrgList = Array.isArray(knownOrgs) && knownOrgs.length > 0;
 
   const orgListBlock = hasOrgList
@@ -1610,8 +1610,19 @@ Also return a "billedToVerbatim" field with the original BILL TO text exactly
 as it appears on the invoice, so a human can sanity-check the mapping.`
     : '';
 
-  return `You are an expert at reading bills, receipts and invoices from OCR-extracted text.
-
+  return `You are an expert at reading bills, receipts and invoices${vision ? ' directly from a photographed or scanned image/PDF' : ' from OCR-extracted text'}.
+${vision ? `
+VISION READING RULES — CRITICAL:
+- Read the document by looking at it. Use the visual layout — column alignment,
+  row grouping and table borders — to decide which numbers belong together.
+- Numbers may be split across lines or columns. A figure like "5,787.08" may show
+  the ringgit part ("5,787") in one cell/row and the cents ("08") in a separate
+  line or the adjacent cents column. Recombine them into one value (5787.08).
+- Align each amount to its correct line item by following the row, not by reading
+  text top-to-bottom. Do not pair a description with a number from a different row.
+- Handwriting and faint print are common. If a digit is genuinely unreadable,
+  prefer null over guessing, and explain in "notes".
+` : ''}
 CONTEXT — Malaysian business invoices:
 - Most billed entities are Malaysian companies. Common legal suffixes:
     * "Sdn Bhd" (Sendirian Berhad) — private limited
@@ -1645,7 +1656,7 @@ CONTEXT — Malaysian business invoices:
 	  the taxable line items. Lines outside the taxable base should have taxRate 0
 	  and taxAmount 0.
 
-	Given the raw OCR text below, extract and return ONLY a valid JSON object:
+	${vision ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:' : 'Given the raw OCR text below, extract and return ONLY a valid JSON object:'}
 	{
 	  "bills": [
 	    {
@@ -1668,10 +1679,10 @@ CONTEXT — Malaysian business invoices:
 	    }
 	  ]
 	}
-	Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}
+	Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}${vision ? '' : `
 
 OCR Text:
-${ocrText}`;
+${ocrText}`}`;
 }
 
 function extractJsonText(raw) {
@@ -1821,7 +1832,9 @@ async function callGroqBill(ocrText, model, knownOrgs = []) {
   return callGroqBills(ocrText, model, knownOrgs).then((bills) => bills[0] || normalizeBillPayload({}));
 }
 
-async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
+// Shared Gemini generateContent call → parsed JSON. `parts` is the array of
+// content parts: text and/or inlineData (base64 image/PDF) for the vision path.
+async function callGeminiJson(parts, model) {
   if (!GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY in .env.');
   }
@@ -1834,12 +1847,7 @@ async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
       'x-goog-api-key': GEMINI_API_KEY
     },
     body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: buildBillPrompt(ocrText, knownOrgs) }]
-        }
-      ],
+      contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0.1,
         // 8192 leaves headroom for big bills; thinking is disabled below so
@@ -1883,6 +1891,28 @@ async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
   }
 }
 
+async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
+  return callGeminiJson([{ text: buildBillPrompt(ocrText, knownOrgs) }], model);
+}
+
+// Vision path: send the raw image/PDF bytes straight to Gemini so it does the
+// reading + extraction in one shot — no Tesseract. Gemini sees the actual
+// layout (columns, table rows, wrapped cents, handwriting) that flattened OCR
+// text throws away.
+async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = []) {
+  if (!buffer || !buffer.length) {
+    throw new Error('Empty file: nothing to analyze.');
+  }
+  const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
+    || buffer.slice(0, 4).toString() === '%PDF';
+  const mimeType = isPdf ? 'application/pdf' : (mime || 'image/jpeg');
+  const parts = [
+    { text: buildBillPrompt('', knownOrgs, { vision: true }) },
+    { inlineData: { mimeType, data: buffer.toString('base64') } }
+  ];
+  return normalizeBillPayloads(await callGeminiJson(parts, model));
+}
+
 async function callGeminiBills(ocrText, model, knownOrgs = []) {
   return normalizeBillPayloads(await callGeminiBillPayload(ocrText, model, knownOrgs));
 }
@@ -1924,22 +1954,11 @@ async function analyzeBillsText({ text, provider, model, knownOrgs = [] }) {
   return bills.length ? bills : [normalizeBillPayload({})];
 }
 
-// ── Tesseract OCR pipeline (replaces Gemini for WhatsApp file → text) ──────
+// ── File → bills pipeline ──────────────────────────────────────────────────
 //
-// Inputs: a raw image buffer (image/*) OR a PDF buffer (application/pdf).
-// PDFs are first rasterized one page at a time to PNG via pdf-to-png-converter,
-// then each page is OCR'd with tesseract.js. Text from all pages is joined.
-
-let _tesseractWorker = null;
-async function getTesseractWorker() {
-  if (_tesseractWorker) return _tesseractWorker;
-  const Tesseract = require('tesseract.js');
-  // 'eng' is enough for English / Malay Latin script. Add 'msa' here later
-  // if you need a Malay language model — it requires downloading extra data.
-  const worker = await Tesseract.createWorker('eng');
-  _tesseractWorker = worker;
-  return worker;
-}
+// Digital PDFs: extract embedded text (free, exact) and structure via the
+// configured AI provider. Scanned PDFs and photos/images: send the raw bytes
+// straight to Gemini vision — it reads the actual layout, no OCR step.
 
 function resetPdfJsGlobalWorker() {
   try {
@@ -1962,42 +1981,6 @@ function toStandaloneUint8Array(buffer) {
   return new Uint8Array(buffer);
 }
 
-async function rasterizePdfToPngs(pdfBuffer) {
-  resetPdfJsGlobalWorker();
-  const { pdfToPng } = require('pdf-to-png-converter');
-  try {
-    const pages = await pdfToPng(toStandaloneUint8Array(pdfBuffer), {
-      viewportScale: 2.0, // 2x = ~144 DPI, balances OCR quality vs memory
-      disableFontFace: true,
-      useSystemFonts: false
-    });
-    return pages.map((p) => p.content); // array of Buffers (PNG)
-  } finally {
-    resetPdfJsGlobalWorker();
-  }
-}
-
-async function runTesseractOcr(buffer, mime) {
-  if (!buffer || !buffer.length) {
-    throw new Error('Empty file: nothing to OCR.');
-  }
-  const worker = await getTesseractWorker();
-  const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
-    || buffer.slice(0, 4).toString() === '%PDF';
-
-  const images = isPdf ? await rasterizePdfToPngs(buffer) : [buffer];
-  if (!images.length) return '';
-
-  const texts = [];
-  for (let i = 0; i < images.length; i++) {
-    const { data } = await worker.recognize(images[i]);
-    const pageText = (data?.text || '').trim();
-    if (pageText) {
-      texts.push(images.length > 1 ? `─── Page ${i + 1} ───\n${pageText}` : pageText);
-    }
-  }
-  return texts.join('\n\n');
-}
 
 // Extracts embedded text from digital PDFs (no OCR). Returns '' if the PDF
 // has no extractable text (e.g. scanned image of paper). Free, instant, and
@@ -2049,32 +2032,34 @@ async function extractPdfEmbeddedText(buffer) {
   }
 }
 
-// Smart entry point: try embedded text first (free, instant, accurate);
-// fall back to tesseract OCR only for scanned/photographed PDFs and for
-// regular image uploads (which have no embedded text by definition).
-// Returns { text, method } so the caller can tell the user (and the logs)
-// which path was used.
-async function extractTextFromFile(buffer, mime) {
+// Smart entry point. Digital PDFs → embedded text (free, exact) → AI structuring
+// via the configured provider. Scanned PDFs and images → Gemini vision directly
+// (no OCR). Returns { bills, method, ocrText } so the caller can surface which
+// path was used. ocrText is '' for the vision path (Gemini reads the file).
+async function analyzeFileToBills({ buffer, mime, knownOrgs = [] }) {
   if (!buffer || !buffer.length) {
-    throw new Error('Empty file: nothing to extract.');
+    throw new Error('Empty file: nothing to analyze.');
   }
   const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
     || buffer.slice(0, 4).toString() === '%PDF';
 
   if (isPdf) {
     const embedded = await extractPdfEmbeddedText(buffer);
-    // Threshold: if we got more than ~50 useful chars, treat the PDF as
-    // digital and skip OCR. Scanned PDFs typically yield 0 or a handful of
-    // stray glyphs, well below this.
+    // Threshold: >~50 useful chars means a digital PDF — use its embedded text.
+    // Scanned PDFs yield 0 or a few stray glyphs, well below this, and fall
+    // through to Gemini vision.
     if (embedded && embedded.replace(/\s+/g, ' ').length >= 50) {
-      console.log(`[extract] PDF embedded text used (${embedded.length} chars) — skipping tesseract.`);
-      return { text: embedded, method: 'pdf-text' };
+      console.log(`[extract] PDF embedded text used (${embedded.length} chars) — text→AI path.`);
+      const bills = await analyzeBillsText({ text: embedded, knownOrgs });
+      return { bills, method: 'pdf-text', ocrText: embedded };
     }
-    console.log('[extract] PDF has no usable embedded text — falling back to tesseract OCR.');
+    console.log('[extract] PDF has no usable embedded text — sending PDF to Gemini vision.');
+  } else {
+    console.log('[extract] image upload — sending to Gemini vision.');
   }
 
-  const text = await runTesseractOcr(buffer, mime);
-  return { text, method: 'tesseract' };
+  const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs);
+  return { bills, method: 'gemini-vision', ocrText: '' };
 }
 
 // ── WhatsApp conversation state (per-chat picker / context) ─────────────────
@@ -2669,10 +2654,10 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
   }
 });
 
-// ── WhatsApp full-pipeline endpoints (tesseract → AI → match) ──────────────
+// ── WhatsApp full-pipeline endpoints (extract → AI → match) ────────────────
 
 // Accepts the raw file (base64) from webhook.php OR a multipart upload.
-// Runs tesseract → AI → tenant match. If matched, creates the Xero draft.
+// Runs extract → AI → tenant match. If matched, creates the Xero draft.
 // If unmatched, stores pending bill AND sets per-chat picker state.
 app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) => {
   try {
@@ -2701,26 +2686,6 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       originalName: fileName || filename
     };
 
-    // Smart text extraction:
-    //   • Digital PDFs (AWS, Xero, QuickBooks, etc.) → embedded text (instant, exact)
-    //   • Scanned PDFs and image uploads → tesseract OCR
-    let ocrText = '';
-    let extractionMethod = 'unknown';
-    try {
-      const out = await extractTextFromFile(buffer, mime);
-      ocrText = out.text;
-      extractionMethod = out.method;
-    } catch (ocrErr) {
-      console.error('Text extraction failed:', ocrErr.message);
-      await deleteUploadedFile(filename);
-      return res.status(500).json({ error: `Text extraction failed: ${ocrErr.message}` });
-    }
-
-    if (!ocrText.trim()) {
-      await deleteUploadedFile(filename);
-      return res.json({ ok: true, status: 'empty', ocrText: '', extractionMethod });
-    }
-
     // Fetch connected orgs so the AI can pick billedTo from the known list.
     // This is what makes "Nova Spa & Wellness" → "Ayu Borneo Nova SB fka Nova Spa..."
     // work, plus all the "(SP)", "(VC3)" etc. branch matching.
@@ -2732,15 +2697,26 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       console.error('process-file: could not fetch Xero orgs (ok, fallback):', err.message);
     }
 
-    // Structure via the configured AI provider (Gemini by default), with the
-    // org list in the prompt
+    // Smart analysis:
+    //   • Digital PDFs (AWS, Xero, QuickBooks, etc.) → embedded text → AI (exact)
+    //   • Scanned PDFs and photos/images → Gemini vision directly (no OCR)
+    let ocrText = '';
+    let extractionMethod = 'unknown';
     let bills;
     try {
-      bills = await analyzeBillsText({ text: ocrText, knownOrgs });
+      const out = await analyzeFileToBills({ buffer, mime, knownOrgs });
+      bills = out.bills;
+      ocrText = out.ocrText;
+      extractionMethod = out.method;
     } catch (analysisErr) {
-      console.error('AI bill analysis failed:', analysisErr.message);
+      console.error('File analysis failed:', analysisErr.message);
       await deleteUploadedFile(filename);
-      return res.status(500).json({ error: `AI analysis failed: ${analysisErr.message}`, ocrText });
+      return res.status(500).json({ error: `Analysis failed: ${analysisErr.message}`, ocrText });
+    }
+
+    if (!bills || !bills.length) {
+      await deleteUploadedFile(filename);
+      return res.json({ ok: true, status: 'empty', ocrText, extractionMethod });
     }
 
     const outcomes = [];
