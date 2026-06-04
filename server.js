@@ -72,6 +72,31 @@ const AI_PROVIDERS = {
   }
 };
 
+// ── Master Chart of Accounts (expense + COGS) ───────────────────────────────
+// Loaded from master-coa.json at the repo root. These are the standardised
+// codes loaded into every outlet's Xero, used to let the AI assign an account
+// code per bill line item. Falls back to an empty list if the file is missing.
+const MASTER_COA_FILE = path.join(APP_ROOT, 'master-coa.json');
+let MASTER_EXPENSE_ACCOUNTS = [];
+let MASTER_EXPENSE_CODES = new Set();
+function loadMasterCoa() {
+  try {
+    const raw = fs.readFileSync(MASTER_COA_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed) ? parsed : (parsed.accounts || []);
+    MASTER_EXPENSE_ACCOUNTS = list
+      .filter((a) => a && a.code && a.name)
+      .map((a) => ({ code: String(a.code).trim(), name: String(a.name).trim(), category: a.category || '' }));
+    MASTER_EXPENSE_CODES = new Set(MASTER_EXPENSE_ACCOUNTS.map((a) => a.code));
+    console.log(`[coa] Loaded ${MASTER_EXPENSE_ACCOUNTS.length} master expense/COGS accounts.`);
+  } catch (err) {
+    MASTER_EXPENSE_ACCOUNTS = [];
+    MASTER_EXPENSE_CODES = new Set();
+    console.warn(`[coa] Could not load ${MASTER_COA_FILE}: ${err.message}. Account-code assignment disabled.`);
+  }
+}
+loadMasterCoa();
+
 function ensureConfig() {
   const missing = ['XERO_CLIENT_ID', 'XERO_CLIENT_SECRET'].filter((key) => !process.env[key]);
   if (missing.length) {
@@ -987,6 +1012,28 @@ async function getTenantTaxRates(tenantId) {
   }
 }
 
+// Per-tenant cache of expense-type Xero accounts (TTL: process lifetime).
+const _expenseAccountsCache = new Map();
+
+// Fetch the active expense/cost accounts a bill line can be coded to in this
+// tenant's Xero chart. Includes EXPENSE, OVERHEADS and DIRECTCOSTS (Xero's
+// cost-of-sales type). Returns [{ code, name, type }].
+async function getTenantExpenseAccounts(tenantId) {
+  if (_expenseAccountsCache.has(tenantId)) return _expenseAccountsCache.get(tenantId);
+  try {
+    const payload = await xeroApi('/Accounts', {}, tenantId);
+    const EXPENSE_TYPES = new Set(['EXPENSE', 'OVERHEADS', 'DIRECTCOSTS']);
+    const accounts = (payload.Accounts || [])
+      .filter((a) => a.Status === 'ACTIVE' && a.Code && EXPENSE_TYPES.has(String(a.Type || '').toUpperCase()))
+      .map((a) => ({ code: String(a.Code).trim(), name: String(a.Name || '').trim(), type: a.Type }));
+    _expenseAccountsCache.set(tenantId, accounts);
+    return accounts;
+  } catch (err) {
+    console.error(`[coa] could not fetch accounts for tenant ${tenantId}:`, err.message);
+    return [];
+  }
+}
+
 // Tax rates sometimes arrive as decimal fractions (e.g. 0.08 meaning 8%)
 // instead of whole-number percents (8) — the OCR/AI is inconsistent. Anything
 // in (0,1) is treated as a fraction and scaled to a percent. Real SST/GST/VAT
@@ -1280,6 +1327,15 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     } else {
       console.warn(`[tax] bill tax ${percent.toFixed(2)}% — no matching Xero tax rate; using ${XERO_DEFAULT_TAX_TYPE}`);
     }
+  }
+
+  // Assign an expense/cost account code per line item, validated against this
+  // tenant's real Xero chart (with a Gemini second pass for leftovers).
+  // Best-effort: never blocks bill creation.
+  try {
+    await resolveLineAccountCodes(bill, tenantId);
+  } catch (err) {
+    console.error('[coa] account-code resolution failed (continuing):', err.message);
   }
 
   const billForLines = await resolveBillTaxTypes(bill, tenantId, resolvedTaxType);
@@ -1636,6 +1692,26 @@ Also return a "billedToVerbatim" field with the original BILL TO text exactly
 as it appears on the invoice, so a human can sanity-check the mapping.`
     : '';
 
+  const hasCoa = Array.isArray(MASTER_EXPENSE_ACCOUNTS) && MASTER_EXPENSE_ACCOUNTS.length > 0;
+  const coaBlock = hasCoa
+    ? `
+
+─── EXPENSE / COST ACCOUNTS (Chart of Accounts) ───
+For EACH line item, set "accountCode" to the code of the single best-matching
+account below, based on what the line item is for. Copy the code VERBATIM
+(e.g. "926-0000"). Rules:
+- Match on meaning, not exact words. Examples: electricity/water/TNB/indah water
+  → "926-0000" Utilities Expenses; internet/phone/Unifi/Maxis → "934-0000"
+  Telephone & Internet Charges; cleaning supplies/toiletries → "930-0000";
+  food/drinks/groceries → "931-0000"; stock/products bought for resale →
+  "610-0000" Purchases; rent → "915-0000"; repairs/servicing → "925-0000".
+- Only use codes from this list. Do NOT invent codes.
+- If no account is a sensible fit for a line item, set "accountCode" to null.
+  Do not force a poor match.
+
+${MASTER_EXPENSE_ACCOUNTS.map((a) => `${a.code}  ${a.name}`).join('\n')}`
+    : '';
+
   return `You are an expert at reading bills, receipts and invoices${vision ? ' directly from a photographed or scanned image/PDF' : ' from OCR-extracted text'}.
 ${vision ? `
 VISION READING RULES — CRITICAL:
@@ -1694,7 +1770,9 @@ CONTEXT — Malaysian business invoices:
 	  (after any discount, rebate, "× NN%", or round-down / "don't charge the cents")
 	  in "total". The system computes the discount itself as subtotal − total, so
 	  the only thing that matters is that "subtotal" is the amount before the
-	  reduction and "total" is the amount after it.
+	  reduction and "total" is the amount after it.${hasCoa ? `
+	- For each line item, set "accountCode" to the best-matching expense/cost
+	  account from the EXPENSE / COST ACCOUNTS list below, or null if none fits.` : ''}
 
 	${vision ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:' : 'Given the raw OCR text below, extract and return ONLY a valid JSON object:'}
 	{
@@ -1707,7 +1785,7 @@ CONTEXT — Malaysian business invoices:
 	      "date": "Date string or null",
 	      "dueDate": "Due date string or null",
 	      "currency": "MYR/USD/SGD etc, default MYR",
-	      "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00, "taxCode": "SV-8/SST-8/etc or null", "taxRate": 0.00, "taxAmount": 0.00 }],
+	      "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00, "accountCode": ${hasCoa ? '"best-matching expense/cost account code from the list below, or null"' : 'null'}, "taxCode": "SV-8/SST-8/etc or null", "taxRate": 0.00, "taxAmount": 0.00 }],
 	      "subtotal": 0.00,
 	      "tax": 0.00,
 	      "taxRate": 0.00,
@@ -1719,7 +1797,7 @@ CONTEXT — Malaysian business invoices:
 	    }
 	  ]
 	}
-	Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}${vision ? '' : `
+	Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}${coaBlock}${vision ? '' : `
 
 OCR Text:
 ${ocrText}`}`;
@@ -1752,12 +1830,18 @@ function normalizeBillPayload(bill) {
           firstPresent(item.unitPrice, item.unitAmount, item.UnitAmount, item.price, item.rate),
           amount > 0 ? amount / qty : 0
         );
+        // Accept the AI's account code only if it's a real master COA code —
+        // drops hallucinated codes. The per-tenant pass later validates/repairs
+        // against the actual Xero chart.
+        const rawAccount = String(firstPresent(item.accountCode, item.AccountCode, item.account) || '').trim();
+        const accountCode = MASTER_EXPENSE_CODES.has(rawAccount) ? rawAccount : null;
         return {
           ...item,
           description: firstPresent(item.description, item.Description, item.name) || '',
           qty,
           unitPrice,
           amount,
+          accountCode,
           taxCode: firstPresent(item.taxCode, item.TaxCode, item.taxLabel) || null,
           taxType: firstPresent(item.taxType, item.TaxType) || null,
           taxRate: normalizeNumber(taxRateRaw, 0),
@@ -1951,6 +2035,73 @@ async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = []) {
     { inlineData: { mimeType, data: buffer.toString('base64') } }
   ];
   return normalizeBillPayloads(await callGeminiJson(parts, model));
+}
+
+// Second-pass account matcher. Given line item descriptions that the master-COA
+// pass couldn't code, and the tenant's actual Xero expense accounts, ask Gemini
+// to assign the best account code per line (or null). Best-effort — any failure
+// returns an empty map and the lines just stay uncoded.
+async function callGeminiAssignAccounts(lines, accounts, model) {
+  if (!GEMINI_API_KEY || !lines.length || !accounts.length) return {};
+  const accountList = accounts.map((a) => `${a.code}  ${a.name}`).join('\n');
+  const lineList = lines.map((l) => `${l.index}: ${l.description}`).join('\n');
+  const prompt = `You are coding bill line items to a Xero chart of accounts.
+For each line item below, choose the SINGLE best-matching expense/cost account
+by meaning (not exact words). Only use codes from the ACCOUNTS list. If no
+account is a sensible fit, use null — do not force a poor match.
+
+ACCOUNTS:
+${accountList}
+
+LINE ITEMS (index: description):
+${lineList}
+
+Return ONLY valid JSON: { "assignments": [ { "index": <number>, "accountCode": "<code from list or null>" } ] }`;
+  try {
+    const parsed = await callGeminiJson([{ text: prompt }], model);
+    const map = {};
+    const valid = new Set(accounts.map((a) => a.code));
+    for (const a of (parsed?.assignments || [])) {
+      const code = String(a?.accountCode || '').trim();
+      if (Number.isInteger(a?.index) && valid.has(code)) map[a.index] = code;
+    }
+    return map;
+  } catch (err) {
+    console.error('[coa] second-pass account match failed:', err.message);
+    return {};
+  }
+}
+
+// Resolve an account code for every line item against the tenant's REAL Xero
+// chart. Order (per the company's rule): the AI already matched against the
+// master COA at extraction time; here we (1) keep that code if it exists in the
+// tenant's Xero, and (2) for line items still without a valid code, run a second
+// Gemini pass over the tenant's own expense accounts. Anything left over stays
+// uncoded (null) — Xero shows it blank, no highlight. Mutates bill.lineItems.
+async function resolveLineAccountCodes(bill, tenantId) {
+  const items = Array.isArray(bill?.lineItems) ? bill.lineItems : [];
+  if (!items.length || !tenantId) return;
+  const tenantAccounts = await getTenantExpenseAccounts(tenantId);
+  if (!tenantAccounts.length) return; // can't validate — leave AI codes as-is
+  const validCodes = new Set(tenantAccounts.map((a) => a.code));
+
+  const unresolved = [];
+  items.forEach((item, index) => {
+    const code = String(item.accountCode || '').trim();
+    if (code && validCodes.has(code)) {
+      item.accountCode = code; // master code confirmed present in this Xero org
+    } else {
+      item.accountCode = null;
+      const desc = String(item.description || item.Description || '').trim();
+      if (desc) unresolved.push({ index, description: desc });
+    }
+  });
+
+  if (!unresolved.length) return;
+  const assignments = await callGeminiAssignAccounts(unresolved, tenantAccounts);
+  for (const { index } of unresolved) {
+    if (assignments[index]) items[index].accountCode = assignments[index];
+  }
 }
 
 async function callGeminiBills(ocrText, model, knownOrgs = []) {
