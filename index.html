@@ -598,10 +598,17 @@
     .bills-table tr:last-child td { border-bottom: none; }
     /* Column-specific behaviours */
     .bills-table .col-date,
-    .bills-table .col-invoice,
     .bills-table .col-total,
     .bills-table .col-status,
     .bills-table .col-source { white-space: nowrap; }
+    /* Invoice numbers can be long (e.g. "018/INV/HDC-ABMS/V/2026/0042").
+       Allow them to wrap within the column instead of overflowing into Total. */
+    .bills-table .col-invoice {
+      white-space: normal;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      font-variant-numeric: tabular-nums;
+    }
     .bills-table .col-total {
       text-align: right;
       font-variant-numeric: tabular-nums;
@@ -682,6 +689,40 @@
       border-radius: 6px; cursor: pointer;
     }
     .history-filter button.active { background: var(--fe-primary); color: white; }
+
+    /* Date-range filter */
+    .date-range-filter {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+    .date-range-filter label {
+      font-size: 0.72rem; font-weight: 700; color: var(--fe-muted);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .date-range-filter input[type="date"] {
+      min-width: 9.5rem; padding: 0.4rem 0.5rem;
+    }
+
+    /* Pagination controls */
+    .bills-pagination {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 0.75rem; flex-wrap: wrap; margin-top: 0.9rem;
+    }
+    .bills-pagination .page-info { font-size: 0.8rem; color: var(--fe-muted); }
+    .bills-pagination .page-controls { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .bills-pagination button {
+      border: 1px solid var(--fe-border); background: var(--fe-white);
+      color: var(--fe-text); font-weight: 600; font-size: 0.8rem;
+      padding: 0.4rem 0.7rem; border-radius: 6px; cursor: pointer;
+      line-height: 1;
+    }
+    .bills-pagination button:hover:not(:disabled) { background: var(--fe-light); }
+    .bills-pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .bills-pagination .page-current {
+      font-size: 0.8rem; font-weight: 700; color: var(--fe-text);
+      padding: 0 0.35rem; font-variant-numeric: tabular-nums;
+    }
+
     @media (max-width: 720px) {
       .bills-table { table-layout: auto; }
       .bills-table thead { display: none; }
@@ -910,6 +951,13 @@
           <select class="api-bar-select" id="orgFilterSelect" onchange="loadBillsForOrg()" style="min-width:240px;">
             <option value="">All organisations</option>
           </select>
+          <div class="date-range-filter" aria-label="Filter bills by date range">
+            <label for="billDateFrom">From</label>
+            <input type="date" id="billDateFrom" class="api-bar-select" onchange="onBillDateFilterChange()" title="Show bills created on or after this date">
+            <label for="billDateTo">To</label>
+            <input type="date" id="billDateTo" class="api-bar-select" onchange="onBillDateFilterChange()" title="Show bills created on or before this date">
+            <button type="button" class="btn-ghost" id="billDateClearBtn" onclick="clearBillDateFilter()" title="Clear date filter" style="display:none;">✕</button>
+          </div>
           <button class="btn-ghost" onclick="loadBillsForOrg()">🔄 Refresh</button>
         </div>
       </div>
@@ -1091,6 +1139,9 @@
   let aiSettings = { provider: 'gemini', model: '' };
   let xeroState = { connected: false, tenants: [] };
   let billHistoryBucket = 'active';
+  let allBillsCache = [];      // all bills fetched for the current bucket/org
+  let billsPage = 1;           // current page (1-based) for the bills table
+  const BILLS_PAGE_SIZE = 15;  // rows per page
   const tenantTaxRatesCache = {};
   const FALLBACK_SUPPLIER_NAME = 'ImportWazzOCR Supplier';
   let supplierPromptResolve = null;
@@ -1625,45 +1676,115 @@
       const resp = await fetch(url);
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Failed to load bills.');
-      const items = data.bills || [];
-      if (!items.length) {
-        const label = billHistoryBucket === 'archived' ? 'voided or archived bills' : 'active bills';
-        listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📭</div><p>No ${label} here yet.</p></div>`;
-        return;
-      }
-      listEl.innerHTML = `
-        <div class="bills-table-wrap">
-          <table class="bills-table">
-            <colgroup>
-              <col style="width:6.5rem;">   <!-- Date -->
-              <col style="width:16%;">      <!-- Organisation -->
-              <col>                          <!-- Supplier (flex) -->
-              <col style="width:8rem;">     <!-- Invoice # -->
-              <col style="width:7rem;">     <!-- Total -->
-              <col style="width:6rem;">     <!-- Status -->
-              <col style="width:7.5rem;">   <!-- Source -->
-              <col style="width:11.5rem;">  <!-- Actions -->
-            </colgroup>
-            <thead>
-              <tr>
-                <th class="col-date">Date</th>
-                <th class="col-org">Organisation</th>
-                <th class="col-supplier">Supplier</th>
-                <th class="col-invoice">Invoice #</th>
-                <th class="col-total">Total</th>
-                <th class="col-status">Status</th>
-                <th class="col-source">Source</th>
-                <th class="col-actions"><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${items.map(renderBillRow).join('')}
-            </tbody>
-          </table>
-        </div>`;
+      allBillsCache = data.bills || [];
+      billsPage = 1;
+      renderBillsTable();
     } catch (error) {
+      allBillsCache = [];
       listEl.innerHTML = `<div class="notice error" style="display:block;">Could not load bills: ${esc(error.message)}</div>`;
     }
+  }
+
+  // Date filter handlers — re-render without re-fetching.
+  function onBillDateFilterChange() {
+    billsPage = 1;
+    renderBillsTable();
+  }
+  function clearBillDateFilter() {
+    document.getElementById('billDateFrom').value = '';
+    document.getElementById('billDateTo').value = '';
+    billsPage = 1;
+    renderBillsTable();
+  }
+
+  // Apply the From/To date range to the cached bills (by createdAt).
+  function getFilteredBills() {
+    const fromStr = document.getElementById('billDateFrom')?.value || '';
+    const toStr = document.getElementById('billDateTo')?.value || '';
+    const from = fromStr ? new Date(fromStr + 'T00:00:00') : null;
+    const to = toStr ? new Date(toStr + 'T23:59:59.999') : null;
+    document.getElementById('billDateClearBtn').style.display = (from || to) ? '' : 'none';
+    if (!from && !to) return allBillsCache.slice();
+    return allBillsCache.filter((b) => {
+      const d = new Date(b.createdAt);
+      if (isNaN(d)) return false;
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+  }
+
+  // Render the bills table with the active date filter + pagination applied.
+  function renderBillsTable() {
+    const listEl = document.getElementById('billsList');
+    const filtered = getFilteredBills();
+    const total = filtered.length;
+    const label = billHistoryBucket === 'archived' ? 'voided or archived bills' : 'active bills';
+
+    if (!total) {
+      const anyCached = allBillsCache.length > 0;
+      const msg = anyCached ? `No ${label} in the selected date range.` : `No ${label} here yet.`;
+      listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📭</div><p>${msg}</p></div>`;
+      return;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(total / BILLS_PAGE_SIZE));
+    if (billsPage > totalPages) billsPage = totalPages;
+    const startIdx = (billsPage - 1) * BILLS_PAGE_SIZE;
+    const pageItems = filtered.slice(startIdx, startIdx + BILLS_PAGE_SIZE);
+    const rangeStart = startIdx + 1;
+    const rangeEnd = startIdx + pageItems.length;
+
+    const pagination = totalPages > 1 ? `
+      <div class="bills-pagination">
+        <span class="page-info">Showing ${rangeStart}–${rangeEnd} of ${total}</span>
+        <div class="page-controls">
+          <button type="button" onclick="goToBillsPage(1)" ${billsPage === 1 ? 'disabled' : ''} title="First page">« First</button>
+          <button type="button" onclick="goToBillsPage(${billsPage - 1})" ${billsPage === 1 ? 'disabled' : ''}>‹ Prev</button>
+          <span class="page-current">Page ${billsPage} / ${totalPages}</span>
+          <button type="button" onclick="goToBillsPage(${billsPage + 1})" ${billsPage === totalPages ? 'disabled' : ''}>Next ›</button>
+          <button type="button" onclick="goToBillsPage(${totalPages})" ${billsPage === totalPages ? 'disabled' : ''} title="Last page">Last »</button>
+        </div>
+      </div>` : `<div class="bills-pagination"><span class="page-info">Showing ${total} ${total === 1 ? 'bill' : 'bills'}</span></div>`;
+
+    listEl.innerHTML = `
+      <div class="bills-table-wrap">
+        <table class="bills-table">
+          <colgroup>
+            <col style="width:6.5rem;">   <!-- Date -->
+            <col style="width:16%;">      <!-- Organisation -->
+            <col>                          <!-- Supplier (flex) -->
+            <col style="width:10rem;">    <!-- Invoice # -->
+            <col style="width:7rem;">     <!-- Total -->
+            <col style="width:6rem;">     <!-- Status -->
+            <col style="width:7.5rem;">   <!-- Source -->
+            <col style="width:11.5rem;">  <!-- Actions -->
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="col-date">Date</th>
+              <th class="col-org">Organisation</th>
+              <th class="col-supplier">Supplier</th>
+              <th class="col-invoice">Invoice #</th>
+              <th class="col-total">Total</th>
+              <th class="col-status">Status</th>
+              <th class="col-source">Source</th>
+              <th class="col-actions"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${pageItems.map(renderBillRow).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${pagination}`;
+  }
+
+  function goToBillsPage(page) {
+    const filtered = getFilteredBills();
+    const totalPages = Math.max(1, Math.ceil(filtered.length / BILLS_PAGE_SIZE));
+    billsPage = Math.min(Math.max(1, page), totalPages);
+    renderBillsTable();
   }
 
   // Date as e.g. "15 May 2026" — compact, unambiguous, no locale-format wrap.
