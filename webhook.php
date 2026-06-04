@@ -446,7 +446,7 @@ function format_bridge_outcome(array $result): string
     if (!empty($bill['lineItems']) && is_array($bill['lineItems'])) {
         $lines[] = "";
         $lines[] = "*Line items*";
-        foreach (array_slice($bill['lineItems'], 0, 8) as $index => $item) {
+        foreach (array_slice($bill['lineItems'], 0, 20) as $index => $item) {
             $description = $item['description'] ?? ('Item ' . ($index + 1));
             $amount = format_money_value($item['amount'] ?? 0);
             $lines[] = ($index + 1) . ". {$description} — {$amount}";
@@ -731,7 +731,7 @@ function format_bridge_analysis(array $analysis): string
     if (!empty($bill['lineItems']) && is_array($bill['lineItems'])) {
         $lines[] = "";
         $lines[] = "*Line items*";
-        foreach (array_slice($bill['lineItems'], 0, 8) as $index => $item) {
+        foreach (array_slice($bill['lineItems'], 0, 20) as $index => $item) {
             $description = $item['description'] ?? ('Item ' . ($index + 1));
             $amount = format_money_value($item['amount'] ?? 0);
             $lines[] = ($index + 1) . ". {$description} — {$amount}";

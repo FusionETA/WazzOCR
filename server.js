@@ -1191,20 +1191,46 @@ function deriveLineItems(bill, defaults) {
     throw new Error('No usable line items were found for the bill.');
   }
 
-  // Top-level math sanity: if the sum of line items doesn't match the bill's
-  // subtotal/total (e.g. AWS invoice where tesseract+AI hallucinated some
-  // amounts), fall back to a single summary line using the trusted total.
-  // Better one correct line than many wrong ones.
+  // Reconcile to what the shop ACTUALLY charged. Line items are tax-EXCLUSIVE,
+  // so they should net to (total − tax) — the post-discount, pre-tax amount.
+  // The bill total is the most trusted figure on a receipt, so we anchor to it.
+  // Falls back to subtotal when no total is present.
   const billSubtotal = normalizeNumber(bill.subtotal);
   const billTotal = normalizeNumber(bill.total);
-  const expected = billSubtotal > 0 ? billSubtotal : billTotal;
-  if (expected > 0) {
-    const lineSum = normalized.reduce((s, li) => s + (li.Quantity * li.UnitAmount), 0);
-    const diff = Math.abs(lineSum - expected);
-    const tolerance = Math.max(1, expected * 0.02); // 2% or RM 1
-    if (diff > tolerance) {
-      console.warn(`[lineItems] Sum ${lineSum.toFixed(2)} ≠ expected ${expected.toFixed(2)} (diff ${diff.toFixed(2)}). Falling back to single summary line.`);
-      const useAmount = taxType && expected > 0 ? expected : (billTotal > 0 ? billTotal : expected);
+  const billTax = normalizeNumber(bill.tax);
+  const target = billTotal > 0 ? Number((billTotal - billTax).toFixed(2)) : billSubtotal;
+
+  if (target > 0) {
+    const tolerance = Math.max(1, target * 0.02); // 2% or RM 1
+    const hasNegativeLine = normalized.some((li) => li.Quantity * li.UnitAmount < 0);
+    const itemSum = normalized.reduce((s, li) => s + (li.Quantity * li.UnitAmount), 0);
+
+    // Discount = (after-discount total) − (before-discount total). If the line
+    // items add up to MORE than the shop charged, the gap is a discount — this
+    // is exactly the "round down / don't charge the cents" case as well as
+    // bigger negotiated discounts. Add one negative line that bridges the items
+    // down to the real total. Threshold is 1 cent so even cent-rounding is
+    // captured. Skip if the AI already supplied its own negative line.
+    if (!hasNegativeLine && itemSum - target > 0.01) {
+      const discountLine = {
+        Description: `Discount${bill.invoiceNo ? ` (${bill.invoiceNo})` : ''}`,
+        Quantity: 1,
+        UnitAmount: Number((target - itemSum).toFixed(2)) // negative
+      };
+      if (accountCode) discountLine.AccountCode = accountCode;
+      if (taxType) discountLine.TaxType = taxType;
+      normalized.push(discountLine);
+      console.log(`[lineItems] Added discount ${(target - itemSum).toFixed(2)} (items ${itemSum.toFixed(2)} → total ${target.toFixed(2)}).`);
+    }
+
+    // If the net of all lines STILL doesn't match the target (e.g. items came up
+    // short because an amount was missed/garbled), the figures can't be trusted
+    // — fall back to a single line at the correct total. Better one right line
+    // than many wrong ones.
+    const netSum = normalized.reduce((s, li) => s + (li.Quantity * li.UnitAmount), 0);
+    if (Math.abs(netSum - target) > tolerance) {
+      console.warn(`[lineItems] Net ${netSum.toFixed(2)} ≠ target ${target.toFixed(2)} (diff ${Math.abs(netSum - target).toFixed(2)}). Falling back to single summary line.`);
+      const useAmount = billTotal > 0 ? (taxType ? target : billTotal) : target;
       const fallback = {
         Description: `Bill total${bill.invoiceNo ? ` (${bill.invoiceNo})` : ''} — line items inconsistent`,
         Quantity: 1,
@@ -1662,12 +1688,13 @@ CONTEXT — Malaysian business invoices:
 	  "(123456-A)" or "(002684562-T)". Extract that business name (e.g. a watermark
 	  reading "MF Be Beauty" → supplier = "MF Be Beauty"). Only return null if no
 	  issuing business name appears anywhere on the document.
-	- Discounts: if a discount/rebate line appears (labels like "Discount", "Less",
-	  "Rebate", or a "× NN%" / "less NN%" multiplier row), add it to lineItems as its
-	  OWN line with a NEGATIVE amount (e.g. { "description": "Discount 75%", "amount": -1599.64 }),
-	  and also set the top-level "discount" field to the positive discount amount.
-	  When totals show subtotal > total with no separate tax, the difference
-	  (subtotal − total) is the discount amount.
+	- Do NOT add discounts as line items. List only the actual goods/services in
+	  lineItems. Instead, report the figures so the discount can be derived:
+	  put the pre-discount sum of items in "subtotal" and the FINAL amount payable
+	  (after any discount, rebate, "× NN%", or round-down / "don't charge the cents")
+	  in "total". The system computes the discount itself as subtotal − total, so
+	  the only thing that matters is that "subtotal" is the amount before the
+	  reduction and "total" is the amount after it.
 
 	${vision ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:' : 'Given the raw OCR text below, extract and return ONLY a valid JSON object:'}
 	{
