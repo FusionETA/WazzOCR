@@ -690,17 +690,38 @@
     }
     .history-filter button.active { background: var(--fe-primary); color: white; }
 
-    /* Date-range filter */
+    /* Date-range filter — one neat pill: 📅 [from] → [to] ✕ */
     .date-range-filter {
-      display: inline-flex; align-items: center; gap: 0.35rem;
-      flex-wrap: wrap;
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      flex-wrap: nowrap; background: var(--fe-white);
+      border: 1px solid var(--fe-border); border-radius: var(--fe-radius-sm);
+      padding: 0.3rem 0.6rem; height: 100%;
+      transition: border-color var(--fe-transition);
     }
-    .date-range-filter label {
-      font-size: 0.72rem; font-weight: 700; color: var(--fe-muted);
-      text-transform: uppercase; letter-spacing: 0.04em;
-    }
+    .date-range-filter:focus-within { border-color: var(--fe-primary); }
+    .date-range-filter .drf-icon { font-size: 0.9rem; opacity: 0.65; line-height: 1; }
+    .date-range-filter .drf-sep { color: var(--fe-muted); font-weight: 700; font-size: 0.85rem; }
     .date-range-filter input[type="date"] {
-      min-width: 9.5rem; padding: 0.4rem 0.5rem;
+      border: none; outline: none; background: transparent;
+      font-size: 0.8rem; color: var(--fe-text); font-family: inherit;
+      padding: 0.15rem 0.1rem; width: 8.4rem; cursor: pointer;
+      font-variant-numeric: tabular-nums;
+    }
+    .date-range-filter input[type="date"]::-webkit-calendar-picker-indicator {
+      cursor: pointer; opacity: 0.55;
+    }
+    .date-range-filter input[type="date"]:hover::-webkit-calendar-picker-indicator { opacity: 0.9; }
+    .date-range-filter .drf-clear {
+      border: none; background: var(--fe-light); color: var(--fe-muted);
+      width: 1.5rem; height: 1.5rem; border-radius: 50%; cursor: pointer;
+      font-size: 0.72rem; line-height: 1; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background var(--fe-transition), color var(--fe-transition);
+    }
+    .date-range-filter .drf-clear:hover { background: #e2e8f0; color: var(--fe-text); }
+    @media (max-width: 720px) {
+      .date-range-filter { flex-wrap: wrap; }
+      .date-range-filter input[type="date"] { width: auto; flex: 1 1 7rem; }
     }
 
     /* Pagination controls */
@@ -952,11 +973,11 @@
             <option value="">All organisations</option>
           </select>
           <div class="date-range-filter" aria-label="Filter bills by date range">
-            <label for="billDateFrom">From</label>
-            <input type="date" id="billDateFrom" class="api-bar-select" onchange="onBillDateFilterChange()" title="Show bills created on or after this date">
-            <label for="billDateTo">To</label>
-            <input type="date" id="billDateTo" class="api-bar-select" onchange="onBillDateFilterChange()" title="Show bills created on or before this date">
-            <button type="button" class="btn-ghost" id="billDateClearBtn" onclick="clearBillDateFilter()" title="Clear date filter" style="display:none;">✕</button>
+            <span class="drf-icon" aria-hidden="true">📅</span>
+            <input type="date" id="billDateFrom" onchange="onBillDateFilterChange()" aria-label="From date" title="Show bills created on or after this date">
+            <span class="drf-sep" aria-hidden="true">→</span>
+            <input type="date" id="billDateTo" onchange="onBillDateFilterChange()" aria-label="To date" title="Show bills created on or before this date">
+            <button type="button" class="drf-clear" id="billDateClearBtn" onclick="clearBillDateFilter()" title="Clear date filter" aria-label="Clear date filter" style="display:none;">✕</button>
           </div>
           <button class="btn-ghost" onclick="loadBillsForOrg()">🔄 Refresh</button>
         </div>
