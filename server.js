@@ -1655,6 +1655,19 @@ CONTEXT — Malaysian business invoices:
 	  SR-8, GST, or "Service Tax @ 8% on 220.00", set taxRate/taxAmount only on
 	  the taxable line items. Lines outside the taxable base should have taxRate 0
 	  and taxAmount 0.
+	- supplier = the business that ISSUED this receipt/invoice (the one being paid),
+	  NOT the customer. On handwritten receipts and order pads the supplier is often
+	  NOT in a labelled field — look at the letterhead, logo, rubber stamp, footer,
+	  or faint background watermark, including any company registration number like
+	  "(123456-A)" or "(002684562-T)". Extract that business name (e.g. a watermark
+	  reading "MF Be Beauty" → supplier = "MF Be Beauty"). Only return null if no
+	  issuing business name appears anywhere on the document.
+	- Discounts: if a discount/rebate line appears (labels like "Discount", "Less",
+	  "Rebate", or a "× NN%" / "less NN%" multiplier row), add it to lineItems as its
+	  OWN line with a NEGATIVE amount (e.g. { "description": "Discount 75%", "amount": -1599.64 }),
+	  and also set the top-level "discount" field to the positive discount amount.
+	  When totals show subtotal > total with no separate tax, the difference
+	  (subtotal − total) is the discount amount.
 
 	${vision ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:' : 'Given the raw OCR text below, extract and return ONLY a valid JSON object:'}
 	{
