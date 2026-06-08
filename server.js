@@ -2081,54 +2081,79 @@ Return ONLY valid JSON: { "assignments": [ { "index": <number>, "accountCode": "
 // Append a line to coa-diag.log (and stdout) so account-code decisions are
 // inspectable after the fact, regardless of how stdout is captured.
 function coaDiag(msg) {
-  const line = `[coa-diag] ${new Date().toISOString()} ${msg}`;
-  console.log(line);
-  try { fs.appendFileSync(path.join(APP_ROOT, 'coa-diag.log'), line + '\n'); } catch (_) { /* ignore */ }
+  // Prefix every physical line so multi-line grouped blocks stay greppable and
+  // each line carries the same timestamp; the whole block is one atomic append.
+  const ts = new Date().toISOString();
+  const out = String(msg).split('\n').map((l) => `[coa-diag] ${ts} ${l}`).join('\n');
+  console.log(out);
+  try { fs.appendFileSync(path.join(APP_ROOT, 'coa-diag.log'), out + '\n'); } catch (_) { /* ignore */ }
 }
 
 async function resolveLineAccountCodes(bill, tenantId) {
   const items = Array.isArray(bill?.lineItems) ? bill.lineItems : [];
+  const supplier = String(bill?.supplier || '-').trim() || '-';
+  const invoice = bill?.invoiceNo || '-';
   if (!items.length || !tenantId) {
-    coaDiag(`skip: items=${items.length} tenantId=${tenantId || 'none'}`);
+    coaDiag(`supplier="${supplier}" invoice=${invoice} skip: items=${items.length} tenantId=${tenantId || 'none'}`);
     return;
   }
   const tenantAccounts = await getTenantExpenseAccounts(tenantId);
-  coaDiag(`bill invoice=${bill.invoiceNo || '-'} tenant=${tenantId} lines=${items.length} xeroExpenseAccounts=${tenantAccounts.length}`);
   if (!tenantAccounts.length) {
-    coaDiag('no Xero expense accounts fetched — leaving AI/master codes as-is (cannot validate)');
+    coaDiag(`supplier="${supplier}" invoice=${invoice} tenant=${tenantId}: no Xero expense accounts fetched — leaving AI/master codes as-is (cannot validate)`);
     return;
   }
   const validCodes = new Set(tenantAccounts.map((a) => a.code));
 
-  const unresolved = [];
-  items.forEach((item, index) => {
+  // First pass: validate each line's master COA code against this org's Xero
+  // accounts. Build a per-line outcome so the whole bill logs as one grouped
+  // block (supplier → line description → map result) instead of interleaved.
+  const outcomes = items.map((item, index) => {
     const desc = String(item.description || item.Description || '').trim();
     const code = String(item.accountCode || '').trim();
     if (code && validCodes.has(code)) {
       item.accountCode = code; // master code confirmed present in this Xero org
-      coaDiag(`  line ${index} "${desc}" master=${code} -> KEEP (valid in Xero)`);
-    } else {
-      if (code) coaDiag(`  line ${index} "${desc}" master=${code} -> CLEARED (not in this org's Xero) → 2nd pass`);
-      else coaDiag(`  line ${index} "${desc}" master=null → 2nd pass`);
-      item.accountCode = null;
-      if (desc) unresolved.push({ index, description: desc });
+      return { index, desc, code, result: `${code} (master, valid in Xero)` };
     }
+    item.accountCode = null;
+    const reason = code ? `master ${code} not in this org` : 'no master code';
+    return { index, desc, code: null, needs2nd: !!desc, reason };
   });
 
-  if (!unresolved.length) {
-    coaDiag('all lines resolved from master COA');
-    return;
-  }
-  coaDiag(`2nd pass: matching ${unresolved.length} line(s) against ${tenantAccounts.length} Xero expense accounts`);
-  const assignments = await callGeminiAssignAccounts(unresolved, tenantAccounts);
-  for (const { index, description } of unresolved) {
-    if (assignments[index]) {
-      items[index].accountCode = assignments[index];
-      coaDiag(`  line ${index} "${description}" 2ndpass -> ${assignments[index]}`);
-    } else {
-      coaDiag(`  line ${index} "${description}" 2ndpass -> null (left blank)`);
+  // Second pass: ask Gemini to map anything the master COA didn't resolve.
+  const unresolved = outcomes
+    .filter((o) => o.needs2nd)
+    .map((o) => ({ index: o.index, description: o.desc }));
+  let secondPassRan = false;
+  if (unresolved.length) {
+    secondPassRan = true;
+    const assignments = await callGeminiAssignAccounts(unresolved, tenantAccounts);
+    for (const o of outcomes) {
+      if (!o.needs2nd) continue;
+      const assigned = assignments[o.index];
+      if (assigned) {
+        items[o.index].accountCode = assigned;
+        o.code = assigned;
+        o.result = `${assigned} (2nd pass — ${o.reason})`;
+      } else {
+        o.result = `BLANK (2nd pass found no match — ${o.reason})`;
+      }
     }
   }
+  // Lines with no description and no master code never get a 2nd pass.
+  for (const o of outcomes) {
+    if (!o.result) o.result = `BLANK (${o.reason})`;
+  }
+
+  const resolved = outcomes.filter((o) => o.code).length;
+  const footer = secondPassRan
+    ? `2nd pass ran on ${unresolved.length} line(s) against ${tenantAccounts.length} Xero expense accounts`
+    : 'all lines resolved from master COA';
+  const block = [
+    `┌─ supplier="${supplier}" invoice=${invoice} tenant=${tenantId} lines=${items.length} resolved=${resolved}/${items.length} accounts=${tenantAccounts.length}`,
+    ...outcomes.map((o) => `│  "${o.desc}" → ${o.result}`),
+    `└─ ${footer}`
+  ].join('\n');
+  coaDiag(block);
 }
 
 async function callGeminiBills(ocrText, model, knownOrgs = []) {
