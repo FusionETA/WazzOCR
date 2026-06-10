@@ -1748,6 +1748,12 @@ CONTEXT — Malaysian business invoices:
 	- ${hasOrgList
 	      ? 'billedTo MUST be an exact entry from the CONNECTED XERO ORGANISATIONS list below — copy it verbatim. Use "billedToVerbatim" for what the invoice actually says.'
 	      : 'Always extract the billedTo as the FULL company name as it appears in the document (keep "Sdn Bhd", "(SP)", etc.). Do NOT shorten, expand or rewrite it.'}
+	- invoiceNo = the document's main reference number, WHATEVER it is labelled:
+	  "Invoice No", "Tax Invoice No", "Bill No", "Quotation No", "Quote No", "Ref
+	  No", "Doc No", "Document No", or a bare code printed beside the title (e.g.
+	  "QUOTATION : QT260618210" → invoiceNo = "QT260618210"; "DO No: 12345" →
+	  "12345"). Copy the code exactly. Only return null if the document genuinely
+	  has no reference number anywhere.
 	- If multiple addresses/branches appear, pick the one in the BILL TO / TO /
 	  SOLD TO / INVOICE TO block, not the supplier's address.
 	- If the text contains multiple separate invoices/bills (for example different
@@ -1781,7 +1787,7 @@ CONTEXT — Malaysian business invoices:
 	      "supplier": "Vendor / supplier company name (the company sending the invoice) or null",
 	      "billedTo": ${hasOrgList ? '"EXACT name copied from the CONNECTED XERO ORGANISATIONS list below, or null if no entry fits"' : '"Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o."'},
 	      ${hasOrgList ? '"billedToVerbatim": "Original BILL TO text from the invoice (for human verification) or null",' : ''}
-	      "invoiceNo": "Invoice number or null",
+	      "invoiceNo": "The document's reference number, whatever it is labelled (Invoice/Tax Invoice/Bill/Quotation/Quote/Ref/Doc No, or a bare code by the title like QT260618210). null only if there is truly none",
 	      "date": "Date string or null",
 	      "dueDate": "Due date string or null",
 	      "currency": "MYR/USD/SGD etc, default MYR",
