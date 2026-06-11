@@ -5,3 +5,4 @@ node_modules/
 webhook.log
 gemini-diag.log
 coa-diag.log
+certs/
