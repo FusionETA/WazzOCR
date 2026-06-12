@@ -36,8 +36,9 @@
       }
       c.innerHTML = `
         <div class="page-head"><h1>${esc(data.account?data.account.name:'My account')}</h1><p>Bill automation overview</p></div>
-        <div class="card"><div class="eyebrow">Bills successfully created</div>
-          <div class="stat" style="margin-top:.4rem;"><span class="num">${data.successCount}</span><span class="unit">bills</span></div></div>
+        <div class="card"><div class="eyebrow">Bills created this month</div>
+          <div class="stat" style="margin-top:.4rem;"><span class="num">${data.successThisMonth!=null?data.successThisMonth:data.successCount}</span><span class="unit">bills</span></div>
+          <div class="muted" style="margin-top:.3rem;">${data.successCount} all-time</div></div>
         <div class="tabs">
           <button data-tab="bills" class="active" onclick="switchTab('bills')">Bills</button>
           <button data-tab="unmatched" onclick="switchTab('unmatched')">Unmatched</button>
@@ -57,7 +58,7 @@
       return `<tr id="row-${b.id}"><td class="num-cell" style="color:var(--muted)">${dt(b.created_at)}</td>
         <td>${esc(b.supplier||'-')}</td><td>${esc(b.invoice_no||'-')}</td>
         <td class="num-cell">${money(b)}</td>
-        ${withXero ? `<td>${b.xero_url?`<a href="${esc(b.xero_url)}" target="_blank" rel="noopener">Open ↗</a>`:'-'}</td>`
+        ${withXero ? `<td>${esc(b.xero_tenant_name||'—')}</td><td>${b.xero_url?`<a href="${esc(b.xero_url)}" target="_blank" rel="noopener">Open ↗</a>`:'-'}</td>`
                    : `<td><span class="muted">${esc(b.failure_reason||'-')}</span></td><td style="text-align:right;"><button class="linkbtn" onclick="openResolve(event,${b.id})">Resolve →</button></td>`}</tr>`;
     }
     const PAGE_SIZE = 15;
@@ -81,7 +82,7 @@
       const start = (cfg.page-1)*PAGE_SIZE;
       const slice = items.slice(start, start+PAGE_SIZE);
       const head = cfg.withXero
-        ? '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Xero</th>'
+        ? '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Xero org</th><th>Xero</th>'
         : '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Reason</th><th></th>';
       const pager = pages > 1 ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.82rem;color:var(--muted);">
           <span>Showing ${start+1}–${start+slice.length} of ${items.length}</span>
@@ -97,16 +98,19 @@
       e.preventDefault();
       if (!CONNECTIONS.length) { alert('No Xero organisations connected. Connect Xero under Settings first.'); return; }
       const row = document.getElementById('row-'+id); if (!row) return;
-      const opts = CONNECTIONS.map(c=>`<option value="${esc(c.xero_tenant_id||c.tenantId)}">${esc(c.tenant_name||c.tenantName||c.xero_tenant_id)}</option>`).join('');
+      const items = CONNECTIONS.map(c=>({ value:c.xero_tenant_id||c.tenantId, label:c.tenant_name||c.tenantName||c.xero_tenant_id }));
       row.innerHTML = `<td colspan="6"><div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <span class="muted">Create draft in:</span>
-        <select id="rsel-${id}" style="width:auto;min-width:220px;">${opts}</select>
+        <div id="rdrop-${id}" style="min-width:260px;"></div>
         <button class="btn btn-primary btn-sm" id="rbtn-${id}" onclick="doResolve(${id})">Create draft</button>
         <button class="linkbtn" onclick="loadPending()">Cancel</button>
         <span id="rmsg-${id}" class="muted"></span></div></td>`;
+      window.__searchDropdown('rdrop-'+id, items, { placeholder:'Choose organisation' });
     };
     window.doResolve = async (id) => {
-      const tenantId = document.getElementById('rsel-'+id).value;
+      const dd = document.getElementById('rdrop-'+id);
+      const tenantId = dd && dd.value ? dd.value() : '';
+      if (!tenantId) { document.getElementById('rmsg-'+id).textContent = 'Choose an organisation.'; return; }
       const msg = document.getElementById('rmsg-'+id); const btn = document.getElementById('rbtn-'+id);
       btn.disabled = true; msg.textContent = 'Creating…';
       try {
@@ -115,7 +119,7 @@
         msg.textContent = 'Created ✓';
         // refresh both tabs and the counter
         loadBills(); loadPending();
-        fetch('/api/me/summary').then(r=>r.json()).then(s=>{ const n=document.querySelector('.stat .num'); if(n) n.textContent=s.successCount; }).catch(()=>{});
+        fetch('/api/me/summary').then(r=>r.json()).then(s=>{ const n=document.querySelector('.stat .num'); if(n) n.textContent=(s.successThisMonth!=null?s.successThisMonth:s.successCount); }).catch(()=>{});
       } catch (e) { btn.disabled = false; msg.textContent = e.message; }
     };
     function settingsHtml(data){
@@ -160,7 +164,10 @@
         const conns = conn.connections||[];
         const cl = document.getElementById('connList');
         if (!conns.length) cl.textContent = 'None connected';
-        else cl.innerHTML = `<select style="width:auto;min-width:240px;max-width:100%;">${conns.map(x=>`<option>${esc(x.tenant_name||x.xero_tenant_id)}</option>`).join('')}</select> <span class="muted" style="margin-left:.5rem;">${conns.length} connected</span>`;
+        else {
+          cl.innerHTML = `<div id="xeroDrop" style="max-width:340px;"></div><span class="muted" style="display:inline-block;margin-top:.35rem;">${conns.length} connected</span>`;
+          window.__searchDropdown('xeroDrop', conns.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
+        }
         renderChannels(chan.channels||[]);
         document.getElementById('coaCount').textContent = '— ' + (coa.accounts||[]).length + ' codes loaded';
       } catch {}
@@ -183,13 +190,16 @@
       };
     }
     function showM(m,t,ok){ m.className='msg '+(ok?'ok':'err'); m.textContent=t; }
+    let CHAN_BY_ID = {};
     function renderChannels(channels){
       const box=document.getElementById('channelsBox'); if(!box) return;
-      box.innerHTML = channels.length ? `<table class="table"><thead><tr><th>Label</th><th>Channel ID</th><th>API key</th><th></th></tr></thead><tbody>${channels.map(c=>`<tr>
-        <td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td>
-        <td class="muted" id="key-${c.id}">${c.hasApiKey?`<span style="font-family:ui-monospace,monospace">${esc(c.apiKeyMasked)}</span> <a href="#" onclick="revealKey(event,${c.id})">Show</a>`:'<span style="color:var(--bad)">no API key</span>'}</td>
-        <td style="text-align:right;white-space:nowrap;"><a href="#" onclick="regChannel(event,${c.id})">Register webhook</a>
-        &nbsp; <a href="#" class="" style="color:var(--bad)" onclick="removeChannel(event,${c.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
+      CHAN_BY_ID = {}; channels.forEach(c=>{ CHAN_BY_ID[c.id]=c; });
+      box.innerHTML = channels.length ? `<table class="table"><tbody>${channels.map(c=>`<tr>
+        <td><strong>${esc(c.label||'(no label)')}</strong></td>
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="linkbtn" onclick="openChannelModal(${c.id})">View</button>
+          &nbsp; <a href="#" onclick="regChannel(event,${c.id})">Register webhook</a>
+          &nbsp; <a href="#" style="color:var(--bad)" onclick="removeChannel(event,${c.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">No channels yet.</div>';
     }
     window.switchTab = switchTab;
@@ -197,15 +207,50 @@
       try{ const r=await fetch('/api/me/channels/'+id+'/register-webhook',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); showM(m,'Webhook registered with Wazzup ✓',true); }
       catch(err){ showM(m,err.message,false); } };
     window.removeChannel = async (e,id)=>{ e.preventDefault(); try{ await fetch('/api/me/channels/'+id,{method:'DELETE'}); wireSettings(); }catch(err){ alert(err.message); } };
-    window.revealKey = async (e,id)=>{ e.preventDefault();
-      const cell=document.getElementById('key-'+id); if(!cell) return;
+
+    // ── Channel details modal ──
+    window.openChannelModal = (id) => {
+      const c = CHAN_BY_ID[id]; if(!c) return;
+      openModal('Channel — ' + esc(c.label||'(no label)'), `
+        <div class="kv"><div class="k">Channel ID</div><div style="font-family:ui-monospace,monospace;word-break:break-all;">${esc(c.channel_id)} &nbsp;<a href="#" onclick="copyText(event,'${esc(c.channel_id)}')">Copy</a></div></div>
+        <div class="kv"><div class="k">API key</div><div id="modalKey" style="font-family:ui-monospace,monospace;word-break:break-all;">${c.hasApiKey?`${esc(c.apiKeyMasked)} &nbsp;<a href="#" onclick="revealModalKey(event,${id})">Reveal</a>`:'<span style="color:var(--bad)">no API key</span>'}</div></div>`);
+    };
+    window.revealModalKey = async (e,id)=>{ e.preventDefault();
       try{ const r=await fetch('/api/me/channels/'+id+'/api-key'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
-        cell.dataset.key=d.apiKey;
-        cell.innerHTML=`<span style="font-family:ui-monospace,monospace">${esc(d.apiKey)}</span> <a href="#" onclick="copyKey(event,${id})">Copy</a>`;
+        document.getElementById('modalKey').innerHTML = `${esc(d.apiKey)} &nbsp;<a href="#" onclick="copyText(event,'${esc(d.apiKey)}')">Copy</a>`;
       }catch(err){ alert(err.message); } };
-    window.copyKey = (e,id)=>{ e.preventDefault(); const cell=document.getElementById('key-'+id); const a=e.target;
-      const k=cell&&cell.dataset.key||''; if(navigator.clipboard) navigator.clipboard.writeText(k);
-      const t=a.textContent; a.textContent='Copied ✓'; setTimeout(()=>a.textContent=t,1200); };
+    window.copyText = (e,t)=>{ e.preventDefault(); if(navigator.clipboard) navigator.clipboard.writeText(t); const a=e.target; const o=a.textContent; a.textContent='Copied ✓'; setTimeout(()=>a.textContent=o,1200); };
+    function openModal(title, bodyHtml){
+      let m=document.getElementById('appModal'); if(!m){ m=document.createElement('div'); m.id='appModal'; document.body.appendChild(m); }
+      m.style.cssText='position:fixed;inset:0;z-index:2000;background:rgba(15,27,45,.45);display:flex;align-items:center;justify-content:center;padding:1rem;';
+      m.innerHTML=`<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;box-shadow:0 24px 60px rgba(8,16,45,.3);overflow:hidden;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:1rem 1.25rem;border-bottom:1px solid var(--line);"><strong>${title}</strong><button class="linkbtn" style="font-size:1.1rem;" onclick="closeModal()">✕</button></div>
+        <div style="padding:1.25rem;">${bodyHtml}</div></div>`;
+      m.onclick=(ev)=>{ if(ev.target===m) closeModal(); };
+    }
+    window.closeModal=()=>{ const m=document.getElementById('appModal'); if(m) m.remove(); };
+
+    // ── Reusable searchable dropdown ── items:[{value,label}]
+    function searchDropdown(mount, items, opts){
+      opts=opts||{}; const el=typeof mount==='string'?document.getElementById(mount):mount; if(!el) return null;
+      let selected = opts.selected || (items[0]&&items[0].value) || '';
+      el.className='sdrop';
+      function labelOf(v){ const it=items.find(i=>i.value===v); return it?it.label:(opts.placeholder||'Select…'); }
+      el.innerHTML=`<button type="button" class="sdrop-btn"><span class="sdrop-cur">${esc(labelOf(selected))}</span><span class="sdrop-caret">▾</span></button>
+        <div class="sdrop-panel"><input class="sdrop-search" placeholder="Search…"><div class="sdrop-list"></div></div>`;
+      const btn=el.querySelector('.sdrop-btn'), panel=el.querySelector('.sdrop-panel'), search=el.querySelector('.sdrop-search'), list=el.querySelector('.sdrop-list'), cur=el.querySelector('.sdrop-cur');
+      function draw(q){ q=(q||'').toLowerCase(); const f=items.filter(i=>i.label.toLowerCase().includes(q));
+        list.innerHTML=f.length?f.map(i=>`<div class="sdrop-opt${i.value===selected?' sel':''}" data-v="${esc(i.value)}">${esc(i.label)}</div>`).join(''):'<div class="sdrop-empty">No matches</div>';
+        list.querySelectorAll('.sdrop-opt').forEach(o=>o.onclick=()=>{ selected=o.dataset.v; cur.textContent=o.textContent; closeP(); if(opts.onSelect)opts.onSelect(selected,o.textContent); }); }
+      function openP(){ panel.classList.add('open'); search.value=''; draw(''); search.focus(); document.addEventListener('click',outside); }
+      function closeP(){ panel.classList.remove('open'); document.removeEventListener('click',outside); }
+      function outside(ev){ if(!el.contains(ev.target)) closeP(); }
+      btn.onclick=(e)=>{ e.stopPropagation(); panel.classList.contains('open')?closeP():openP(); };
+      search.oninput=()=>draw(search.value);
+      el.value=()=>selected;
+      return el;
+    }
+    window.__searchDropdown = searchDropdown;
 
     function showToast(text, ok){
       const d=document.createElement('div');

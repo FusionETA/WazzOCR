@@ -31,13 +31,17 @@ router.get('/summary', async (req, res) => {
     });
   }
   const row = await db.getOne(
-    "SELECT COUNT(*) AS n FROM bills WHERE account_id = ? AND status = 'success'",
+    `SELECT
+        COUNT(*) AS total,
+        SUM(created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')) AS this_month
+     FROM bills WHERE account_id = ? AND status = 'success'`,
     [u.account_id]
   );
   res.json({
     user: { id: u.id, email: u.email, name: u.name, isSuperAdmin: false },
     account: req.account ? { id: req.account.id, name: req.account.name } : null,
-    successCount: row ? Number(row.n) : 0
+    successCount: row ? Number(row.total) : 0,
+    successThisMonth: row ? Number(row.this_month || 0) : 0
   });
 });
 

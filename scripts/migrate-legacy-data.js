@@ -113,10 +113,10 @@ const asDate = (iso) => { const d = new Date(iso); return isNaN(d) ? new Date() 
     let nC = 0, nP = 0;
     for (const r of (Array.isArray(created) ? created : [])) {
       await db.execute(
-        `INSERT INTO bills (account_id, status, supplier, invoice_no, total, currency, xero_invoice_id, xero_url, source, created_at)
-         VALUES (?, 'success', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO bills (account_id, status, supplier, invoice_no, total, currency, xero_invoice_id, xero_url, xero_tenant_name, source, created_at)
+         VALUES (?, 'success', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [accountId, r.supplier || null, r.invoiceNo || r.invoiceNumber || null, r.total ?? null,
-         r.currency || null, r.invoiceId || null, r.xeroUrl || null, r.source || 'whatsapp', asDate(r.createdAt)]
+         r.currency || null, r.invoiceId || null, r.xeroUrl || null, r.tenantName || null, r.source || 'whatsapp', asDate(r.createdAt)]
       );
       nC++;
     }

@@ -132,3 +132,24 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .links { margin-top:1.25rem; text-align:center; font-size:.85rem; }
 
 @media (max-width:600px){ .grid2 { grid-template-columns:1fr; } .kv { flex-direction:column; gap:.15rem; } .kv .k { min-width:0; } }
+
+/* ── Searchable dropdown ── */
+.sdrop { position:relative; display:inline-block; width:100%; }
+.sdrop-btn { display:flex; align-items:center; justify-content:space-between; gap:.5rem; width:100%;
+  padding:.55rem .8rem; border:1px solid var(--line); border-radius:var(--r-sm); background:#fff;
+  font-family:var(--font); font-size:.9rem; color:var(--text); cursor:pointer; text-align:left; }
+.sdrop-btn:hover { border-color:#cbd5e1; }
+.sdrop-cur { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sdrop-caret { color:var(--muted); flex-shrink:0; }
+.sdrop-panel { position:absolute; z-index:30; top:calc(100% + 4px); left:0; right:0; display:none;
+  background:#fff; border:1px solid var(--line); border-radius:var(--r-sm); box-shadow:var(--shadow);
+  overflow:hidden; }
+.sdrop-panel.open { display:block; }
+.sdrop-search { width:100%; border:none; border-bottom:1px solid var(--line); border-radius:0;
+  padding:.6rem .8rem; font-size:.88rem; outline:none; }
+.sdrop-search:focus { box-shadow:none; border-bottom-color:var(--navy); }
+.sdrop-list { max-height:260px; overflow-y:auto; }
+.sdrop-opt { padding:.55rem .8rem; font-size:.88rem; cursor:pointer; }
+.sdrop-opt:hover { background:#F4F6FB; }
+.sdrop-opt.sel { background:#EEF2FF; color:var(--navy); font-weight:600; }
+.sdrop-empty { padding:.7rem .8rem; color:var(--muted); font-size:.85rem; }

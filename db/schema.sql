@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS bills (
   document_type      VARCHAR(32),
   xero_invoice_id    VARCHAR(64),
   xero_url           VARCHAR(512),
+  xero_tenant_name   VARCHAR(255),           -- which Xero org the bill was created in
   source             VARCHAR(32),
   payload            JSON NULL,              -- full bill data, kept for pending bills so they can be resolved
   created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,

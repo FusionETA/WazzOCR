@@ -2999,11 +2999,12 @@ async function logBillOutcomes({ accountId, channelDbId, chatId, source, outcome
   for (const o of outcomes) {
     try {
       const b = o.bill || {};
-      let status = 'pending', failureReason = null, xeroInvoiceId = null, xeroUrl = null;
+      let status = 'pending', failureReason = null, xeroInvoiceId = null, xeroUrl = null, xeroTenantName = null;
       if (o.status === 'created') {
         status = 'success';
         xeroInvoiceId = (o.xero && o.xero.invoiceId) || null;
         xeroUrl = (o.xero && (o.xero.xeroUrl || o.xero.url)) || null;
+        xeroTenantName = (o.xero && o.xero.tenantName) || (o.matchedTenant && o.matchedTenant.tenantName) || null;
       } else if (o.status === 'xero-error') {
         status = 'failed';
         failureReason = String(o.xeroError || 'Xero error').slice(0, 500);
@@ -3026,6 +3027,7 @@ async function logBillOutcomes({ accountId, channelDbId, chatId, source, outcome
         documentType: b.documentType || null,
         xeroInvoiceId,
         xeroUrl,
+        xeroTenantName,
         source: source || 'whatsapp',
         // Keep the full bill data for pending bills so they can be resolved
         // later from the dashboard (pick org → create draft).
@@ -3418,7 +3420,7 @@ app.post('/api/me/bills/:id/resolve', _xeroAuthMw.attachUser, _xeroAuthMw.requir
 
     const result = await xeroAccountCtx.run({ accountId }, () => createDraftBill({ bill: row.payload, tenantId }));
     await billsModel.markResolved(row.id, accountId, {
-      xeroInvoiceId: result.invoiceId, xeroUrl: result.url, xeroConnectionId: conn.id
+      xeroInvoiceId: result.invoiceId, xeroUrl: result.url, xeroConnectionId: conn.id, xeroTenantName: conn.tenant_name
     });
     res.json({ ok: true, invoiceId: result.invoiceId, url: result.url });
   } catch (err) {
