@@ -11,7 +11,7 @@
     <span class="brand"><span class="logo">FE</span> WazzOCR <span class="badge neutral" style="margin-left:.4rem;">Admin</span></span>
     <div class="right"><span class="who" id="whoLabel"></span><button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button></div>
   </div>
-  <div class="container wide" id="app"><div class="card">Loading…</div></div>
+  <div class="container" id="app"><div class="card">Loading…</div></div>
   <script>
   const app = document.getElementById('app');
   const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
@@ -136,6 +136,28 @@
   }
   window.closeModal=()=>{ const m=document.getElementById('appModal'); if(m) m.remove(); };
 
+  // ── Reusable searchable dropdown ── items:[{value,label}]; el.value() → selected
+  function searchDropdown(mount, items, opts){
+    opts=opts||{}; const el=typeof mount==='string'?document.getElementById(mount):mount; if(!el) return null;
+    let selected = opts.selected || (items[0]&&items[0].value) || '';
+    el.className='sdrop';
+    function labelOf(v){ const it=items.find(i=>i.value===v); return it?it.label:(opts.placeholder||'Select…'); }
+    el.innerHTML=`<button type="button" class="sdrop-btn"><span class="sdrop-cur">${esc(labelOf(selected))}</span><span class="sdrop-caret">▾</span></button>
+      <div class="sdrop-panel"><input class="sdrop-search" placeholder="Search…"><div class="sdrop-list"></div></div>`;
+    const btn=el.querySelector('.sdrop-btn'), panel=el.querySelector('.sdrop-panel'), search=el.querySelector('.sdrop-search'), list=el.querySelector('.sdrop-list'), cur=el.querySelector('.sdrop-cur');
+    function draw(q){ q=(q||'').toLowerCase(); const f=items.filter(i=>i.label.toLowerCase().includes(q));
+      list.innerHTML=f.length?f.map(i=>`<div class="sdrop-opt${i.value===selected?' sel':''}" data-v="${esc(i.value)}">${esc(i.label)}</div>`).join(''):'<div class="sdrop-empty">No matches</div>';
+      list.querySelectorAll('.sdrop-opt').forEach(o=>o.onclick=()=>{ selected=o.dataset.v; cur.textContent=o.textContent; closeP(); if(opts.onSelect)opts.onSelect(selected,o.textContent); }); }
+    function openP(){ panel.classList.add('open'); search.value=''; draw(''); search.focus(); document.addEventListener('click',outside); }
+    function closeP(){ panel.classList.remove('open'); document.removeEventListener('click',outside); }
+    function outside(ev){ if(!el.contains(ev.target)) closeP(); }
+    btn.onclick=(e)=>{ e.stopPropagation(); panel.classList.contains('open')?closeP():openP(); };
+    search.oninput=()=>draw(search.value);
+    el.value=()=>selected;
+    return el;
+  }
+  window.__searchDropdown = searchDropdown;
+
   window.createAccount = async () => {
     const name = document.getElementById('newAcctName').value.trim(); const m = document.getElementById('createMsg');
     if (!name) { m.className='msg err'; m.textContent='Enter a name.'; return; }
@@ -194,36 +216,54 @@
       </div>
 
       <div class="panel" id="ap-connections">
-        <div class="card"><h2>Wazzup channels</h2>
-          <table class="table"><tbody>${(d.channels||[]).map(c=>`<tr><td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td><td><span class="badge ${c.status==='active'?'success':'skipped'}">${esc(c.status)}</span></td>
-            <td style="text-align:right;white-space:nowrap;"><button class="linkbtn" onclick="registerWebhook(${id},${c.id})">Register webhook</button> &nbsp; <button class="linkbtn danger" onclick="delChannel(${id},${c.id})">Remove</button></td></tr>`).join('')||'<tr><td class="muted">No channels</td></tr>'}</tbody></table>
-          <div class="msg" id="regMsg"></div>
-          <h3>Add channel</h3>
-          <div class="grid2"><div class="field"><label>Channel ID</label><input id="chId"></div><div class="field"><label>Label</label><input id="chLabel"></div></div>
-          <div class="field"><label>API key (optional)</label><input id="chKey"></div>
-          <button class="btn btn-primary" onclick="addChannel(${id})">Add channel</button><div class="msg" id="chMsg"></div></div>
+        <div class="settings-grid">
+          <div class="col-left">
+            <div class="card"><h2>Wazzup channels</h2>
+              <table class="table"><tbody>${(d.channels||[]).map(c=>`<tr><td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td><td><span class="badge ${c.status==='active'?'success':'skipped'}">${esc(c.status)}</span></td>
+                <td style="text-align:right;white-space:nowrap;"><button class="linkbtn" onclick="registerWebhook(${id},${c.id})">Register webhook</button> &nbsp; <button class="linkbtn danger" onclick="delChannel(${id},${c.id})">Remove</button></td></tr>`).join('')||'<tr><td class="muted">No channels</td></tr>'}</tbody></table>
+              <div class="msg" id="regMsg"></div>
+              <h3>Add channel</h3>
+              <div class="grid2"><div class="field"><label>Channel ID</label><input id="chId"></div><div class="field"><label>Label</label><input id="chLabel"></div></div>
+              <div class="field"><label>API key (optional)</label><input id="chKey"></div>
+              <button class="btn btn-primary" onclick="addChannel(${id})">Add channel</button><div class="msg" id="chMsg"></div></div>
+          </div>
+          <div class="col-right">
+            <div class="card"><h2>Xero organisations</h2>
+              ${(d.connections||[]).length?`<div id="xeroDrop" style="max-width:340px;"></div>
+                <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.45rem;">
+                  <span class="muted">${d.connections.length} connected</span>
+                  <button class="linkbtn danger" type="button" id="xeroDiscBtn">Disconnect selected</button></div>
+                <div class="msg" id="xeroDiscMsg"></div>`:'<p class="muted">None connected yet</p>'}
+              <a class="btn btn-primary" style="margin-top:.7rem;" href="/admin/accounts/${id}/xero/connect">＋ Connect Xero</a>
+              <p class="muted" style="margin-top:.5rem;">Opens Xero's consent screen — you'll need this account's Xero login.</p></div>
 
-        <div class="card"><h2>Xero organisations</h2>
-          <table class="table"><tbody>${(d.connections||[]).map(x=>`<tr><td>${esc(x.tenant_name||x.xero_tenant_id)}</td><td style="text-align:right;white-space:nowrap;"><span class="badge ${x.status==='active'?'success':'failed'}">${esc(x.status)}</span>${x.needs_reconnect?' <span class="badge failed">reconnect</span>':''} &nbsp; <button class="linkbtn danger" onclick="disconnectXero(${id},${x.id})">Disconnect</button></td></tr>`).join('')||'<tr><td class="muted">None connected yet</td></tr>'}</tbody></table>
-          <a class="btn btn-primary" style="margin-top:.7rem;" href="/admin/accounts/${id}/xero/connect">＋ Connect Xero</a>
-          <p class="muted" style="margin-top:.5rem;">Opens Xero's consent screen — you'll need this account's Xero login.</p></div>
-
-        <div class="card"><h2>Chart of accounts</h2>
-          <p class="muted">Upload a CSV with columns: code, name, category. Replaces the current ${d.coaCount} codes.</p>
-          <label class="file-drop" id="coaDrop">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <span class="fd-text" id="coaFileText">Choose a CSV file or drag it here</span>
-            <input type="file" id="coaFile" accept=".csv,text/csv" hidden>
-          </label>
-          <div style="margin-top:.6rem;"><button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button></div><div class="msg" id="coaMsg"></div></div>
+            <div class="card"><h2>Chart of accounts</h2>
+              <p class="muted">Upload a CSV with columns: code, name, category. Replaces the current ${d.coaCount} codes.</p>
+              <label class="file-drop" id="coaDrop">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span class="fd-text" id="coaFileText">Choose a CSV file or drag it here</span>
+                <input type="file" id="coaFile" accept=".csv,text/csv" hidden>
+              </label>
+              <div style="margin-top:.6rem;"><button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button></div><div class="msg" id="coaMsg"></div></div>
+          </div>
+        </div>
       </div>`;
     wireFileDrop('coaDrop','coaFile','coaFileText','Choose a CSV file or drag it here');
+    if ((d.connections||[]).length) {
+      window.__searchDropdown('xeroDrop', d.connections.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
+      document.getElementById('xeroDiscBtn').onclick = () => disconnectSelectedXero(id);
+    }
   };
-  window.disconnectXero = async (id, cid) => {
-    const c = (window.CUR_CONNS||[]).find(x=>x.id===cid);
-    const name = c ? (c.tenant_name||c.xero_tenant_id) : 'this organisation';
+  window.disconnectSelectedXero = async (id) => {
+    const dd=document.getElementById('xeroDrop'); const tid = dd && dd.value ? dd.value() : '';
+    const m=document.getElementById('xeroDiscMsg');
+    const conn=(window.CUR_CONNS||[]).find(c=>c.xero_tenant_id===tid);
+    if(!conn){ m.className='msg err'; m.style.display='block'; m.textContent='Choose an organisation to disconnect first.'; return; }
+    const name=conn.tenant_name||conn.xero_tenant_id;
     if(!confirm('Disconnect "'+name+'" from Xero?\n\nThis revokes WazzOCR\'s access to that organisation at Xero, then removes it here.')) return;
-    try { await api('DELETE','/admin/accounts/'+id+'/connections/'+cid); openAccount(id); } catch(e){ alert(e.message); }
+    m.className='msg'; m.style.display='block'; m.textContent='Disconnecting…';
+    try { await api('DELETE','/admin/accounts/'+id+'/connections/'+conn.id); openAccount(id); }
+    catch(e){ m.className='msg err'; m.textContent=e.message; }
   };
   // Reusable styled file picker (click or drag-drop), shows the chosen filename.
   function wireFileDrop(dropId, inputId, textId, placeholder){
