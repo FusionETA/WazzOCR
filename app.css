@@ -120,8 +120,8 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .auth-bg { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1.5rem;
   background:radial-gradient(1100px 560px at 50% -10%, rgba(255,107,53,.18), transparent), var(--grad); }
 .auth-card { background:#fff; border-radius:18px; padding:2.25rem; width:100%; max-width:392px; box-shadow:var(--shadow-lg); }
-.auth-card h1 { margin:.75rem 0 .25rem; font-size:1.45rem; }
-.auth-card .sub { margin:0 0 1.5rem; color:var(--muted); font-size:.9rem; }
+.auth-card h1 { margin:.75rem 0 .25rem; font-size:1.45rem; text-align:center; }
+.auth-card .sub { margin:0 0 1.5rem; color:var(--muted); font-size:.9rem; text-align:center; }
 .google-btn { display:flex; align-items:center; justify-content:center; gap:.6rem; width:100%; padding:.72rem;
   border:1px solid var(--line); border-radius:var(--r-sm); background:#fff; color:var(--ink); font-weight:600; font-size:.9rem; cursor:pointer; }
 .google-btn:hover { background:#F8FAFD; text-decoration:none; }
@@ -200,5 +200,7 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .stat-tile.warn { background:var(--warn-bg);border-color:#F5E2BF; } .stat-tile.warn .t-num { color:var(--warn); }
 
 /* ── FusionETA brand logo image ── */
-.brand-logo { height:26px; width:auto; display:block; }
-.auth-logo  { height:40px; width:auto; display:block; margin-bottom:.5rem; }
+.brand-logo { height:30px; width:auto; display:block; }
+.brand-divider { width:1px; height:24px; background:var(--line); flex-shrink:0; }
+.brand-name { font-family:var(--head); font-weight:800; color:var(--navy); }
+.auth-logo  { height:42px; width:auto; display:block; margin:0 auto .75rem; }
