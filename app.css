@@ -200,3 +200,7 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .stat-tile.ok   { background:var(--ok-bg);  border-color:#CDEED8; } .stat-tile.ok .t-num   { color:var(--ok); }
 .stat-tile.bad  { background:var(--bad-bg); border-color:#F6D4D0; } .stat-tile.bad .t-num  { color:var(--bad); }
 .stat-tile.warn { background:var(--warn-bg);border-color:#F5E2BF; } .stat-tile.warn .t-num { color:var(--warn); }
+
+/* ── FusionETA brand logo image ── */
+.brand-logo { height:26px; width:auto; display:block; }
+.auth-logo  { height:40px; width:auto; display:block; margin-bottom:.5rem; }
