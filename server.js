@@ -97,6 +97,10 @@ function loadMasterCoa() {
 }
 loadMasterCoa();
 
+// Account-agnostic base extraction prompt. Used as the fallback when the DB has
+// no general prompt configured; the admin-editable DB value overrides it.
+const { DEFAULT_GENERAL_PROMPT } = require('./lib/defaultPrompts');
+
 function ensureConfig() {
   const missing = ['XERO_CLIENT_ID', 'XERO_CLIENT_SECRET'].filter((key) => !process.env[key]);
   if (missing.length) {
@@ -1665,204 +1669,111 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
 
 // ── AI bill analysis ────────────────────────────────────────────────────────
 
-function buildBillPrompt(ocrText, knownOrgs = [], { vision = false } = {}) {
+async function resolveAiPrompts() {
+  // The general (base) prompt is admin-editable in the DB; the per-account
+  // add-on lives on the account. Account id comes from the ambient Xero context
+  // (set by runWithCtx in the webhook path). Both fall back to empty/default.
+  let generalPrompt = '';
+  let accountAddon = '';
+  try {
+    generalPrompt = (await require('./models/appSettings').get('general_ai_prompt', '')) || '';
+  } catch (err) {
+    console.error('[prompt] could not load general prompt from DB:', err.message);
+  }
+  try {
+    const store = xeroAccountCtx.getStore();
+    const accountId = store && store.accountId;
+    if (accountId) {
+      const acc = await require('./models/accounts').getById(accountId);
+      accountAddon = (acc && acc.ai_prompt_addon) || '';
+    }
+  } catch (err) {
+    console.error('[prompt] could not load account prompt add-on from DB:', err.message);
+  }
+  return { generalPrompt, accountAddon };
+}
+
+// Composes the final extraction prompt from:
+//   1. the admin-editable general instructions (DB → app_settings, or the
+//      shipped DEFAULT_GENERAL_PROMPT fallback),
+//   2. the dynamic connected-Xero-org list (built per request),
+//   3. the per-account add-on rules (DB → accounts.ai_prompt_addon),
+//   4. the dynamic master chart of accounts,
+//   5. the JSON output schema (kept in code — the parser depends on its shape).
+function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPrompt = '', accountAddon = '' } = {}) {
   const hasOrgList = Array.isArray(knownOrgs) && knownOrgs.length > 0;
-
-  const orgListBlock = hasOrgList
-    ? `
-
-─── CONNECTED XERO ORGANISATIONS ───
-The billedTo MUST be one of the organisations below. Copy the name VERBATIM
-from this list (same spelling, spacing, capitalisation, punctuation, "Sdn Bhd",
-parentheses — everything). Do not paraphrase, do not strip "fka" suffixes,
-do not lowercase.
-
-${knownOrgs.map((name, i) => `${i + 1}. ${name}`).join('\n')}
-
-Matching rules — read carefully:
-0. ★ "c/o" (care of) rule — CRITICAL:
-   The actual billed entity is ALWAYS the company BEFORE "c/o" / "C/O" / "C\\O".
-   Drop everything from "c/o" onwards. The "c/o" target is just an address
-   forwarder, NOT the bill recipient.
-   Example: "AYU BORNEO (SP) SDN BHD C/O EMJ RENOVATION SDN BHD"
-            → billedTo = "Ayu Borneo (SP) Sdn Bhd"   ← match this in the list
-            → billedToVerbatim = "AYU BORNEO (SP) SDN BHD C/O EMJ RENOVATION SDN BHD"
-   Example: "Nova Spa & Wellness Sdn Bhd c/o Universe Wellness HQ"
-            → billedTo = "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
-            → billedToVerbatim = "Nova Spa & Wellness Sdn Bhd c/o Universe Wellness HQ"
-1. Parenthetical abbreviations identify the BRANCH. Match them strictly:
-     "(SP)" = Sri Petaling     "(KL)" = Kuala Lumpur
-     "(PJ)" = Petaling Jaya    "(JB)" = Johor Bahru
-     "(KK)" = Kota Kinabalu    "(KCH)" = Kuching
-     "(KJ)" = Kelana Jaya      "(SJ)" = Subang Jaya
-     "(AP)" = Ampang           "(BLK)" = Bandar Bukit Tinggi/relevant branch
-     "(BSP)" = Bandar Sri Permaisuri
-   If the invoice says "Ayu Borneo Sri Petaling" → return "Ayu Borneo (SP) Sdn Bhd".
-   If the invoice says "Ayu Borneo SP" → return "Ayu Borneo (SP) Sdn Bhd".
-2. "fka" means "formerly known as", and "SB" is the short form of "Sdn Bhd".
-   For any entry of the form  "<CURRENT NAME> [SB|Sdn Bhd] fka <OLD NAME>":
-     • <CURRENT NAME> is the company's NEW / current legal name.
-     • <OLD NAME>     is what it used to be called.
-     • "SB" and "Sdn Bhd" are interchangeable — treat them as equal.
-   So  "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
-   means the company is CURRENTLY called "Borneo Oasis Wellness Sdn Bhd"
-   and was FORMERLY called "Ayu Borneo (VC3) Sdn Bhd".
-
-   The invoice may use EITHER the current name OR the old name. Match accordingly:
-   ★ Invoice uses the CURRENT name:
-       Example: invoice says "Borneo Oasis Wellness Sdn Bhd"
-                → return "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
-                  (because "Borneo Oasis Wellness Sdn Bhd" == the part before "fka",
-                   with SB expanded to Sdn Bhd)
-       Example: invoice says "Ayu Borneo Nova Sdn Bhd"
-                → return "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
-   ★ Invoice uses the OLD name:
-       Example: invoice says "Ayu Borneo (VC3) Sdn Bhd"
-                → return "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd"
-       Example: invoice says "Nova Spa & Wellness Sdn Bhd"
-                → return "Ayu Borneo Nova SB fka Nova Spa & Wellness Sdn Bhd"
-
-   ★ CRITICAL — prefix-collision warning:
-   Two listed orgs may share a prefix in their CURRENT name but be DIFFERENT
-   companies. Do NOT pick the longer one when the invoice matches the shorter
-   current name. Examples in this org list:
-     • "Borneo Oasis Wellness SB fka …(VC3)…"     ← current = Borneo Oasis Wellness Sdn Bhd
-     • "Borneo Oasis Wellness & Spa SB fka …(VC4)…" ← current = Borneo Oasis Wellness & Spa Sdn Bhd
-   If the invoice says exactly "Borneo Oasis Wellness Sdn Bhd" (no "& Spa"),
-   it is the VC3 entity, NOT the VC4 "& Spa" entity. Only pick "& Spa" when
-   the invoice itself contains "& Spa" or "and Spa".
-   When in doubt between two prefix-colliding entries and the invoice text
-   doesn't contain the disambiguator, return billedTo = null and explain
-   in "notes" so a human can pick.
-3. If the BILL TO field is blank/ambiguous, infer from the delivery address,
-   site name, or branch hints elsewhere in the invoice (e.g. "site: Sri Petaling"
-   → "(SP) Sdn Bhd"; "shipped to Nova Spa" → the Nova entry above).
-4. Plain "Ayu Borneo Sdn Bhd" with NO branch indicator → entry #5 only.
-5. If two entries could plausibly match, prefer the one whose location matches
-   the invoice's delivery address or branch banner.
-6. If genuinely none of the listed orgs fit, set billedTo to null AND put your
-   reasoning in "notes" (e.g. "Bill says 'XYZ Trading' which is not a connected
-   org — manual review needed").
-
-Also return a "billedToVerbatim" field with the original BILL TO text exactly
-as it appears on the invoice, so a human can sanity-check the mapping.`
-    : '';
-
   const hasCoa = Array.isArray(MASTER_EXPENSE_ACCOUNTS) && MASTER_EXPENSE_ACCOUNTS.length > 0;
-  const coaBlock = hasCoa
-    ? `
 
-─── EXPENSE / COST ACCOUNTS (Chart of Accounts) ───
-For EACH line item, set "accountCode" to the code of the single best-matching
-account below, based on what the line item is for. Copy the code VERBATIM
-(e.g. "926-0000"). Rules:
-- Match on meaning, not exact words. Examples: electricity/water/TNB/indah water
-  → "926-0000" Utilities Expenses; internet/phone/Unifi/Maxis → "934-0000"
-  Telephone & Internet Charges; cleaning supplies/toiletries → "930-0000";
-  food/drinks/groceries → "931-0000"; stock/products bought for resale →
-  "610-0000" Purchases; rent → "915-0000"; repairs/servicing → "925-0000".
-- Only use codes from this list. Do NOT invent codes.
-- If no account is a sensible fit for a line item, set "accountCode" to null.
-  Do not force a poor match.
+  // 1. Base instructions — DB value wins; fall back to the shipped default so
+  //    extraction never runs prompt-less if the DB hasn't been seeded.
+  const base = (generalPrompt && generalPrompt.trim()) ? generalPrompt.trim() : DEFAULT_GENERAL_PROMPT;
 
-${MASTER_EXPENSE_ACCOUNTS.map((a) => `${a.code}  ${a.name}`).join('\n')}`
+  // 2. Connected Xero organisations (dynamic data the AI matches billedTo to).
+  const orgListBlock = hasOrgList
+    ? '\n\n─── CONNECTED XERO ORGANISATIONS ───\n'
+      + 'The billedTo MUST be one of the organisations below. Copy the name VERBATIM\n'
+      + 'from this list (same spelling, spacing, capitalisation, punctuation, "Sdn Bhd",\n'
+      + 'parentheses — everything). Do not paraphrase, do not strip "fka" suffixes, do\n'
+      + 'not lowercase.\n\n'
+      + knownOrgs.map((name, i) => (i + 1) + '. ' + name).join('\n')
     : '';
 
-  return `You are an expert at reading bills, receipts and invoices${vision ? ' directly from a photographed or scanned image/PDF' : ' from OCR-extracted text'}.
-${vision ? `
-VISION READING RULES — CRITICAL:
-- Read the document by looking at it. Use the visual layout — column alignment,
-  row grouping and table borders — to decide which numbers belong together.
-- Numbers may be split across lines or columns. A figure like "5,787.08" may show
-  the ringgit part ("5,787") in one cell/row and the cents ("08") in a separate
-  line or the adjacent cents column. Recombine them into one value (5787.08).
-- Align each amount to its correct line item by following the row, not by reading
-  text top-to-bottom. Do not pair a description with a number from a different row.
-- Handwriting and faint print are common. If a digit is genuinely unreadable,
-  prefer null over guessing, and explain in "notes".
-` : ''}
-CONTEXT — Malaysian business invoices:
-- Most billed entities are Malaysian companies. Common legal suffixes:
-    * "Sdn Bhd" (Sendirian Berhad) — private limited
-    * "Bhd" (Berhad) — public limited
-    * "PLT" — limited liability partnership
-    * "Enterprise" / "Trading" — sole proprietor / partnership
-- "c/o" (care of) means the bill is forwarded through someone else.
-  The actual BILLED ENTITY is the company BEFORE "c/o" — extract only that.
-  Example: "Ayu Borneo Sdn Bhd c/o XYZ Office" → billedTo = "Ayu Borneo Sdn Bhd"
-- Place names are often abbreviated in parentheses (these abbreviations
-  matter — preserve them as-is so they can be reconciled with the
-  organisation list). Examples:
-    * (SP) = Sri Petaling     * (KL) = Kuala Lumpur
-    * (PJ) = Petaling Jaya    * (JB) = Johor Bahru
-    * (KK) = Kota Kinabalu    * (KCH) = Kuching
-- Default currency is MYR. Common tax label is "SST" (Sales & Service Tax,
-  typically 6% or 8%). Older invoices may say "GST".
-- Dates may be formatted DD/MM/YYYY or DD-MM-YYYY (day first, NOT US format).
+  // 3. Per-account add-on rules (account-specific name/branch matching, etc.).
+  const addonBlock = (accountAddon && accountAddon.trim())
+    ? '\n\n─── ACCOUNT-SPECIFIC RULES ───\n' + accountAddon.trim()
+    : '';
 
-	EXTRACTION RULES:
-	- ${hasOrgList
-	      ? 'billedTo MUST be an exact entry from the CONNECTED XERO ORGANISATIONS list below — copy it verbatim. Use "billedToVerbatim" for what the invoice actually says.'
-	      : 'Always extract the billedTo as the FULL company name as it appears in the document (keep "Sdn Bhd", "(SP)", etc.). Do NOT shorten, expand or rewrite it.'}
-	- invoiceNo = the document's main reference number, WHATEVER it is labelled:
-	  "Invoice No", "Tax Invoice No", "Bill No", "Quotation No", "Quote No", "Ref
-	  No", "Doc No", "Document No", or a bare code printed beside the title (e.g.
-	  "QUOTATION : QT260618210" → invoiceNo = "QT260618210"; "DO No: 12345" →
-	  "12345"). Copy the code exactly. Only return null if the document genuinely
-	  has no reference number anywhere.
-	- If multiple addresses/branches appear, pick the one in the BILL TO / TO /
-	  SOLD TO / INVOICE TO block, not the supplier's address.
-	- If the text contains multiple separate invoices/bills (for example different
-	  invoice numbers, separate page headers, or "Page 1 of 1" repeated), return
-	  one object per invoice in "bills". Do NOT merge their line items or totals.
-	- Preserve tax per line item. If a document has tax codes such as SV-8, SST-8,
-	  SR-8, GST, or "Service Tax @ 8% on 220.00", set taxRate/taxAmount only on
-	  the taxable line items. Lines outside the taxable base should have taxRate 0
-	  and taxAmount 0.
-	- supplier = the business that ISSUED this receipt/invoice (the one being paid),
-	  NOT the customer. On handwritten receipts and order pads the supplier is often
-	  NOT in a labelled field — look at the letterhead, logo, rubber stamp, footer,
-	  or faint background watermark, including any company registration number like
-	  "(123456-A)" or "(002684562-T)". Extract that business name (e.g. a watermark
-	  reading "MF Be Beauty" → supplier = "MF Be Beauty"). Only return null if no
-	  issuing business name appears anywhere on the document.
-	- Do NOT add discounts as line items. List only the actual goods/services in
-	  lineItems. Instead, report the figures so the discount can be derived:
-	  put the pre-discount sum of items in "subtotal" and the FINAL amount payable
-	  (after any discount, rebate, "× NN%", or round-down / "don't charge the cents")
-	  in "total". The system computes the discount itself as subtotal − total, so
-	  the only thing that matters is that "subtotal" is the amount before the
-	  reduction and "total" is the amount after it.${hasCoa ? `
-	- For each line item, set "accountCode" to the best-matching expense/cost
-	  account from the EXPENSE / COST ACCOUNTS list below, or null if none fits.` : ''}
+  // 4. Master chart of accounts (dynamic) for per-line account coding.
+  const coaBlock = hasCoa
+    ? '\n\n─── EXPENSE / COST ACCOUNTS (Chart of Accounts) ───\n'
+      + 'For EACH line item, set "accountCode" to the code of the single best-matching\n'
+      + 'account below, based on what the line item is for. Copy the code VERBATIM\n'
+      + '(e.g. "926-0000"). Rules:\n'
+      + '- Match on meaning, not exact words. Examples: electricity/water/TNB/indah water\n'
+      + '  → "926-0000" Utilities Expenses; internet/phone/Unifi/Maxis → "934-0000"\n'
+      + '  Telephone & Internet Charges; cleaning supplies/toiletries → "930-0000";\n'
+      + '  food/drinks/groceries → "931-0000"; stock/products bought for resale →\n'
+      + '  "610-0000" Purchases; rent → "915-0000"; repairs/servicing → "925-0000".\n'
+      + '- Only use codes from this list. Do NOT invent codes.\n'
+      + '- If no account is a sensible fit for a line item, set "accountCode" to null.\n'
+      + '  Do not force a poor match.\n\n'
+      + MASTER_EXPENSE_ACCOUNTS.map((a) => a.code + '  ' + a.name).join('\n')
+    : '';
 
-	${vision ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:' : 'Given the raw OCR text below, extract and return ONLY a valid JSON object:'}
-	{
-	  "bills": [
-	    {
-	      "supplier": "Vendor / supplier company name (the company sending the invoice) or null",
-	      "billedTo": ${hasOrgList ? '"EXACT name copied from the CONNECTED XERO ORGANISATIONS list below, or null if no entry fits"' : '"Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o."'},
-	      ${hasOrgList ? '"billedToVerbatim": "Original BILL TO text from the invoice (for human verification) or null",' : ''}
-	      "invoiceNo": "The document's reference number, whatever it is labelled (Invoice/Tax Invoice/Bill/Quotation/Quote/Ref/Doc No, or a bare code by the title like QT260618210). null only if there is truly none",
-	      "date": "Date string or null",
-	      "dueDate": "Due date string or null",
-	      "currency": "MYR/USD/SGD etc, default MYR",
-	      "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00, "accountCode": ${hasCoa ? '"best-matching expense/cost account code from the list below, or null"' : 'null'}, "taxCode": "SV-8/SST-8/etc or null", "taxRate": 0.00, "taxAmount": 0.00 }],
-	      "subtotal": 0.00,
-	      "tax": 0.00,
-	      "taxRate": 0.00,
-	      "taxableAmount": 0.00,
-	      "taxLabel": "SST/GST/VAT/Tax",
-	      "discount": 0.00,
-	      "total": 0.00,
-	      "notes": "string or null"
-	    }
-	  ]
-	}
-	Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.${orgListBlock}${coaBlock}${vision ? '' : `
+  // 5. JSON output contract (kept in code — must stay in lockstep with the parser).
+  const schemaBlock = '\n\n'
+    + (vision
+        ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:'
+        : 'Given the raw OCR text below, extract and return ONLY a valid JSON object:')
+    + '\n{\n'
+    + '  "bills": [\n'
+    + '    {\n'
+    + '      "supplier": "Vendor / supplier company name (the company sending the invoice) or null",\n'
+    + '      "billedTo": ' + (hasOrgList
+          ? '"EXACT name copied from the CONNECTED XERO ORGANISATIONS list, or null if no entry fits"'
+          : '"Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o."') + ',\n'
+    + (hasOrgList ? '      "billedToVerbatim": "Original BILL TO text from the invoice (for human verification) or null",\n' : '')
+    + '      "invoiceNo": "The document\'s reference number, whatever it is labelled (Invoice/Tax Invoice/Bill/Quotation/Quote/Ref/Doc No, or a bare code by the title like QT260618210). null only if there is truly none",\n'
+    + '      "date": "Date string or null",\n'
+    + '      "dueDate": "Due date string or null",\n'
+    + '      "currency": "MYR/USD/SGD etc, default MYR",\n'
+    + '      "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00, "accountCode": ' + (hasCoa ? '"best-matching expense/cost account code from the list, or null"' : 'null') + ', "taxCode": "SV-8/SST-8/etc or null", "taxRate": 0.00, "taxAmount": 0.00 }],\n'
+    + '      "subtotal": 0.00,\n'
+    + '      "tax": 0.00,\n'
+    + '      "taxRate": 0.00,\n'
+    + '      "taxableAmount": 0.00,\n'
+    + '      "taxLabel": "SST/GST/VAT/Tax",\n'
+    + '      "discount": 0.00,\n'
+    + '      "total": 0.00,\n'
+    + '      "notes": "string or null"\n'
+    + '    }\n'
+    + '  ]\n'
+    + '}\n'
+    + 'Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.';
 
-OCR Text:
-${ocrText}`}`;
+  const ocrBlock = vision ? '' : ('\n\nOCR Text:\n' + ocrText);
+
+  return base + orgListBlock + addonBlock + coaBlock + schemaBlock + ocrBlock;
 }
 
 function extractJsonText(raw) {
@@ -1988,6 +1899,7 @@ async function callGroqBillPayload(ocrText, model, knownOrgs = []) {
     throw new Error('Missing GROQ_API_KEY in .env.');
   }
 
+  const prompts = await resolveAiPrompts();
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -1996,7 +1908,7 @@ async function callGroqBillPayload(ocrText, model, knownOrgs = []) {
     },
     body: JSON.stringify({
       model: model || AI_PROVIDERS.groq.defaultModel,
-      messages: [{ role: 'user', content: buildBillPrompt(ocrText, knownOrgs) }],
+      messages: [{ role: 'user', content: buildBillPrompt(ocrText, knownOrgs, prompts) }],
       temperature: 0.1,
       max_tokens: 4096
     })
@@ -2078,7 +1990,8 @@ async function callGeminiJson(parts, model) {
 }
 
 async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
-  return callGeminiJson([{ text: buildBillPrompt(ocrText, knownOrgs) }], model);
+  const prompts = await resolveAiPrompts();
+  return callGeminiJson([{ text: buildBillPrompt(ocrText, knownOrgs, prompts) }], model);
 }
 
 // Vision path: send the raw image/PDF bytes straight to Gemini so it does the
@@ -2092,8 +2005,9 @@ async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = []) {
   const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
     || buffer.slice(0, 4).toString() === '%PDF';
   const mimeType = isPdf ? 'application/pdf' : (mime || 'image/jpeg');
+  const prompts = await resolveAiPrompts();
   const parts = [
-    { text: buildBillPrompt('', knownOrgs, { vision: true }) },
+    { text: buildBillPrompt('', knownOrgs, { vision: true, ...prompts }) },
     { inlineData: { mimeType, data: buffer.toString('base64') } }
   ];
   return normalizeBillPayloads(await callGeminiJson(parts, model));
@@ -3102,7 +3016,9 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
     let extractionMethod = 'unknown';
     let bills;
     try {
-      const out = await analyzeFileToBills({ buffer, mime, knownOrgs });
+      // Run extraction inside the account's context so resolveAiPrompts() can
+      // pick up this account's AI prompt add-on (and the general base prompt).
+      const out = await runWithCtx(() => analyzeFileToBills({ buffer, mime, knownOrgs }));
       bills = out.bills;
       ocrText = out.ocrText;
       extractionMethod = out.method;
