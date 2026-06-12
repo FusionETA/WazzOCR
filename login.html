@@ -4,58 +4,51 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sign in — WazzOCR</title>
-  <style>
-    :root { --primary:#1A2E6F; --accent:#FF6B35; --border:#E2E8F0; --muted:#6B7A8D; --bg:#F4F6FB; --text:#1C2B3A; }
-    * { box-sizing: border-box; }
-    body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:var(--text);
-      background:linear-gradient(135deg,#1A2E6F 0%,#2D4DB3 100%);
-      min-height:100vh; display:flex; align-items:center; justify-content:center; }
-    .card { background:#fff; border-radius:16px; padding:2rem; width:100%; max-width:380px;
-      box-shadow:0 8px 32px rgba(26,46,111,.25); }
-    .logo { width:40px;height:40px;border-radius:10px;background:var(--primary);color:#fff;
-      display:inline-flex;align-items:center;justify-content:center;font-weight:800;margin-bottom:.75rem; }
-    h1 { margin:0 0 .25rem; font-size:1.35rem; }
-    p.sub { margin:0 0 1.5rem; color:var(--muted); font-size:.9rem; }
-    label { display:block; font-size:.72rem; font-weight:700; color:var(--muted);
-      text-transform:uppercase; letter-spacing:.05em; margin:1rem 0 .35rem; }
-    input { width:100%; padding:.65rem .8rem; border:1px solid var(--border); border-radius:8px; font-size:.95rem; outline:none; }
-    input:focus { border-color:var(--primary); }
-    button { width:100%; margin-top:1.5rem; padding:.75rem; border:none; border-radius:8px;
-      background:var(--primary); color:#fff; font-weight:700; font-size:.95rem; cursor:pointer; }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-    .msg { margin-top:1rem; font-size:.85rem; padding:.6rem .75rem; border-radius:8px; display:none; }
-    .msg.error { background:#FEF2F2; color:#B91C1C; display:block; }
-    .msg.ok { background:#F0FDF4; color:#15803D; display:block; }
-    .links { margin-top:1.25rem; text-align:center; font-size:.85rem; }
-    .links a { color:var(--primary); text-decoration:none; cursor:pointer; font-weight:600; }
-  </style>
+  <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div class="card">
-    <div class="logo">FE</div>
-    <h1>Sign in</h1>
-    <p class="sub">WazzOCR bill automation</p>
-    <form id="loginForm">
-      <label for="email">Email</label>
-      <input type="email" id="email" autocomplete="username" required>
-      <label for="password">Password</label>
-      <input type="password" id="password" autocomplete="current-password" required>
-      <button type="submit" id="submitBtn">Sign in</button>
-    </form>
-    <div class="msg" id="msg"></div>
-    <div class="links"><a id="forgotLink">Forgot password?</a></div>
+  <div class="auth-bg">
+    <div class="auth-card">
+      <span class="logo">FE</span>
+      <h1>Welcome back</h1>
+      <p class="sub">Sign in to WazzOCR</p>
+
+      <a href="/auth/google" class="google-btn">
+        <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.4 29.3 35 24 35c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 5.1 29.6 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21c10.5 0 20-7.6 20-21 0-1.2-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 5.1 29.6 3 24 3 16 3 9.1 7.6 6.3 14.7z"/><path fill="#4CAF50" d="M24 45c5.2 0 10-2 13.6-5.2l-6.3-5.3C29.2 36 26.7 37 24 37c-5.3 0-9.7-2.6-11.3-7l-6.5 5C9 40.3 15.9 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4 5.5l6.3 5.3C41.4 36.3 44 30.7 44 24c0-1.2-.1-2.3-.4-3.5z"/></svg>
+        Continue with Google
+      </a>
+      <div class="divider"><span>or</span></div>
+
+      <form id="loginForm">
+        <label class="fld" for="email">Email</label>
+        <input type="email" id="email" autocomplete="username" required>
+        <label class="fld" for="password">Password</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+        <button type="submit" class="btn btn-primary" id="submitBtn" style="width:100%;margin-top:1.4rem;">Sign in</button>
+      </form>
+      <div class="msg" id="msg"></div>
+      <div class="links"><a id="forgotLink" style="cursor:pointer;">Forgot password?</a></div>
+    </div>
   </div>
   <script>
     const msg = document.getElementById('msg');
-    function showMsg(t, ok) { msg.textContent = t; msg.className = 'msg ' + (ok ? 'ok' : 'error'); }
+    function showMsg(t, ok) { msg.textContent = t; msg.className = 'msg ' + (ok ? 'ok' : 'err'); }
+    (function () {
+      const err = new URLSearchParams(location.search).get('error');
+      const map = {
+        notinvited: 'That Google account is not set up yet. Please ask your provider to invite you first.',
+        unverified: 'Your Google email is not verified.',
+        disabled: 'This account has been disabled.',
+        google: 'Google sign-in failed. Please try again.'
+      };
+      if (err) showMsg(map[err] || 'Sign-in error. Please try again.');
+    })();
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = document.getElementById('submitBtn'); btn.disabled = true;
       try {
-        const r = await fetch('/auth/login', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: document.getElementById('email').value.trim(), password: document.getElementById('password').value })
-        });
+        const r = await fetch('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: document.getElementById('email').value.trim(), password: document.getElementById('password').value }) });
         const data = await r.json();
         if (!r.ok) { showMsg(data.error || 'Sign in failed.'); btn.disabled = false; return; }
         window.location.href = (data.user && data.user.isSuperAdmin) ? '/admin.html' : '/account.html';
