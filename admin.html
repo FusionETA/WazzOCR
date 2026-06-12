@@ -268,7 +268,10 @@
                 <span class="fd-text" id="coaFileText">Choose a CSV file or drag it here</span>
                 <input type="file" id="coaFile" accept=".csv,text/csv" hidden>
               </label>
-              <div style="margin-top:.6rem;"><button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button></div><div class="msg" id="coaMsg"></div></div>
+              <div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button>
+                <a class="btn btn-ghost" href="/admin/accounts/${id}/coa.csv">⬇ Download CSV (template + current)</a>
+              </div><div class="msg" id="coaMsg"></div></div>
           </div>
         </div>
       </div>`;

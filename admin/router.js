@@ -184,6 +184,21 @@ router.post('/accounts/:id/coa', async (req, res) => {
   res.json({ ok: true, count });
 });
 
+// Download the account's COA as CSV — prefilled with its current rows (so admins
+// edit and re-upload), or a single example row as a blank template if empty.
+router.get('/accounts/:id/coa.csv', async (req, res) => {
+  const accountId = Number(req.params.id);
+  if (!(await accounts.getById(accountId))) return res.status(404).json({ error: 'Account not found.' });
+  const rows = await coa.list(accountId);
+  const cell = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = ['code,name,category'];
+  if (rows.length) for (const r of rows) lines.push([r.code, r.name, r.category].map(cell).join(','));
+  else lines.push('926-0000,Utilities Expenses,Expense');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="chart-of-accounts.csv"');
+  res.send(lines.join('\n') + '\n');
+});
+
 // Invite a user to an account: create (or reuse) the user, then WhatsApp the link.
 router.post('/accounts/:id/invite', async (req, res) => {
   const accountId = Number(req.params.id);
