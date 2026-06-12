@@ -867,7 +867,54 @@ async function fetchConnections(accessToken) {
   return payload;
 }
 
+// ── Account-scoped Xero (DB-backed tokens) ─────────────────────────────────
+// When bill processing runs inside an account context (resolved from the Wazzup
+// channel), Xero tokens come from the DB for that account instead of the legacy
+// JSON store. The single-use refresh token is rotated and saved back to the DB.
+const { AsyncLocalStorage } = require('async_hooks');
+const xeroAccountCtx = new AsyncLocalStorage();
+const _dbAccessTokenCache = new Map(); // key "accountId:tenantId" -> { accessToken, expiresAt }
+
+async function getDbTokensForTenant(accountId, tenantId) {
+  const xc = require('./models/xeroConnections');
+  const key = accountId + ':' + tenantId;
+  const cached = _dbAccessTokenCache.get(key);
+  if (cached && cached.expiresAt - Date.now() > 60000) return { accessToken: cached.accessToken };
+
+  const grant = await xc.getGrantForTenant(accountId, tenantId);
+  if (!grant) return null;
+
+  const response = await fetch(`${XERO_IDENTITY_BASE}/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: basicAuthHeader(XERO_CLIENT_ID, XERO_CLIENT_SECRET),
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: urlEncode({ grant_type: 'refresh_token', refresh_token: grant.refreshToken })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    await xc.markNeedsReconnect(accountId, tenantId).catch(() => {});
+    throw new Error(payload.error_description || payload.error || `Xero token refresh failed (${response.status})`);
+  }
+  // Persist the rotated refresh token (Xero refresh tokens are single-use).
+  if (payload.refresh_token && payload.refresh_token !== grant.refreshToken) {
+    await xc.updateGrantToken(grant.grantId, payload.refresh_token);
+  }
+  _dbAccessTokenCache.set(key, {
+    accessToken: payload.access_token,
+    expiresAt: Date.now() + (Number(payload.expires_in || 1800) * 1000)
+  });
+  return { accessToken: payload.access_token };
+}
+
 async function getTokensForTenant(tenantId, { refreshIfNeeded = true } = {}) {
+  // Account context → DB-backed tokens for that account.
+  const ctx = xeroAccountCtx.getStore();
+  if (ctx && ctx.accountId) {
+    try { return await getDbTokensForTenant(ctx.accountId, tenantId); }
+    catch (err) { console.error(`[xero-db] token for tenant ${tenantId}:`, err.message); return null; }
+  }
   ensureConfig();
   const store = await loadTokenStore();
   let grants = store.grants || [];
@@ -897,6 +944,15 @@ async function getTokensForTenant(tenantId, { refreshIfNeeded = true } = {}) {
 }
 
 async function getValidConnections() {
+  // Account context → connected orgs from the DB for that account.
+  const ctx = xeroAccountCtx.getStore();
+  if (ctx && ctx.accountId) {
+    const rows = await require('./models/xeroConnections').listByAccount(ctx.accountId);
+    const connections = rows
+      .filter((r) => r.status === 'active')
+      .map((r) => ({ tenantId: r.xero_tenant_id, tenantName: r.tenant_name }));
+    return { tokens: null, grants: [], connections };
+  }
   let store = await loadTokenStore();
   let grants = store.grants || [];
   let changed = Boolean(store.migratedFromLegacy);
@@ -2447,9 +2503,13 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
   let connections = [];
   let xeroAvailable = false;
   try {
+    const ctx = xeroAccountCtx.getStore();
     const conn = await getValidConnections();
     connections = conn.connections;
-    xeroAvailable = Boolean(conn.tokens?.accessToken);
+    // In account context, access tokens are fetched lazily from the DB at
+    // bill-creation time, so Xero is "available" when the account has active
+    // connections. Legacy (global) path checks the loaded token directly.
+    xeroAvailable = (ctx && ctx.accountId) ? connections.length > 0 : Boolean(conn.tokens?.accessToken);
   } catch (err) {
     console.error('Could not refresh Xero connections:', err.message);
   }
@@ -2702,14 +2762,19 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(APP_ROOT));
+// index:false so "/" falls through to the role-based root handler below
+// (instead of auto-serving the legacy index.html).
+app.use(express.static(APP_ROOT, { index: false }));
 
-app.get('/', (req, res) => {
-  res.redirect('/index.html');
+// Root routes by auth + role: not signed in → login; admin → admin dashboard;
+// customer → their account dashboard. (The legacy ops view stays at /index.html.)
+app.get('/', require('./auth/middleware').attachUser, (req, res) => {
+  if (!req.user) return res.redirect('/login.html');
+  return res.redirect(req.user.is_super_admin ? '/admin.html' : '/account.html');
 });
 
 app.get('/xero-setup', (req, res) => {
-  res.redirect('/index.html#settings');
+  res.redirect('/');
 });
 
 // ── AI config & settings ────────────────────────────────────────────────────
@@ -2961,7 +3026,10 @@ async function logBillOutcomes({ accountId, channelDbId, chatId, source, outcome
         documentType: b.documentType || null,
         xeroInvoiceId,
         xeroUrl,
-        source: source || 'whatsapp'
+        source: source || 'whatsapp',
+        // Keep the full bill data for pending bills so they can be resolved
+        // later from the dashboard (pick org → create draft).
+        payload: status === 'pending' ? b : null
       });
     } catch (err) {
       console.error('[bills] record failed:', err.message);
@@ -2989,6 +3057,9 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
         if (ch && ch.account_id) logCtx = { accountId: ch.account_id, channelDbId: ch.id };
       } catch (err) { console.error('[bills] channel resolve failed:', err.message); }
     }
+    // Runs a function inside this account's Xero context (DB-backed tokens/orgs).
+    // With no registered channel, runs as-is on the legacy global Xero path.
+    const runWithCtx = (fn) => logCtx ? xeroAccountCtx.run({ accountId: logCtx.accountId }, fn) : fn();
 
     let buffer = null;
     let mime = body.mime || body.imageMime || req.file?.mimetype || 'application/octet-stream';
@@ -3016,7 +3087,7 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
     // work, plus all the "(SP)", "(VC3)" etc. branch matching.
     let knownOrgs = [];
     try {
-      const { connections } = await getValidConnections();
+      const { connections } = await runWithCtx(() => getValidConnections());
       knownOrgs = (connections || []).map((c) => c.tenantName).filter(Boolean);
     } catch (err) {
       console.error('process-file: could not fetch Xero orgs (ok, fallback):', err.message);
@@ -3046,12 +3117,12 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
 
     const outcomes = [];
     if (bills.length <= 1) {
-      outcomes.push(await processBillForChat({
+      outcomes.push(await runWithCtx(() => processBillForChat({
         bill: bills[0],
         attachment,
         chatId,
         source: 'whatsapp'
-      }));
+      })));
       attachment = null;
     } else {
       await deleteUploadedFile(filename);
@@ -3064,12 +3135,12 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
           originalName: fileName || clonedFilename
         };
         try {
-          outcomes.push(await processBillForChat({
+          outcomes.push(await runWithCtx(() => processBillForChat({
             bill,
             attachment: clonedAttachment,
             chatId,
             source: 'whatsapp+multi-bill'
-          }));
+          })));
         } catch (err) {
           await deleteUploadedFile(clonedFilename);
           throw err;
@@ -3290,11 +3361,101 @@ app.get('/api/xero/connect', async (req, res) => {
   }
 });
 
+// ── Per-account Xero connect (stateless signed state, stores tokens in DB) ──
+const _xeroAuthMw = require('./auth/middleware');
+function buildAccountXeroState(accountId) {
+  const data = `acct.${accountId}.${crypto.randomBytes(8).toString('hex')}`;
+  const hmac = crypto.createHmac('sha256', process.env.APP_ENCRYPTION_KEY || XERO_CLIENT_SECRET).update(data).digest('hex').slice(0, 32);
+  return `${data}.${hmac}`;
+}
+function parseAccountXeroState(state) {
+  if (!state || !String(state).startsWith('acct.')) return null;
+  const parts = String(state).split('.');
+  if (parts.length !== 4) return null;
+  const data = parts.slice(0, 3).join('.');
+  const expected = crypto.createHmac('sha256', process.env.APP_ENCRYPTION_KEY || XERO_CLIENT_SECRET).update(data).digest('hex').slice(0, 32);
+  if (parts[3] !== expected) return null;
+  return { accountId: Number(parts[1]) };
+}
+function redirectToAccountXero(req, res, accountId) {
+  try {
+    ensureConfig();
+    const authUrl = new URL(`${XERO_IDENTITY_BASE}/authorize`);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('client_id', XERO_CLIENT_ID);
+    authUrl.searchParams.set('redirect_uri', getOAuthRedirectUri(req));
+    authUrl.searchParams.set('scope', XERO_SCOPES);
+    authUrl.searchParams.set('state', buildAccountXeroState(accountId));
+    res.redirect(authUrl.toString());
+  } catch (error) { res.status(500).send(error.message); }
+}
+// Customer connects their own account's Xero.
+app.get('/api/me/xero/connect', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth, (req, res) => {
+  if (!req.user.account_id) return res.status(400).send('Your login has no account.');
+  redirectToAccountXero(req, res, req.user.account_id);
+});
+// Admin connects a specific account's Xero on their behalf.
+app.get('/admin/accounts/:id/xero/connect', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth, _xeroAuthMw.requireSuperAdmin, (req, res) => {
+  redirectToAccountXero(req, res, Number(req.params.id));
+});
+
+// Resolve a pending/unmatched bill: pick a Xero org → create the draft under
+// this account's Xero. The full bill data was stored in `payload` when pending.
+app.post('/api/me/bills/:id/resolve', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth, async (req, res) => {
+  try {
+    const accountId = req.user.account_id;
+    if (!accountId) return res.status(400).json({ error: 'Your login has no account.' });
+    const tenantId = (req.body && req.body.tenantId) || '';
+    if (!tenantId) return res.status(400).json({ error: 'Please choose a Xero organisation.' });
+
+    const billsModel = require('./models/bills');
+    const row = await billsModel.getResolvable(Number(req.params.id), accountId);
+    if (!row || !row.payload) return res.status(404).json({ error: 'Pending bill not found (or already resolved).' });
+
+    const conns = await require('./models/xeroConnections').listByAccount(accountId);
+    const conn = conns.find((c) => c.xero_tenant_id === tenantId && c.status === 'active');
+    if (!conn) return res.status(400).json({ error: 'That Xero organisation is not connected to your account.' });
+
+    const result = await xeroAccountCtx.run({ accountId }, () => createDraftBill({ bill: row.payload, tenantId }));
+    await billsModel.markResolved(row.id, accountId, {
+      xeroInvoiceId: result.invoiceId, xeroUrl: result.url, xeroConnectionId: conn.id
+    });
+    res.json({ ok: true, invoiceId: result.invoiceId, url: result.url });
+  } catch (err) {
+    console.error('[resolve] failed:', err.message);
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
 app.get('/api/xero/callback', async (req, res) => {
   try {
     const { code, state, error, error_description: errorDescription } = req.query;
+    const acctState = parseAccountXeroState(state);
+
+    // User cancelled / denied consent (or Xero returned an error): go back to
+    // the dashboard with a friendly message instead of an error page.
     if (error) {
-      throw new Error(errorDescription || error);
+      const reason = encodeURIComponent(errorDescription || error || 'cancelled');
+      return res.redirect((acctState ? '/account.html' : '/') + '?xero=error&reason=' + reason);
+    }
+
+    // Per-account connect (stateless signed state) → store tokens in the DB.
+    if (acctState && acctState.accountId) {
+      try {
+        const tokens = await exchangeCodeForTokens(code, getOAuthRedirectUri(req));
+        const connections = await fetchConnections(tokens.accessToken);
+        const xc = require('./models/xeroConnections');
+        const grantId = await xc.saveGrant(acctState.accountId, tokens.refreshToken, tokens.scope || null);
+        let n = 0;
+        for (const c of (connections || [])) {
+          if (c.tenantId) { await xc.upsertConnection(acctState.accountId, grantId, c.tenantId, c.tenantName || null); n++; }
+        }
+        console.log(`[xero] account ${acctState.accountId} connected ${n} org(s).`);
+        return res.redirect('/account.html?xero=connected');
+      } catch (e) {
+        console.error('[xero] account connect failed:', e.message);
+        return res.redirect('/account.html?xero=error&reason=' + encodeURIComponent(e.message));
+      }
     }
 
     const savedState = await readJson(STATE_FILE, null);
@@ -3317,7 +3478,7 @@ app.get('/api/xero/callback', async (req, res) => {
     await saveTokenStore(store);
     await writeJson(STATE_FILE, { state: null, clearedAt: isoNow() });
 
-    res.redirect('/index.html?xero=connected#settings');
+    res.redirect('/account.html?xero=connected');
   } catch (error) {
     res.status(500).send(`<pre>Xero connection failed: ${error.message}</pre>`);
   }
