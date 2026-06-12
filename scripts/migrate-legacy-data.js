@@ -7,8 +7,13 @@
 //   - Registers the Wazzup channel only if not already present.
 //   - Imports historical bills only if the account currently has zero bills
 //     (so re-running won't create duplicates).
-//   - Does NOT touch the live data/ JSON files (read-only). Does NOT migrate
-//     Xero tokens (the account reconnects Xero fresh in the new system).
+//   - Migrates the Xero refresh token + connections (only if the account has
+//     none yet) so the existing Xero link carries over with no re-consent.
+//   - Does NOT touch the live data/ JSON files (read-only).
+//
+// CLEAN CUTOVER (Xero refresh tokens are single-use and rotate): stop the old
+// app before running this, then start the new DB-based app as the only token
+// refresher — otherwise the old and new apps fight over the rotating token.
 //
 // Run on the server (where data/ holds the live files):
 //   node scripts/migrate-legacy-data.js
@@ -22,6 +27,7 @@ const db = require('../db');
 const accounts = require('../models/accounts');
 const coa = require('../models/coa');
 const wazzupChannels = require('../models/wazzupChannels');
+const xeroConnections = require('../models/xeroConnections');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const ACCOUNT_NAME = (process.argv.find((a) => a.startsWith('--account=')) || '').split('=')[1] || 'Ayu Borneo';
@@ -73,6 +79,30 @@ const asDate = (iso) => { const d = new Date(iso); return isNaN(d) ? new Date() 
     }
   } else { log('No WAZZUP_CHANNEL_ID in env — no channel registered.'); }
 
+  // 4b. Xero tokens (xero-tokens.json → xero_grants + xero_connections).
+  //     Migrates the refresh token directly so the existing connection carries
+  //     over with no re-consent. Only if the account has no connections yet.
+  const existingConns = await xeroConnections.listByAccount(accountId);
+  if (existingConns.length === 0) {
+    const store = readJson('xero-tokens.json', null);
+    const grants = (store && Array.isArray(store.grants)) ? store.grants : [];
+    let nG = 0, nT = 0;
+    for (const g of grants) {
+      if (!g.refreshToken) continue;
+      const grantId = await xeroConnections.saveGrant(accountId, g.refreshToken, g.scope || null);
+      nG++;
+      for (const conn of (g.connections || [])) {
+        if (!conn.tenantId) continue;
+        await xeroConnections.upsertConnection(accountId, grantId, conn.tenantId, conn.tenantName || null);
+        nT++;
+      }
+    }
+    log(`Xero migrated: ${nG} grant(s), ${nT} organisation(s).`);
+    if (nG) log('IMPORTANT: do a clean cutover — stop the old app first so only the new DB-based app refreshes the (single-use) Xero token.');
+  } else {
+    log(`Xero already has ${existingConns.length} connection(s) — skipped.`);
+  }
+
   // 5. Historical bills — only if the account has none yet
   const billCountRow = await db.getOne('SELECT COUNT(*) AS n FROM bills WHERE account_id = ?', [accountId]);
   if (Number(billCountRow.n) > 0) {
@@ -103,6 +133,6 @@ const asDate = (iso) => { const d = new Date(iso); return isNaN(d) ? new Date() 
     log(`Imported bills: ${nC} created (success) + ${nP} pending.`);
   }
 
-  console.log('\nDone. Note: Xero is NOT migrated — connect it fresh for this account in the admin dashboard.\n');
+  console.log('\nDone. Xero refresh token migrated — no reconnect needed (clean cutover required).\n');
   await db.close();
 })().catch((err) => { console.error('Migration FAILED:', err.message); process.exit(1); });
