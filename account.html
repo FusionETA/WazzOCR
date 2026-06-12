@@ -143,8 +143,8 @@
             <div class="msg" id="chanMsg"></div>
           </div>
           <div class="card"><h2>Chart of accounts</h2>
-            <p class="muted">CSV columns: code, name, category. Replaces your current list; used to auto-code bill line items. <span id="coaCount"></span></p>
-            <textarea id="coaCsv" rows="5" placeholder="926-0000,Utilities Expenses,Expense"></textarea>
+            <p class="muted">Upload a CSV with columns: code, name, category. Replaces your current list; used to auto-code bill line items. <span id="coaCount"></span></p>
+            <input type="file" id="coaFile" accept=".csv,text/csv" style="padding:.55rem .7rem;border:1px dashed var(--line);border-radius:var(--r-sm);background:#FAFBFE;cursor:pointer;">
             <div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">
               <button class="btn btn-primary" id="coaBtn">Upload COA</button>
               <a class="btn btn-ghost" id="coaDownload" href="/api/me/coa.csv">⬇ Download CSV (template + current)</a>
@@ -183,9 +183,14 @@
       };
       document.getElementById('coaBtn').onclick = async () => {
         const m=document.getElementById('coaMsg');
-        try { const r=await fetch('/api/me/coa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:document.getElementById('coaCsv').value})});
+        const f=document.getElementById('coaFile').files[0];
+        if(!f){ showM(m,'Choose a CSV file first.',false); return; }
+        try {
+          const csv = await f.text();
+          const r=await fetch('/api/me/coa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv})});
           const d=await r.json(); if(!r.ok) throw new Error(d.error||'Upload failed.');
           showM(m,`Uploaded ${d.count} codes.`,true); document.getElementById('coaCount').textContent='— '+d.count+' codes loaded';
+          document.getElementById('coaFile').value='';
         } catch(e){ showM(m,e.message,false); }
       };
     }
@@ -209,17 +214,20 @@
     window.removeChannel = async (e,id)=>{ e.preventDefault(); try{ await fetch('/api/me/channels/'+id,{method:'DELETE'}); wireSettings(); }catch(err){ alert(err.message); } };
 
     // ── Channel details modal ──
+    const COPY_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    function copyBtn(value){ return `<button class="copy-btn" title="Copy" onclick="copyText(event,'${esc(value)}')">${COPY_ICON}</button>`; }
     window.openChannelModal = (id) => {
       const c = CHAN_BY_ID[id]; if(!c) return;
       openModal('Channel — ' + esc(c.label||'(no label)'), `
-        <div class="kv"><div class="k">Channel ID</div><div style="font-family:ui-monospace,monospace;word-break:break-all;">${esc(c.channel_id)} &nbsp;<a href="#" onclick="copyText(event,'${esc(c.channel_id)}')">Copy</a></div></div>
-        <div class="kv"><div class="k">API key</div><div id="modalKey" style="font-family:ui-monospace,monospace;word-break:break-all;">${c.hasApiKey?`${esc(c.apiKeyMasked)} &nbsp;<a href="#" onclick="revealModalKey(event,${id})">Reveal</a>`:'<span style="color:var(--bad)">no API key</span>'}</div></div>`);
+        <div class="kv"><div class="k">Channel ID</div><div style="display:flex;align-items:center;gap:.4rem;font-family:ui-monospace,monospace;word-break:break-all;">${esc(c.channel_id)} ${copyBtn(c.channel_id)}</div></div>
+        <div class="kv"><div class="k">API key</div><div id="modalKey" style="display:flex;align-items:center;gap:.4rem;font-family:ui-monospace,monospace;word-break:break-all;">${c.hasApiKey?`${esc(c.apiKeyMasked)} <a href="#" onclick="revealModalKey(event,${id})">Reveal</a>`:'<span style="color:var(--bad)">no API key</span>'}</div></div>`);
     };
     window.revealModalKey = async (e,id)=>{ e.preventDefault();
       try{ const r=await fetch('/api/me/channels/'+id+'/api-key'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
-        document.getElementById('modalKey').innerHTML = `${esc(d.apiKey)} &nbsp;<a href="#" onclick="copyText(event,'${esc(d.apiKey)}')">Copy</a>`;
+        document.getElementById('modalKey').innerHTML = `${esc(d.apiKey)} ${copyBtn(d.apiKey)}`;
       }catch(err){ alert(err.message); } };
-    window.copyText = (e,t)=>{ e.preventDefault(); if(navigator.clipboard) navigator.clipboard.writeText(t); const a=e.target; const o=a.textContent; a.textContent='Copied ✓'; setTimeout(()=>a.textContent=o,1200); };
+    window.copyText = (e,t)=>{ e.preventDefault(); if(navigator.clipboard) navigator.clipboard.writeText(t);
+      const btn=e.currentTarget; const o=btn.innerHTML; btn.innerHTML='<span style="color:var(--ok);font-size:.85rem;">✓</span>'; setTimeout(()=>{ btn.innerHTML=o; },1200); };
     function openModal(title, bodyHtml){
       let m=document.getElementById('appModal'); if(!m){ m=document.createElement('div'); m.id='appModal'; document.body.appendChild(m); }
       m.style.cssText='position:fixed;inset:0;z-index:2000;background:rgba(15,27,45,.45);display:flex;align-items:center;justify-content:center;padding:1rem;';

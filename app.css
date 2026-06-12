@@ -153,3 +153,9 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .sdrop-opt:hover { background:#F4F6FB; }
 .sdrop-opt.sel { background:#EEF2FF; color:var(--navy); font-weight:600; }
 .sdrop-empty { padding:.7rem .8rem; color:var(--muted); font-size:.85rem; }
+
+/* ── Copy icon button ── */
+.copy-btn { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px;
+  border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--muted); cursor:pointer;
+  flex-shrink:0; transition:.15s; }
+.copy-btn:hover { background:#F4F6FB; color:var(--navy); border-color:#cbd5e1; }
