@@ -4,118 +4,207 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>My account — WazzOCR</title>
-  <style>
-    :root { --primary:#1A2E6F; --accent:#FF6B35; --border:#E2E8F0; --muted:#6B7A8D; --bg:#F4F6FB; --text:#1C2B3A; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
-    header { background:#fff; border-bottom:1px solid var(--border); padding:1rem 1.5rem; display:flex; justify-content:space-between; align-items:center; }
-    header .brand { font-weight:800; color:var(--primary); display:flex; align-items:center; gap:.5rem; }
-    header .logo { width:28px;height:28px;border-radius:6px;background:var(--primary);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:800; }
-    header button { background:#fff; border:1px solid var(--border); border-radius:8px; padding:.45rem .8rem; font-weight:600; cursor:pointer; }
-    .wrap { max-width:760px; margin:1.5rem auto; padding:0 1.5rem; }
-    .card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin-bottom:1.25rem; }
-    .label { font-size:.72rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
-    .counter { font-size:3rem; font-weight:800; color:var(--primary); line-height:1.1; }
-    .row { display:flex; gap:.5rem; margin:.35rem 0; }
-    .row .k { color:var(--muted); min-width:140px; }
-    textarea { width:100%; border:1px solid var(--border); border-radius:8px; padding:.6rem; font-family:monospace; font-size:.8rem; }
-    .btn { background:var(--primary); color:#fff; border:none; border-radius:8px; padding:.55rem 1rem; font-weight:700; cursor:pointer; }
-    .adminNote a { color:var(--primary); font-weight:600; }
-    table { width:100%; border-collapse:collapse; font-size:.85rem; }
-    th { text-align:left; color:var(--muted); font-size:.72rem; text-transform:uppercase; padding:.4rem .3rem; }
-    td { padding:.4rem .3rem; border-top:1px solid var(--border); }
-    .pill { padding:.1rem .45rem; border-radius:999px; font-size:.72rem; font-weight:700; }
-    .msg { font-size:.85rem; padding:.5rem .7rem; border-radius:8px; margin-top:.5rem; display:none; }
-  </style>
+  <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <header>
+  <div class="topbar">
     <span class="brand"><span class="logo">FE</span> WazzOCR</span>
-    <button id="logoutBtn">Sign out</button>
-  </header>
-  <div class="wrap" id="content"><div class="card">Loading…</div></div>
+    <div class="right"><span class="who" id="whoLabel"></span><button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button></div>
+  </div>
+  <div class="container" id="content"><div class="card">Loading…</div></div>
   <script>
+    let CONNECTIONS = [];
     function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
-    function statusPill(s, reason) {
-      const c = { success:['#F0FDF4','#15803D'], failed:['#FEF2F2','#B91C1C'], pending:['#FFFBEB','#B45309'], skipped:['#F1F5F9','#64748B'] };
-      const [bg,fg] = c[s] || c.skipped;
-      return `<span title="${esc(reason||'')}" class="pill" style="background:${bg};color:${fg}">${esc(s)}</span>`;
-    }
+    function badge(s, reason){ const k=['success','failed','pending','skipped'].includes(s)?s:'skipped'; return `<span class="badge ${k}" title="${esc(reason||'')}">${esc(s)}</span>`; }
+    function money(b){ return b.total!=null ? esc(b.currency||'')+' '+Number(b.total).toFixed(2) : '-'; }
+    function dt(s){ return new Date(s).toLocaleDateString(); }
     document.getElementById('logoutBtn').onclick = async () => { await fetch('/auth/logout',{method:'POST'}); location.href='/login.html'; };
 
     async function load() {
       let data;
-      try {
-        const r = await fetch('/api/me/summary');
-        if (r.status === 401) { location.href='/login.html'; return; }
-        data = await r.json();
-      } catch { document.getElementById('content').innerHTML = '<div class="card">Could not load. Please refresh.</div>'; return; }
+      try { const r = await fetch('/api/me/summary'); if (r.status===401){location.href='/login.html';return;} data = await r.json(); }
+      catch { document.getElementById('content').innerHTML='<div class="card">Could not load. Please refresh.</div>'; return; }
+      document.getElementById('whoLabel').textContent = data.user.name || data.user.email;
       const c = document.getElementById('content');
       if (data.user.isSuperAdmin) {
-        c.innerHTML = `
-          <div class="card">
-            <div class="label">Signed in as</div>
-            <div class="row"><div class="k">Name</div><div>${esc(data.user.name||'-')}</div></div>
-            <div class="row"><div class="k">Email</div><div>${esc(data.user.email)}</div></div>
-            <div class="row"><div class="k">Role</div><div>Super admin (FusionETA)</div></div>
-          </div>
-          <div class="card adminNote"><a href="/admin.html">Open the admin dashboard →</a></div>`;
+        c.innerHTML = `<div class="page-head"><h1>Account</h1></div>
+          <div class="card"><div class="kv"><div class="k">Name</div><div>${esc(data.user.name||'-')}</div></div>
+          <div class="kv"><div class="k">Email</div><div>${esc(data.user.email)}</div></div>
+          <div class="kv"><div class="k">Role</div><div>Super admin (FusionETA)</div></div></div>
+          <div class="card"><a class="btn btn-primary" href="/admin.html">Open the admin dashboard →</a></div>`;
         return;
       }
       c.innerHTML = `
-        <div class="card"><div class="label">Bills successfully created</div><div class="counter">${data.successCount}</div></div>
-        <div class="card">
-          <div class="label">Account</div>
-          <div class="row"><div class="k">Organisation</div><div>${esc(data.account?data.account.name:'-')}</div></div>
-          <div class="row"><div class="k">Signed in as</div><div>${esc(data.user.name||data.user.email)}</div></div>
-          <div class="row"><div class="k">Xero orgs</div><div id="connList">…</div></div>
-          <div class="row"><div class="k">WhatsApp channels</div><div id="chanList">…</div></div>
+        <div class="page-head"><h1>${esc(data.account?data.account.name:'My account')}</h1><p>Bill automation overview</p></div>
+        <div class="card"><div class="eyebrow">Bills successfully created</div>
+          <div class="stat" style="margin-top:.4rem;"><span class="num">${data.successCount}</span><span class="unit">bills</span></div></div>
+        <div class="tabs">
+          <button data-tab="bills" class="active" onclick="switchTab('bills')">Bills</button>
+          <button data-tab="unmatched" onclick="switchTab('unmatched')">Unmatched</button>
+          <button data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
-        <div class="card">
-          <div class="label">Chart of accounts (CSV upload)</div>
-          <p style="color:var(--muted);font-size:.85rem;">Columns: code, name, category. Replaces your current list, used to auto-code bill line items.</p>
-          <textarea id="coaCsv" rows="5" placeholder="926-0000,Utilities Expenses,Expense"></textarea>
-          <div style="margin-top:.5rem;"><button class="btn" id="coaBtn">Upload COA</button>
-          <span id="coaCount" style="color:var(--muted);font-size:.85rem;margin-left:.6rem;"></span></div>
-          <div class="msg" id="coaMsg"></div>
-        </div>
-        <div class="card"><div class="label">Recent bills</div><div id="billsList" style="margin-top:.6rem;">…</div></div>`;
-      loadExtras();
+        <div class="panel active" id="panel-bills"><div class="card"><h2>Created bills</h2><div id="billsList">Loading…</div></div></div>
+        <div class="panel" id="panel-unmatched"><div class="card"><h2>Unmatched / pending</h2><div id="pendingList">Loading…</div></div></div>
+        <div class="panel" id="panel-settings">${settingsHtml(data)}</div>`;
+      fetch('/api/me/connections').then(r=>r.json()).then(d=>{ CONNECTIONS = d.connections||[]; }).catch(()=>{});
+      loadBills(); loadPending(); wireSettings();
     }
-
-    async function loadExtras() {
+    function switchTab(name){
+      document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+      document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+name));
+    }
+    function billRow(b, withXero){
+      return `<tr id="row-${b.id}"><td class="num-cell" style="color:var(--muted)">${dt(b.created_at)}</td>
+        <td>${esc(b.supplier||'-')}</td><td>${esc(b.invoice_no||'-')}</td>
+        <td class="num-cell">${money(b)}</td>
+        ${withXero ? `<td>${b.xero_url?`<a href="${esc(b.xero_url)}" target="_blank" rel="noopener">Open ↗</a>`:'-'}</td>`
+                   : `<td><span class="muted">${esc(b.failure_reason||'-')}</span></td><td style="text-align:right;"><button class="linkbtn" onclick="openResolve(event,${b.id})">Resolve →</button></td>`}</tr>`;
+    }
+    const PAGE_SIZE = 15;
+    const PG = {
+      bills:   { items: [], page: 1, withXero: true,  container: 'billsList',   empty: 'No created bills yet.' },
+      pending: { items: [], page: 1, withXero: false, container: 'pendingList', empty: 'Nothing pending 🎉' }
+    };
+    async function loadBills(){ await loadTab('bills', 'success'); }
+    async function loadPending(){ await loadTab('pending', 'pending'); }
+    async function loadTab(key, status){
       try {
-        const [conn, chan, coa, bl] = await Promise.all([
+        const { bills } = await (await fetch('/api/me/bills?status='+status+'&limit=500')).json();
+        PG[key].items = bills || []; PG[key].page = 1; renderTab(key);
+      } catch {}
+    }
+    function renderTab(key){
+      const cfg = PG[key]; const el = document.getElementById(cfg.container); const items = cfg.items;
+      if (!items.length) { el.innerHTML = '<div class="empty">'+cfg.empty+'</div>'; return; }
+      const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+      if (cfg.page > pages) cfg.page = pages;
+      const start = (cfg.page-1)*PAGE_SIZE;
+      const slice = items.slice(start, start+PAGE_SIZE);
+      const head = cfg.withXero
+        ? '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Xero</th>'
+        : '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Reason</th><th></th>';
+      const pager = pages > 1 ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.82rem;color:var(--muted);">
+          <span>Showing ${start+1}–${start+slice.length} of ${items.length}</span>
+          <span><button class="btn btn-ghost btn-sm" ${cfg.page===1?'disabled':''} onclick="goPage('${key}',${cfg.page-1})">‹ Prev</button>
+          <span style="margin:0 .6rem;">${cfg.page} / ${pages}</span>
+          <button class="btn btn-ghost btn-sm" ${cfg.page===pages?'disabled':''} onclick="goPage('${key}',${cfg.page+1})">Next ›</button></span></div>` : '';
+      el.innerHTML = `<table class="table"><thead><tr>${head}</tr></thead><tbody>${slice.map(b=>billRow(b,cfg.withXero)).join('')}</tbody></table>${pager}`;
+    }
+    window.goPage = (key, p) => { PG[key].page = p; renderTab(key); };
+
+    // Resolve an unmatched bill: choose a Xero org → create the draft.
+    window.openResolve = (e, id) => {
+      e.preventDefault();
+      if (!CONNECTIONS.length) { alert('No Xero organisations connected. Connect Xero under Settings first.'); return; }
+      const row = document.getElementById('row-'+id); if (!row) return;
+      const opts = CONNECTIONS.map(c=>`<option value="${esc(c.xero_tenant_id||c.tenantId)}">${esc(c.tenant_name||c.tenantName||c.xero_tenant_id)}</option>`).join('');
+      row.innerHTML = `<td colspan="6"><div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+        <span class="muted">Create draft in:</span>
+        <select id="rsel-${id}" style="width:auto;min-width:220px;">${opts}</select>
+        <button class="btn btn-primary btn-sm" id="rbtn-${id}" onclick="doResolve(${id})">Create draft</button>
+        <button class="linkbtn" onclick="loadPending()">Cancel</button>
+        <span id="rmsg-${id}" class="muted"></span></div></td>`;
+    };
+    window.doResolve = async (id) => {
+      const tenantId = document.getElementById('rsel-'+id).value;
+      const msg = document.getElementById('rmsg-'+id); const btn = document.getElementById('rbtn-'+id);
+      btn.disabled = true; msg.textContent = 'Creating…';
+      try {
+        const r = await fetch('/api/me/bills/'+id+'/resolve', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tenantId }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error||'Failed.');
+        msg.textContent = 'Created ✓';
+        // refresh both tabs and the counter
+        loadBills(); loadPending();
+        fetch('/api/me/summary').then(r=>r.json()).then(s=>{ const n=document.querySelector('.stat .num'); if(n) n.textContent=s.successCount; }).catch(()=>{});
+      } catch (e) { btn.disabled = false; msg.textContent = e.message; }
+    };
+    function settingsHtml(data){
+      return `
+      <div class="settings-grid">
+        <div class="col-left">
+          <div class="card"><h2>Account</h2>
+            <div class="kv"><div class="k">Organisation</div><div>${esc(data.account?data.account.name:'-')}</div></div>
+            <div class="kv"><div class="k">Signed in as</div><div>${esc(data.user.name||data.user.email)}</div></div>
+            <div class="kv"><div class="k">Xero organisations</div><div id="connList">…</div></div>
+            <a class="btn btn-primary" style="margin-top:.9rem;" href="/api/me/xero/connect">＋ Connect Xero</a>
+          </div>
+        </div>
+        <div class="col-right">
+          <div class="card"><h2>WhatsApp channels</h2>
+            <p class="muted">Add your Wazzup channel so bills sent to it are processed for your account. After adding, click “Register webhook” once.</p>
+            <div id="channelsBox" style="margin:.6rem 0;">…</div>
+            <div class="grid2"><div class="field"><label>Channel ID</label><input id="chanId"></div><div class="field"><label>Label (optional)</label><input id="chanLabel"></div></div>
+            <div class="field"><label>API key</label><input id="chanKey"></div>
+            <button class="btn btn-primary" id="chanAddBtn">Add channel</button>
+            <div class="msg" id="chanMsg"></div>
+          </div>
+          <div class="card"><h2>Chart of accounts</h2>
+            <p class="muted">CSV columns: code, name, category. Replaces your current list; used to auto-code bill line items. <span id="coaCount"></span></p>
+            <textarea id="coaCsv" rows="5" placeholder="926-0000,Utilities Expenses,Expense"></textarea>
+            <div style="margin-top:.6rem;"><button class="btn btn-primary" id="coaBtn">Upload COA</button></div>
+            <div class="msg" id="coaMsg"></div>
+          </div>
+        </div>
+      </div>`;
+    }
+    async function wireSettings(){
+      try {
+        const [conn, chan, coa] = await Promise.all([
           fetch('/api/me/connections').then(r=>r.json()),
           fetch('/api/me/channels').then(r=>r.json()),
-          fetch('/api/me/coa').then(r=>r.json()),
-          fetch('/api/me/bills?limit=20').then(r=>r.json())
+          fetch('/api/me/coa').then(r=>r.json())
         ]);
         document.getElementById('connList').textContent = (conn.connections||[]).map(x=>x.tenant_name||x.xero_tenant_id).join(', ') || 'None connected';
-        document.getElementById('chanList').textContent = (chan.channels||[]).map(c=>c.label||c.channel_id).join(', ') || 'None';
-        document.getElementById('coaCount').textContent = (coa.accounts||[]).length + ' codes loaded';
-        const bills = bl.bills || [];
-        document.getElementById('billsList').innerHTML = bills.length ? `
-          <table><thead><tr><th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Status</th></tr></thead>
-          <tbody>${bills.map(b=>`<tr>
-            <td style="color:var(--muted)">${new Date(b.created_at).toLocaleDateString()}</td>
-            <td>${esc(b.supplier||'-')}</td><td>${esc(b.invoice_no||'-')}</td>
-            <td>${b.total!=null?esc(b.currency||'')+' '+Number(b.total).toFixed(2):'-'}</td>
-            <td>${statusPill(b.status,b.failure_reason)}</td></tr>`).join('')}</tbody></table>`
-          : '<span style="color:var(--muted);font-size:.85rem;">No bills yet.</span>';
+        renderChannels(chan.channels||[]);
+        document.getElementById('coaCount').textContent = '— ' + (coa.accounts||[]).length + ' codes loaded';
       } catch {}
-      const btn = document.getElementById('coaBtn');
-      if (btn) btn.onclick = async () => {
-        const msg = document.getElementById('coaMsg');
-        try {
-          const r = await fetch('/api/me/coa', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ csv: document.getElementById('coaCsv').value }) });
-          const d = await r.json();
-          if (!r.ok) throw new Error(d.error||'Upload failed.');
-          msg.style.display='block'; msg.style.background='#F0FDF4'; msg.style.color='#15803D'; msg.textContent = `Uploaded ${d.count} codes.`;
-          document.getElementById('coaCount').textContent = d.count + ' codes loaded';
-        } catch (e) { msg.style.display='block'; msg.style.background='#FEF2F2'; msg.style.color='#B91C1C'; msg.textContent = e.message; }
+      document.getElementById('chanAddBtn').onclick = async () => {
+        const m = document.getElementById('chanMsg');
+        const channelId=document.getElementById('chanId').value.trim(), apiKey=document.getElementById('chanKey').value.trim(), label=document.getElementById('chanLabel').value.trim();
+        if (!channelId){ showM(m,'Channel ID is required.',false); return; }
+        try { const r=await fetch('/api/me/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId,apiKey:apiKey||undefined,label:label||undefined})});
+          const d=await r.json(); if(!r.ok) throw new Error(d.error||'Add failed.');
+          document.getElementById('chanId').value='';document.getElementById('chanKey').value='';document.getElementById('chanLabel').value='';
+          showM(m,'Channel added. Now click “Register webhook”.',true); wireSettings();
+        } catch(e){ showM(m,e.message,false); }
+      };
+      document.getElementById('coaBtn').onclick = async () => {
+        const m=document.getElementById('coaMsg');
+        try { const r=await fetch('/api/me/coa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:document.getElementById('coaCsv').value})});
+          const d=await r.json(); if(!r.ok) throw new Error(d.error||'Upload failed.');
+          showM(m,`Uploaded ${d.count} codes.`,true); document.getElementById('coaCount').textContent='— '+d.count+' codes loaded';
+        } catch(e){ showM(m,e.message,false); }
       };
     }
+    function showM(m,t,ok){ m.className='msg '+(ok?'ok':'err'); m.textContent=t; }
+    function renderChannels(channels){
+      const box=document.getElementById('channelsBox'); if(!box) return;
+      box.innerHTML = channels.length ? `<table class="table"><tbody>${channels.map(c=>`<tr>
+        <td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td>
+        <td style="text-align:right;white-space:nowrap;"><a href="#" onclick="regChannel(event,${c.id})">Register webhook</a>
+        &nbsp; <a href="#" class="" style="color:var(--bad)" onclick="removeChannel(event,${c.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">No channels yet.</div>';
+    }
+    window.switchTab = switchTab;
+    window.regChannel = async (e,id)=>{ e.preventDefault(); const m=document.getElementById('chanMsg'); showM(m,'Registering…',true);
+      try{ const r=await fetch('/api/me/channels/'+id+'/register-webhook',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); showM(m,'Webhook registered with Wazzup ✓',true); }
+      catch(err){ showM(m,err.message,false); } };
+    window.removeChannel = async (e,id)=>{ e.preventDefault(); try{ await fetch('/api/me/channels/'+id,{method:'DELETE'}); wireSettings(); }catch(err){ alert(err.message); } };
+
+    function showToast(text, ok){
+      const d=document.createElement('div');
+      d.textContent=text;
+      d.style.cssText='position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:1000;padding:.7rem 1.1rem;border-radius:10px;font-size:.9rem;font-weight:600;box-shadow:0 8px 24px rgba(16,35,92,.18);background:'+(ok?'#ECFDF3':'#FEF3F2')+';color:'+(ok?'#067647':'#B42318')+';';
+      document.body.appendChild(d);
+      setTimeout(()=>{ d.style.transition='opacity .4s'; d.style.opacity='0'; setTimeout(()=>d.remove(),400); },4500);
+    }
+    (function(){
+      const q=new URLSearchParams(location.search); const x=q.get('xero'); if(!x) return;
+      const reason=decodeURIComponent(q.get('reason')||'');
+      if (x==='connected') showToast('Xero connected successfully ✓', true);
+      else if (x==='error') showToast(/denied|cancel|access_denied/i.test(reason) ? 'Xero connection was cancelled.' : ('Xero connection failed' + (reason?': '+reason:'.')), false);
+      history.replaceState({}, '', location.pathname);
+    })();
     load();
   </script>
 </body>

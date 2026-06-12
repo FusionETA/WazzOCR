@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS bills (
   xero_invoice_id    VARCHAR(64),
   xero_url           VARCHAR(512),
   source             VARCHAR(32),
+  payload            JSON NULL,              -- full bill data, kept for pending bills so they can be resolved
   created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_acct_status_created (account_id, status, created_at),
   CONSTRAINT fk_bills_account FOREIGN KEY (account_id) REFERENCES accounts(id)
