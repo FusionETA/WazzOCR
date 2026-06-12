@@ -26,8 +26,6 @@ h1,h2,h3 { font-family:var(--head); color:var(--ink); }
 .topbar { position:sticky; top:0; z-index:20; background:#fff; border-bottom:1px solid var(--line);
   padding:.8rem 1.5rem; display:flex; align-items:center; justify-content:space-between; box-shadow:var(--shadow-sm); }
 .topbar .brand { display:flex; align-items:center; gap:.6rem; font-family:var(--head); font-weight:800; color:var(--navy); font-size:1.1rem; }
-.logo { width:30px; height:30px; border-radius:8px; color:#fff; font-weight:800; font-size:.72rem;
-  display:inline-flex; align-items:center; justify-content:center; background:var(--grad); box-shadow:var(--shadow-sm); }
 .topbar .right { display:flex; align-items:center; gap:.75rem; }
 .who { font-size:.82rem; color:var(--muted); }
 
