@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My account — WazzOCR</title>
+  <style>
+    :root { --primary:#1A2E6F; --accent:#FF6B35; --border:#E2E8F0; --muted:#6B7A8D; --bg:#F4F6FB; --text:#1C2B3A; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+    header { background:#fff; border-bottom:1px solid var(--border); padding:1rem 1.5rem; display:flex; justify-content:space-between; align-items:center; }
+    header .brand { font-weight:800; color:var(--primary); display:flex; align-items:center; gap:.5rem; }
+    header .logo { width:28px;height:28px;border-radius:6px;background:var(--primary);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:800; }
+    header button { background:#fff; border:1px solid var(--border); border-radius:8px; padding:.45rem .8rem; font-weight:600; cursor:pointer; }
+    .wrap { max-width:760px; margin:1.5rem auto; padding:0 1.5rem; }
+    .card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:1.5rem; margin-bottom:1.25rem; }
+    .label { font-size:.72rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+    .counter { font-size:3rem; font-weight:800; color:var(--primary); line-height:1.1; }
+    .row { display:flex; gap:.5rem; margin:.35rem 0; }
+    .row .k { color:var(--muted); min-width:140px; }
+    textarea { width:100%; border:1px solid var(--border); border-radius:8px; padding:.6rem; font-family:monospace; font-size:.8rem; }
+    .btn { background:var(--primary); color:#fff; border:none; border-radius:8px; padding:.55rem 1rem; font-weight:700; cursor:pointer; }
+    .adminNote a { color:var(--primary); font-weight:600; }
+    table { width:100%; border-collapse:collapse; font-size:.85rem; }
+    th { text-align:left; color:var(--muted); font-size:.72rem; text-transform:uppercase; padding:.4rem .3rem; }
+    td { padding:.4rem .3rem; border-top:1px solid var(--border); }
+    .pill { padding:.1rem .45rem; border-radius:999px; font-size:.72rem; font-weight:700; }
+    .msg { font-size:.85rem; padding:.5rem .7rem; border-radius:8px; margin-top:.5rem; display:none; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand"><span class="logo">FE</span> WazzOCR</span>
+    <button id="logoutBtn">Sign out</button>
+  </header>
+  <div class="wrap" id="content"><div class="card">Loading…</div></div>
+  <script>
+    function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+    function statusPill(s, reason) {
+      const c = { success:['#F0FDF4','#15803D'], failed:['#FEF2F2','#B91C1C'], pending:['#FFFBEB','#B45309'], skipped:['#F1F5F9','#64748B'] };
+      const [bg,fg] = c[s] || c.skipped;
+      return `<span title="${esc(reason||'')}" class="pill" style="background:${bg};color:${fg}">${esc(s)}</span>`;
+    }
+    document.getElementById('logoutBtn').onclick = async () => { await fetch('/auth/logout',{method:'POST'}); location.href='/login.html'; };
+
+    async function load() {
+      let data;
+      try {
+        const r = await fetch('/api/me/summary');
+        if (r.status === 401) { location.href='/login.html'; return; }
+        data = await r.json();
+      } catch { document.getElementById('content').innerHTML = '<div class="card">Could not load. Please refresh.</div>'; return; }
+      const c = document.getElementById('content');
+      if (data.user.isSuperAdmin) {
+        c.innerHTML = `
+          <div class="card">
+            <div class="label">Signed in as</div>
+            <div class="row"><div class="k">Name</div><div>${esc(data.user.name||'-')}</div></div>
+            <div class="row"><div class="k">Email</div><div>${esc(data.user.email)}</div></div>
+            <div class="row"><div class="k">Role</div><div>Super admin (FusionETA)</div></div>
+          </div>
+          <div class="card adminNote"><a href="/admin.html">Open the admin dashboard →</a></div>`;
+        return;
+      }
+      c.innerHTML = `
+        <div class="card"><div class="label">Bills successfully created</div><div class="counter">${data.successCount}</div></div>
+        <div class="card">
+          <div class="label">Account</div>
+          <div class="row"><div class="k">Organisation</div><div>${esc(data.account?data.account.name:'-')}</div></div>
+          <div class="row"><div class="k">Signed in as</div><div>${esc(data.user.name||data.user.email)}</div></div>
+          <div class="row"><div class="k">Xero orgs</div><div id="connList">…</div></div>
+          <div class="row"><div class="k">WhatsApp channels</div><div id="chanList">…</div></div>
+        </div>
+        <div class="card">
+          <div class="label">Chart of accounts (CSV upload)</div>
+          <p style="color:var(--muted);font-size:.85rem;">Columns: code, name, category. Replaces your current list, used to auto-code bill line items.</p>
+          <textarea id="coaCsv" rows="5" placeholder="926-0000,Utilities Expenses,Expense"></textarea>
+          <div style="margin-top:.5rem;"><button class="btn" id="coaBtn">Upload COA</button>
+          <span id="coaCount" style="color:var(--muted);font-size:.85rem;margin-left:.6rem;"></span></div>
+          <div class="msg" id="coaMsg"></div>
+        </div>
+        <div class="card"><div class="label">Recent bills</div><div id="billsList" style="margin-top:.6rem;">…</div></div>`;
+      loadExtras();
+    }
+
+    async function loadExtras() {
+      try {
+        const [conn, chan, coa, bl] = await Promise.all([
+          fetch('/api/me/connections').then(r=>r.json()),
+          fetch('/api/me/channels').then(r=>r.json()),
+          fetch('/api/me/coa').then(r=>r.json()),
+          fetch('/api/me/bills?limit=20').then(r=>r.json())
+        ]);
+        document.getElementById('connList').textContent = (conn.connections||[]).map(x=>x.tenant_name||x.xero_tenant_id).join(', ') || 'None connected';
+        document.getElementById('chanList').textContent = (chan.channels||[]).map(c=>c.label||c.channel_id).join(', ') || 'None';
+        document.getElementById('coaCount').textContent = (coa.accounts||[]).length + ' codes loaded';
+        const bills = bl.bills || [];
+        document.getElementById('billsList').innerHTML = bills.length ? `
+          <table><thead><tr><th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Status</th></tr></thead>
+          <tbody>${bills.map(b=>`<tr>
+            <td style="color:var(--muted)">${new Date(b.created_at).toLocaleDateString()}</td>
+            <td>${esc(b.supplier||'-')}</td><td>${esc(b.invoice_no||'-')}</td>
+            <td>${b.total!=null?esc(b.currency||'')+' '+Number(b.total).toFixed(2):'-'}</td>
+            <td>${statusPill(b.status,b.failure_reason)}</td></tr>`).join('')}</tbody></table>`
+          : '<span style="color:var(--muted);font-size:.85rem;">No bills yet.</span>';
+      } catch {}
+      const btn = document.getElementById('coaBtn');
+      if (btn) btn.onclick = async () => {
+        const msg = document.getElementById('coaMsg');
+        try {
+          const r = await fetch('/api/me/coa', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ csv: document.getElementById('coaCsv').value }) });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error||'Upload failed.');
+          msg.style.display='block'; msg.style.background='#F0FDF4'; msg.style.color='#15803D'; msg.textContent = `Uploaded ${d.count} codes.`;
+          document.getElementById('coaCount').textContent = d.count + ' codes loaded';
+        } catch (e) { msg.style.display='block'; msg.style.background='#FEF2F2'; msg.style.color='#B91C1C'; msg.textContent = e.message; }
+      };
+    }
+    load();
+  </script>
+</body>
+</html>

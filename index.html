@@ -3,6 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Auth gate: redirect to login if there is no valid session. Hides the page
+       until the check resolves to avoid a flash of the dashboard. -->
+  <script>
+    (function () {
+      document.documentElement.style.visibility = 'hidden';
+      fetch('/auth/me', { credentials: 'same-origin' })
+        .then(function (r) {
+          if (!r.ok) { location.replace('/login.html'); }
+          else { document.documentElement.style.visibility = ''; }
+        })
+        .catch(function () { document.documentElement.style.visibility = ''; });
+      document.addEventListener('DOMContentLoaded', function () {
+        var so = document.getElementById('signOutLink');
+        if (so) so.addEventListener('click', function (e) {
+          e.preventDefault();
+          fetch('/auth/logout', { method: 'POST' }).finally(function () { location.href = '/login.html'; });
+        });
+      });
+    })();
+  </script>
   <title>AI Bill Scanner to Xero | FusionETA</title>
   <meta name="description" content="AI bill scanner by FusionETA. Upload a receipt or invoice image, parse structured bill data, and create Xero draft bills.">
   <meta name="keywords" content="bill scanner, invoice parser, receipt OCR, Xero draft bill, Tesseract, Groq, Gemini, Malaysia, FusionETA">
@@ -841,10 +861,11 @@
         <span class="logo-text">FusionETA</span>
       </a>
       <ul class="nav-links" id="navLinks">
+        <li><a href="/account.html" class="nav-link">My Account</a></li>
         <li><a href="https://fusioneta.com.my" class="nav-link">Home</a></li>
         <li><a href="https://fusioneta.com.my/web/services/" class="nav-link">Services</a></li>
-        <li><a href="https://fusioneta.com.my/web/about/" class="nav-link">About</a></li>
         <li><a href="https://fusioneta.com.my/web/contact/" class="nav-link">Contact</a></li>
+        <li><a href="#" class="nav-link" id="signOutLink">Sign out</a></li>
       </ul>
       <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
         <span></span><span></span><span></span>
@@ -869,81 +890,12 @@
     <div id="globalNotice" class="notice info"></div>
 
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="scan">⚡ Scan</button>
-      <button class="tab" data-tab="unmatched">📥 Unmatched <span class="tab-badge" id="unmatchedBadge" style="display:none;">0</span></button>
+      <button class="tab active" data-tab="unmatched">📥 Unmatched <span class="tab-badge" id="unmatchedBadge" style="display:none;">0</span></button>
       <button class="tab" data-tab="organisations">🏢 Organisations</button>
       <button class="tab" data-tab="settings">⚙️ Settings</button>
     </nav>
 
-    <!-- ── Scan tab ─────────────────────────────────────────────────────── -->
-    <div class="tab-panel active" id="panel-scan">
-      <div class="tool-grid">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-icon">🧾</div>
-            <div>
-              <div class="card-title">Upload Bill / Receipt</div>
-              <div class="card-subtitle">Test the OCR + match flow from your browser</div>
-            </div>
-          </div>
-          <div class="card-body">
-            <div class="drop-zone" id="billDropZone">
-              <input type="file" id="billFileInput" accept=".png,.jpg,.jpeg,image/png,image/jpeg">
-              <div class="drop-icon">📄</div>
-              <h3>Drop your bill here</h3>
-              <p>or click to browse files</p>
-              <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--fe-muted);">PNG · JPG · JPEG</div>
-            </div>
-
-            <div id="billPreviewWrap" style="display:none;">
-              <img id="billPreviewImg" src="" alt="Bill preview" style="width:100%;max-height:280px;object-fit:contain;border-radius:var(--fe-radius-sm);border:1px solid var(--fe-border);background:var(--fe-light);">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.625rem;">
-                <span style="font-size:0.78rem;color:var(--fe-muted);" id="billImgName">—</span>
-                <button class="btn-ghost" onclick="resetBill()">✕ Change</button>
-              </div>
-            </div>
-
-            <button class="btn btn-primary" id="scanBillBtn" disabled onclick="scanBill()"
-              style="width:100%;justify-content:center;margin-top:1rem;">
-              ⚡ Scan &amp; Parse Bill
-            </button>
-
-            <div id="billProgressWrap" style="display:none;margin-top:1.25rem;">
-              <div class="step-list">
-                <div class="step-item" id="bstep1"><div class="step-dot"></div><span class="step-text">Reading image with Tesseract OCR…</span></div>
-                <div class="step-item" id="bstep2"><div class="step-dot"></div><span class="step-text">Sending text to AI…</span></div>
-                <div class="step-item" id="bstep3"><div class="step-dot"></div><span class="step-text">Matching organisation…</span></div>
-              </div>
-              <div class="progress-bar-track" style="margin-top:1rem;">
-                <div class="progress-bar-fill" id="billProgressFill"></div>
-              </div>
-            </div>
-
-            <div id="billError" style="display:none;margin-top:1rem;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:0.875rem;font-size:0.82rem;color:#DC2626;"></div>
-
-            <button id="billRawToggle" onclick="toggleBillRaw()" style="display:none;font-size:0.75rem;color:var(--fe-muted);background:none;border:none;cursor:pointer;margin-top:0.75rem;padding:0;">▸ Show raw OCR text</button>
-            <div id="billRawOcr" style="display:none;margin-top:0.5rem;background:var(--fe-light);border:1px solid var(--fe-border);border-radius:var(--fe-radius-sm);padding:0.875rem;font-size:0.72rem;font-family:monospace;color:var(--fe-muted);max-height:130px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;"></div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-icon">📑</div>
-            <div>
-              <div class="card-title">Structured Bill</div>
-              <div class="card-subtitle">AI-parsed + auto-matched organisation</div>
-            </div>
-          </div>
-          <div class="card-body" style="padding:0;">
-            <div id="billEmptyState" class="empty-state">
-              <div class="empty-state-icon">🧾</div>
-              <p>Your structured bill will appear here<br>after scanning.</p>
-            </div>
-            <div id="billOutput"></div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- Scan tab removed — bills come in via WhatsApp. -->
 
     <!-- ── Unmatched tab ────────────────────────────────────────────────── -->
     <div class="tab-panel" id="panel-unmatched">
@@ -1169,9 +1121,9 @@
   let confirmPromptResolve = null;
 
   // ── Tab handling ──
-  const panels = ['scan', 'unmatched', 'organisations', 'settings'];
+  const panels = ['unmatched', 'organisations', 'settings'];
   function activateTab(name) {
-    if (!panels.includes(name)) name = 'scan';
+    if (!panels.includes(name)) name = 'unmatched';
     document.querySelectorAll('.tab').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tab === name);
     });
@@ -1187,7 +1139,7 @@
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => activateTab(btn.dataset.tab));
   });
-  const initialHash = (location.hash || '#scan').slice(1);
+  const initialHash = (location.hash || '#unmatched').slice(1);
   activateTab(initialHash);
 
   function showGlobalNotice(message, type = 'info') {
@@ -1983,24 +1935,27 @@
     ));
   }
 
-  document.addEventListener('paste', e => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) { handleBillFile(file); break; }
+  // Scan tab removed — only wire these up if the elements still exist.
+  if (billFileInput && billDropZone) {
+    document.addEventListener('paste', e => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) { handleBillFile(file); break; }
+        }
       }
-    }
-  });
-  billFileInput.addEventListener('change', e => handleBillFile(e.target.files[0]));
-  billDropZone.addEventListener('dragover', e => { e.preventDefault(); billDropZone.classList.add('dragover'); });
-  billDropZone.addEventListener('dragleave', () => billDropZone.classList.remove('dragover'));
-  billDropZone.addEventListener('drop', e => {
-    e.preventDefault(); billDropZone.classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    handleBillFile(f);
-  });
+    });
+    billFileInput.addEventListener('change', e => handleBillFile(e.target.files[0]));
+    billDropZone.addEventListener('dragover', e => { e.preventDefault(); billDropZone.classList.add('dragover'); });
+    billDropZone.addEventListener('dragleave', () => billDropZone.classList.remove('dragover'));
+    billDropZone.addEventListener('drop', e => {
+      e.preventDefault(); billDropZone.classList.remove('dragover');
+      const f = e.dataTransfer.files[0];
+      handleBillFile(f);
+    });
+  }
 
   function handleBillFile(file) {
     if (!file) return;

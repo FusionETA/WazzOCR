@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — WazzOCR</title>
+  <style>
+    :root { --primary:#1A2E6F; --accent:#FF6B35; --border:#E2E8F0; --muted:#6B7A8D; --bg:#F4F6FB; --text:#1C2B3A; --ok:#15803D; --bad:#B91C1C; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+    header { background:#fff; border-bottom:1px solid var(--border); padding:1rem 1.5rem; display:flex; justify-content:space-between; align-items:center; }
+    header .brand { font-weight:800; color:var(--primary); display:flex; align-items:center; gap:.5rem; }
+    header .logo { width:28px;height:28px;border-radius:6px;background:var(--primary);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:800; }
+    header button { background:#fff; border:1px solid var(--border); border-radius:8px; padding:.45rem .8rem; font-weight:600; cursor:pointer; }
+    .wrap { max-width:1000px; margin:1.5rem auto; padding:0 1.5rem; }
+    .card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:1.25rem; margin-bottom:1.25rem; }
+    h2 { margin:0 0 1rem; font-size:1.1rem; } h3 { margin:1.25rem 0 .5rem; font-size:.95rem; }
+    table { width:100%; border-collapse:collapse; font-size:.88rem; }
+    th, td { text-align:left; padding:.5rem .6rem; border-bottom:1px solid var(--border); }
+    th { font-size:.72rem; text-transform:uppercase; color:var(--muted); letter-spacing:.04em; }
+    button.primary { background:var(--primary); color:#fff; border:none; border-radius:8px; padding:.5rem .9rem; font-weight:700; cursor:pointer; }
+    button.link { background:none; border:none; color:var(--primary); font-weight:600; cursor:pointer; padding:0; }
+    input, textarea, select { width:100%; padding:.5rem .65rem; border:1px solid var(--border); border-radius:8px; font-size:.9rem; outline:none; font-family:inherit; }
+    input:focus, textarea:focus { border-color:var(--primary); }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
+    .row { display:flex; gap:.5rem; align-items:flex-end; flex-wrap:wrap; }
+    .field { margin:.5rem 0; }
+    .field label { font-size:.72rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; display:block; margin-bottom:.25rem; }
+    .pill { display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.72rem; font-weight:700; }
+    .pill.success { background:#F0FDF4; color:var(--ok); } .pill.failed { background:#FEF2F2; color:var(--bad); } .pill.pending { background:#FFFBEB; color:#B45309; }
+    .msg { font-size:.85rem; padding:.5rem .7rem; border-radius:8px; margin:.5rem 0; display:none; }
+    .msg.ok { background:#F0FDF4; color:var(--ok); display:block; } .msg.err { background:#FEF2F2; color:var(--bad); display:block; }
+    .muted { color:var(--muted); font-size:.85rem; } .back { margin-bottom:1rem; }
+  </style>
+</head>
+<body>
+  <header><span class="brand"><span class="logo">FE</span> WazzOCR Admin</span><button id="logoutBtn">Sign out</button></header>
+  <div class="wrap" id="app"><div class="card">Loading…</div></div>
+  <script>
+  const app = document.getElementById('app');
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  async function api(method, url, body) {
+    const r = await fetch(url, { method, headers: body?{'Content-Type':'application/json'}:undefined, body: body?JSON.stringify(body):undefined });
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(data.error || ('HTTP '+r.status));
+    return data;
+  }
+  document.getElementById('logoutBtn').onclick = async () => { await fetch('/auth/logout',{method:'POST'}); location.href='/login.html'; };
+
+  async function guard() {
+    try { const me = await api('GET','/auth/me');
+      if (!me.user.isSuperAdmin) { app.innerHTML = '<div class="card">Admin access required. <a href="/account.html">Go to your account</a></div>'; return false; }
+      return true;
+    } catch { location.href='/login.html'; return false; }
+  }
+
+  async function renderList() {
+    const { accounts } = await api('GET','/admin/accounts');
+    app.innerHTML = `
+      <div class="card"><h2>Accounts</h2>
+        <table><thead><tr><th>Name</th><th>Status</th><th>AI model</th><th>Created</th><th></th></tr></thead>
+        <tbody>${accounts.map(a=>`<tr><td><strong>${esc(a.name)}</strong></td><td>${esc(a.status)}</td><td>${esc(a.ai_model)}</td>
+        <td class="muted">${new Date(a.created_at).toLocaleDateString()}</td><td><button class="link" onclick="openAccount(${a.id})">Open →</button></td></tr>`).join('')}</tbody></table>
+        ${accounts.length?'':'<p class="muted">No accounts yet.</p>'}</div>
+      <div class="card"><h2>Create account</h2>
+        <div class="row"><div style="flex:1"><input id="newAcctName" placeholder="Company / account name"></div>
+        <button class="primary" onclick="createAccount()">Create</button></div><div class="msg" id="createMsg"></div></div>
+      <div class="card"><h2>General AI prompt (shared base)</h2>
+        <p class="muted">Applies to every account. Each account can add its own extra rules.</p>
+        <textarea id="generalPrompt" rows="8"></textarea>
+        <div class="row" style="margin-top:.5rem"><button class="primary" onclick="saveGeneralPrompt()">Save general prompt</button></div>
+        <div class="msg" id="gpMsg"></div></div>`;
+    try { document.getElementById('generalPrompt').value = (await api('GET','/admin/settings/general-prompt')).generalPrompt || ''; } catch {}
+  }
+  window.createAccount = async () => {
+    const name = document.getElementById('newAcctName').value.trim(); const m = document.getElementById('createMsg');
+    if (!name) { m.className='msg err'; m.textContent='Enter a name.'; return; }
+    try { await api('POST','/admin/accounts',{name}); renderList(); } catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  window.saveGeneralPrompt = async () => {
+    const m = document.getElementById('gpMsg');
+    try { await api('PUT','/admin/settings/general-prompt',{ generalPrompt: document.getElementById('generalPrompt').value }); m.className='msg ok'; m.textContent='Saved.'; }
+    catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+
+  window.openAccount = async (id) => {
+    const d = await api('GET','/admin/accounts/'+id);
+    const counts = {}; (d.statusCounts||[]).forEach(s=>counts[s.status]=s.n);
+    app.innerHTML = `
+      <div class="back"><button class="link" onclick="renderList()">← All accounts</button></div>
+      <div class="card"><h2>${esc(d.account.name)}</h2>
+        <div class="row"><span class="pill success">success ${counts.success||0}</span><span class="pill failed">failed ${counts.failed||0}</span>
+        <span class="pill pending">pending ${counts.pending||0}</span><span class="muted">COA codes: ${d.coaCount}</span></div>
+        ${(d.failureReasons||[]).length?`<h3>Failure reasons</h3><table><tbody>${d.failureReasons.map(f=>`<tr><td>${esc(f.failure_reason||'(none)')}</td><td style="text-align:right">${f.n}</td></tr>`).join('')}</tbody></table>`:''}</div>
+      <div class="card"><h2>Settings</h2>
+        <div class="grid2">
+          <div class="field"><label>Status</label><select id="setStatus">${['active','suspended','trial'].map(s=>`<option ${d.account.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+          <div class="field"><label>AI model</label><select id="setModel">${['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>`<option ${d.account.ai_model===s?'selected':''}>${s}</option>`).join('')}</select></div>
+        </div>
+        <div class="field"><label>Auto-create Xero bills</label><select id="setAuto"><option value="1" ${d.account.auto_create_bills?'selected':''}>Yes</option><option value="0" ${!d.account.auto_create_bills?'selected':''}>No</option></select></div>
+        <div class="field"><label>Per-account prompt add-on</label><textarea id="setAddon" rows="5" placeholder="Extra AI rules for this account…">${esc(d.account.ai_prompt_addon||'')}</textarea></div>
+        <button class="primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
+      <div class="card"><h2>Users</h2>
+        <table><tbody>${(d.users||[]).map(u=>`<tr><td>${esc(u.name||'-')}</td><td>${esc(u.email)}</td><td><span class="pill ${u.status==='active'?'success':'pending'}">${esc(u.status)}</span></td></tr>`).join('')||'<tr><td class="muted">No users</td></tr>'}</tbody></table>
+        <h3>Invite a user (WhatsApp)</h3>
+        <div class="grid2"><div class="field"><label>Email</label><input id="invEmail" type="email"></div><div class="field"><label>Phone (e.g. 60123…)</label><input id="invPhone"></div></div>
+        <div class="field"><label>Name</label><input id="invName"></div>
+        <button class="primary" onclick="invite(${id})">Send invite</button><div class="msg" id="invMsg"></div></div>
+      <div class="card"><h2>Wazzup channels</h2>
+        <table><tbody>${(d.channels||[]).map(c=>`<tr><td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td><td>${esc(c.status)}</td><td><button class="link" onclick="delChannel(${id},${c.id})">Remove</button></td></tr>`).join('')||'<tr><td class="muted">No channels</td></tr>'}</tbody></table>
+        <h3>Add channel</h3>
+        <div class="grid2"><div class="field"><label>Channel ID</label><input id="chId"></div><div class="field"><label>Label</label><input id="chLabel"></div></div>
+        <div class="field"><label>API key (optional)</label><input id="chKey"></div>
+        <button class="primary" onclick="addChannel(${id})">Add channel</button><div class="msg" id="chMsg"></div></div>
+      <div class="card"><h2>Xero organisations</h2>
+        <table><tbody>${(d.connections||[]).map(x=>`<tr><td>${esc(x.tenant_name||x.xero_tenant_id)}</td><td>${esc(x.status)}${x.needs_reconnect?' <span class="pill failed">reconnect</span>':''}</td></tr>`).join('')||'<tr><td class="muted">None connected yet</td></tr>'}</tbody></table></div>
+      <div class="card"><h2>Chart of accounts (CSV)</h2>
+        <p class="muted">Columns: code, name, category. Replaces the current ${d.coaCount} codes.</p>
+        <textarea id="coaCsv" rows="6" placeholder="926-0000,Utilities Expenses,Expense"></textarea>
+        <div class="row" style="margin-top:.5rem"><button class="primary" onclick="uploadCoa(${id})">Upload COA</button></div><div class="msg" id="coaMsg"></div></div>`;
+  };
+  window.saveSettings = async (id) => {
+    const m = document.getElementById('setMsg');
+    try { await api('PUT','/admin/accounts/'+id, { status: document.getElementById('setStatus').value, aiModel: document.getElementById('setModel').value, autoCreateBills: document.getElementById('setAuto').value==='1', aiPromptAddon: document.getElementById('setAddon').value });
+      m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  window.invite = async (id) => {
+    const m = document.getElementById('invMsg');
+    try { const r = await api('POST','/admin/accounts/'+id+'/invite', { email: document.getElementById('invEmail').value.trim(), phone: document.getElementById('invPhone').value.trim(), name: document.getElementById('invName').value.trim() });
+      m.className='msg ok'; m.textContent = r.sent ? 'Invite sent via WhatsApp.' : ('WhatsApp send failed. Share this link manually: ' + r.link); openAccount(id);
+    } catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  window.addChannel = async (id) => {
+    const m = document.getElementById('chMsg');
+    try { await api('POST','/admin/accounts/'+id+'/channels', { channelId: document.getElementById('chId').value.trim(), label: document.getElementById('chLabel').value.trim(), apiKey: document.getElementById('chKey').value.trim()||undefined }); openAccount(id);
+    } catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  window.delChannel = async (id, cid) => { try { await api('DELETE','/admin/accounts/'+id+'/channels/'+cid); openAccount(id); } catch(e){ alert(e.message); } };
+  window.uploadCoa = async (id) => {
+    const m = document.getElementById('coaMsg');
+    try { const r = await api('POST','/admin/accounts/'+id+'/coa', { csv: document.getElementById('coaCsv').value }); m.className='msg ok'; m.textContent = `Uploaded ${r.count} codes.`; }
+    catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  (async () => { if (await guard()) renderList(); })();
+  </script>
+</body>
+</html>

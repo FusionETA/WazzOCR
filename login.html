@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in — WazzOCR</title>
+  <style>
+    :root { --primary:#1A2E6F; --accent:#FF6B35; --border:#E2E8F0; --muted:#6B7A8D; --bg:#F4F6FB; --text:#1C2B3A; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; color:var(--text);
+      background:linear-gradient(135deg,#1A2E6F 0%,#2D4DB3 100%);
+      min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { background:#fff; border-radius:16px; padding:2rem; width:100%; max-width:380px;
+      box-shadow:0 8px 32px rgba(26,46,111,.25); }
+    .logo { width:40px;height:40px;border-radius:10px;background:var(--primary);color:#fff;
+      display:inline-flex;align-items:center;justify-content:center;font-weight:800;margin-bottom:.75rem; }
+    h1 { margin:0 0 .25rem; font-size:1.35rem; }
+    p.sub { margin:0 0 1.5rem; color:var(--muted); font-size:.9rem; }
+    label { display:block; font-size:.72rem; font-weight:700; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.05em; margin:1rem 0 .35rem; }
+    input { width:100%; padding:.65rem .8rem; border:1px solid var(--border); border-radius:8px; font-size:.95rem; outline:none; }
+    input:focus { border-color:var(--primary); }
+    button { width:100%; margin-top:1.5rem; padding:.75rem; border:none; border-radius:8px;
+      background:var(--primary); color:#fff; font-weight:700; font-size:.95rem; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .msg { margin-top:1rem; font-size:.85rem; padding:.6rem .75rem; border-radius:8px; display:none; }
+    .msg.error { background:#FEF2F2; color:#B91C1C; display:block; }
+    .msg.ok { background:#F0FDF4; color:#15803D; display:block; }
+    .links { margin-top:1.25rem; text-align:center; font-size:.85rem; }
+    .links a { color:var(--primary); text-decoration:none; cursor:pointer; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">FE</div>
+    <h1>Sign in</h1>
+    <p class="sub">WazzOCR bill automation</p>
+    <form id="loginForm">
+      <label for="email">Email</label>
+      <input type="email" id="email" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input type="password" id="password" autocomplete="current-password" required>
+      <button type="submit" id="submitBtn">Sign in</button>
+    </form>
+    <div class="msg" id="msg"></div>
+    <div class="links"><a id="forgotLink">Forgot password?</a></div>
+  </div>
+  <script>
+    const msg = document.getElementById('msg');
+    function showMsg(t, ok) { msg.textContent = t; msg.className = 'msg ' + (ok ? 'ok' : 'error'); }
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn'); btn.disabled = true;
+      try {
+        const r = await fetch('/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: document.getElementById('email').value.trim(), password: document.getElementById('password').value })
+        });
+        const data = await r.json();
+        if (!r.ok) { showMsg(data.error || 'Sign in failed.'); btn.disabled = false; return; }
+        window.location.href = (data.user && data.user.isSuperAdmin) ? '/admin.html' : '/account.html';
+      } catch (err) { showMsg('Network error. Please try again.'); btn.disabled = false; }
+    });
+    document.getElementById('forgotLink').addEventListener('click', async () => {
+      const email = document.getElementById('email').value.trim();
+      if (!email) { showMsg('Enter your email above first, then tap Forgot password.'); return; }
+      await fetch('/auth/forgot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+      showMsg('If that email is registered, a reset link has been sent to your WhatsApp.', true);
+    });
+  </script>
+</body>
+</html>
