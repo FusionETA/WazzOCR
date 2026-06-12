@@ -27,6 +27,12 @@ async function getByChannelId(channelId) {
   return { ...row, api_key: row.api_key ? decrypt(row.api_key) : null };
 }
 
+// Decrypted API key for one channel (scoped to its account). Null if none.
+async function getDecryptedApiKey(accountId, id) {
+  const row = await db.getOne('SELECT api_key FROM wazzup_channels WHERE id = ? AND account_id = ?', [id, accountId]);
+  return row && row.api_key ? decrypt(row.api_key) : null;
+}
+
 async function add(accountId, { channelId, apiKey = null, label = null }) {
   if (!channelId) throw new Error('channelId is required.');
   return db.insert(
@@ -40,4 +46,4 @@ async function remove(accountId, id) {
   return r.affectedRows;
 }
 
-module.exports = { listByAccount, resolveAccountId, getByChannelId, add, remove };
+module.exports = { listByAccount, resolveAccountId, getByChannelId, getDecryptedApiKey, add, remove };

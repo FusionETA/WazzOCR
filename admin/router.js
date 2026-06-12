@@ -15,6 +15,7 @@ const wazzupChannels = require('../models/wazzupChannels');
 const xeroConnections = require('../models/xeroConnections');
 const appSettings = require('../models/appSettings');
 const invites = require('../auth/invites');
+const wazzup = require('../lib/wazzup');
 const { parseCoa } = require('../lib/csv');
 const { attachUser, requireAuth, requireSuperAdmin } = require('../auth/middleware');
 
@@ -104,6 +105,15 @@ router.post('/accounts/:id/channels', async (req, res) => {
 router.delete('/accounts/:id/channels/:cid', async (req, res) => {
   const removed = await wazzupChannels.remove(Number(req.params.id), Number(req.params.cid));
   res.json({ ok: true, removed });
+});
+
+// One-click: point this channel's Wazzup account at our webhook.php.
+router.post('/accounts/:id/channels/:cid/register-webhook', async (req, res) => {
+  const apiKey = await wazzupChannels.getDecryptedApiKey(Number(req.params.id), Number(req.params.cid));
+  if (!apiKey) return res.status(400).json({ error: 'No API key stored for this channel. Add the API key first.' });
+  const result = await wazzup.registerWebhook(apiKey, process.env.PUBLIC_WEBHOOK_URL);
+  if (!result.ok) return res.status(502).json({ error: result.error });
+  res.json({ ok: true });
 });
 
 // Admin can also upload an account's COA (CSV: code, name, category).

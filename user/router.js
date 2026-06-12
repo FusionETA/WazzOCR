@@ -8,6 +8,7 @@ const coa = require('../models/coa');
 const bills = require('../models/bills');
 const wazzupChannels = require('../models/wazzupChannels');
 const xeroConnections = require('../models/xeroConnections');
+const wazzup = require('../lib/wazzup');
 const { parseCoa } = require('../lib/csv');
 const { attachUser, requireAuth } = require('../auth/middleware');
 
@@ -56,10 +57,39 @@ router.post('/coa', async (req, res) => {
   res.json({ ok: true, count });
 });
 
-// Connected Wazzup channels (read-only for the user).
+// Wazzup channels — customers who self-manage can add/remove their own.
 router.get('/channels', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;
   res.json({ channels: await wazzupChannels.listByAccount(accountId) });
+});
+
+router.post('/channels', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const { channelId, apiKey, label } = req.body || {};
+  if (!channelId) return res.status(400).json({ error: 'Channel ID is required.' });
+  try {
+    const id = await wazzupChannels.add(accountId, { channelId, apiKey, label });
+    res.json({ ok: true, id });
+  } catch (err) {
+    const dup = /Duplicate/.test(err.message);
+    res.status(dup ? 409 : 500).json({ error: dup ? 'That channel is already linked to an account.' : err.message });
+  }
+});
+
+router.delete('/channels/:id', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const removed = await wazzupChannels.remove(accountId, Number(req.params.id));
+  res.json({ ok: true, removed });
+});
+
+// One-click: point this channel's Wazzup account at our webhook.php.
+router.post('/channels/:id/register-webhook', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const apiKey = await wazzupChannels.getDecryptedApiKey(accountId, Number(req.params.id));
+  if (!apiKey) return res.status(400).json({ error: 'No API key stored for this channel. Add the API key first.' });
+  const result = await wazzup.registerWebhook(apiKey, process.env.PUBLIC_WEBHOOK_URL);
+  if (!result.ok) return res.status(502).json({ error: result.error });
+  res.json({ ok: true });
 });
 
 // Connected Xero organisations.
@@ -68,10 +98,10 @@ router.get('/connections', async (req, res) => {
   res.json({ connections: await xeroConnections.listByAccount(accountId) });
 });
 
-// Recent bill attempts for this account.
+// Recent bill attempts for this account. Optional ?status=success|pending|failed.
 router.get('/bills', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;
-  res.json({ bills: await bills.recent(accountId, req.query.limit) });
+  res.json({ bills: await bills.recent(accountId, req.query.limit, req.query.status) });
 });
 
 module.exports = router;
