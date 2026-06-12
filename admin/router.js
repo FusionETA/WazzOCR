@@ -146,6 +146,13 @@ router.delete('/accounts/:id/channels/:cid', async (req, res) => {
   res.json({ ok: true, removed });
 });
 
+// Reveal the full (decrypted) API key for one channel (for the View modal).
+router.get('/accounts/:id/channels/:cid/api-key', async (req, res) => {
+  const apiKey = await wazzupChannels.getDecryptedApiKey(Number(req.params.id), Number(req.params.cid));
+  if (!apiKey) return res.status(404).json({ error: 'No API key stored for this channel.' });
+  res.json({ apiKey });
+});
+
 // One-click: point this channel's Wazzup account at our webhook.php.
 router.post('/accounts/:id/channels/:cid/register-webhook', async (req, res) => {
   const apiKey = await wazzupChannels.getDecryptedApiKey(Number(req.params.id), Number(req.params.cid));

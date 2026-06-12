@@ -190,3 +190,13 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
   width:2rem; height:2rem; display:inline-flex; align-items:center; justify-content:center;
   border:none; background:none; color:var(--muted); cursor:pointer; border-radius:6px; padding:0; }
 .pw-toggle:hover { color:var(--navy); background:#F4F6FB; }
+
+/* ── Stat tiles (dashboard-style metric grid) ── */
+.stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:.85rem; }
+.stat-tile { border:1px solid var(--line); border-radius:var(--r-sm); padding:.9rem 1rem; background:#FAFBFE;
+  display:flex; flex-direction:column; gap:.3rem; }
+.stat-tile .t-num { font-family:var(--head); font-size:1.85rem; font-weight:800; color:var(--ink); line-height:1; letter-spacing:-.02em; }
+.stat-tile .t-label { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+.stat-tile.ok   { background:var(--ok-bg);  border-color:#CDEED8; } .stat-tile.ok .t-num   { color:var(--ok); }
+.stat-tile.bad  { background:var(--bad-bg); border-color:#F6D4D0; } .stat-tile.bad .t-num  { color:var(--bad); }
+.stat-tile.warn { background:var(--warn-bg);border-color:#F5E2BF; } .stat-tile.warn .t-num { color:var(--warn); }
