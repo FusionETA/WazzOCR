@@ -199,11 +199,17 @@
           fetch('/api/me/coa').then(r=>r.json())
         ]);
         const conns = conn.connections||[];
+        CONNECTIONS = conns;
         const cl = document.getElementById('connList');
         if (!conns.length) cl.textContent = 'None connected';
         else {
-          cl.innerHTML = `<div id="xeroDrop" style="max-width:340px;"></div><span class="muted" style="display:inline-block;margin-top:.35rem;">${conns.length} connected</span>`;
+          cl.innerHTML = `<div id="xeroDrop" style="max-width:340px;"></div>
+            <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.45rem;">
+              <span class="muted">${conns.length} connected</span>
+              <button class="linkbtn danger" type="button" id="xeroDiscBtn">Disconnect selected</button></div>
+            <div class="msg" id="xeroDiscMsg"></div>`;
           window.__searchDropdown('xeroDrop', conns.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
+          document.getElementById('xeroDiscBtn').onclick = () => disconnectSelectedXero();
         }
         renderChannels(chan.channels||[]);
         document.getElementById('coaCount').textContent = '— ' + (coa.accounts||[]).length + ' codes loaded';
@@ -234,6 +240,22 @@
       };
     }
     function showM(m,t,ok){ m.className='msg '+(ok?'ok':'err'); m.textContent=t; }
+    // Disconnect the org currently chosen in the Xero dropdown (revokes at Xero).
+    window.disconnectSelectedXero = async () => {
+      const dd=document.getElementById('xeroDrop'); const tid = dd && dd.value ? dd.value() : '';
+      const m=document.getElementById('xeroDiscMsg');
+      const conn = CONNECTIONS.find(c=>c.xero_tenant_id===tid);
+      if (!conn) { showM(m,'Choose an organisation to disconnect first.',false); return; }
+      const name = conn.tenant_name||conn.xero_tenant_id;
+      if (!confirm('Disconnect "'+name+'" from Xero?\n\nThis revokes WazzOCR\'s access to that organisation at Xero, then removes it here.')) return;
+      showM(m,'Disconnecting…',true);
+      try {
+        const r=await fetch('/api/me/connections/'+conn.id,{method:'DELETE'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
+        CONNECTIONS = CONNECTIONS.filter(c=>c.id!==conn.id);
+        showM(m,'Disconnected '+name+(d.revoked?'':' (removed here; could not reach Xero to revoke)'),true);
+        wireSettings();
+      } catch(e){ showM(m,e.message,false); }
+    };
     // Reusable styled file picker (click or drag-drop), shows the chosen filename.
     function wireFileDrop(dropId, inputId, textId, placeholder){
       const drop=document.getElementById(dropId), input=document.getElementById(inputId), text=document.getElementById(textId);

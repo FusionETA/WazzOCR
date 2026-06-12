@@ -125,6 +125,17 @@ router.get('/connections', async (req, res) => {
   res.json({ connections: await xeroConnections.listByAccount(accountId) });
 });
 
+// Disconnect one org: revoke it at Xero, then remove it locally.
+router.delete('/connections/:id', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  try {
+    const result = await require('../lib/xeroRevoke').disconnectOrg(accountId, Number(req.params.id));
+    res.json(result);
+  } catch (err) {
+    res.status(err.message === 'Connection not found.' ? 404 : 500).json({ error: err.message });
+  }
+});
+
 // Recent bill attempts for this account. Optional ?status=success|pending|failed.
 router.get('/bills', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;

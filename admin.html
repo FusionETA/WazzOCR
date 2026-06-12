@@ -142,54 +142,102 @@
     try { await api('POST','/admin/accounts',{name}); renderList(); } catch(e){ m.className='msg err'; m.textContent=e.message; }
   };
 
+  window.adminTab = (name) => {
+    document.querySelectorAll('#app .tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+    document.querySelectorAll('#app .panel').forEach(p=>p.classList.toggle('active', p.id==='ap-'+name));
+  };
   window.openAccount = async (id) => {
-    const d = await api('GET','/admin/accounts/'+id);
+    const [d, pr] = await Promise.all([ api('GET','/admin/accounts/'+id), api('GET','/admin/accounts/'+id+'/prompts') ]);
+    window.ACCOUNT_PROMPTS = pr.prompts||[]; window.CUR_CONNS = d.connections||[];
     const counts = {}; (d.statusCounts||[]).forEach(s=>counts[s.status]=s.n);
+    const addonLib = window.ACCOUNT_PROMPTS.length
+      ? `<table class="table"><tbody>${window.ACCOUNT_PROMPTS.map(p=>promptRow(p,id)).join('')}</tbody></table>`
+      : '<div class="empty">No add-on blocks yet. Click “Add prompt”.</div>';
     app.innerHTML = `
       <div class="page-head"><button class="linkbtn" onclick="renderList()">← All accounts</button><h1 style="margin-top:.4rem;">${esc(d.account.name)}</h1></div>
-      <div class="card">
-        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-          <span class="badge success">success ${counts.success||0}</span><span class="badge failed">failed ${counts.failed||0}</span>
-          <span class="badge pending">pending ${counts.pending||0}</span><span class="muted" style="margin-left:.3rem;">COA codes: ${d.coaCount}</span></div>
-        ${(d.failureReasons||[]).length?`<h3>Top failure reasons</h3><table class="table"><tbody>${d.failureReasons.map(f=>`<tr><td>${esc(f.failure_reason||'(none)')}</td><td style="text-align:right" class="num-cell">${f.n}</td></tr>`).join('')}</tbody></table>`:''}</div>
+      <div class="tabs">
+        <button data-tab="stats" class="active" onclick="adminTab('stats')">Stats</button>
+        <button data-tab="settings" onclick="adminTab('settings')">Settings &amp; users</button>
+        <button data-tab="connections" onclick="adminTab('connections')">Connections</button></div>
 
-      <div class="card"><h2>Settings</h2>
-        <div class="grid2">
-          <div class="field"><label>Status</label><select id="setStatus">${['active','suspended','trial'].map(s=>`<option ${d.account.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
-          <div class="field"><label>AI model</label><select id="setModel">${['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>`<option ${d.account.ai_model===s?'selected':''}>${s}</option>`).join('')}</select></div>
-        </div>
-        <div class="field"><label>Auto-create Xero bills</label><select id="setAuto"><option value="1" ${d.account.auto_create_bills?'selected':''}>Yes</option><option value="0" ${!d.account.auto_create_bills?'selected':''}>No</option></select></div>
-        <div class="field"><label>Per-account prompt add-on</label><textarea id="setAddon" rows="5" placeholder="Extra AI rules for this account…">${esc(d.account.ai_prompt_addon||'')}</textarea></div>
-        <button class="btn btn-primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
+      <div class="panel active" id="ap-stats">
+        <div class="card"><div class="eyebrow">Bills created this month</div>
+          <div class="stat" style="margin-top:.35rem;"><span class="num">${d.successThisMonth||0}</span><span class="unit">bills</span></div>
+          <div class="muted" style="margin-top:.25rem;">${counts.success||0} all-time</div></div>
+        <div class="card">
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+            <span class="badge success">success ${counts.success||0}</span><span class="badge failed">failed ${counts.failed||0}</span>
+            <span class="badge pending">pending ${counts.pending||0}</span><span class="muted" style="margin-left:.3rem;">COA codes: ${d.coaCount}</span></div>
+          ${(d.failureReasons||[]).length?`<h3>Why bills failed</h3><table class="table"><thead><tr><th>Reason</th><th style="text-align:right;">Count</th></tr></thead><tbody>${d.failureReasons.map(f=>`<tr><td>${esc(f.failure_reason||'(none)')}</td><td style="text-align:right" class="num-cell">${f.n}</td></tr>`).join('')}</tbody></table>`:'<p class="muted" style="margin-top:.8rem;">No failed bills 🎉</p>'}</div>
+      </div>
 
-      <div class="card"><h2>Users</h2>
-        <table class="table"><tbody>${(d.users||[]).map(u=>`<tr><td>${esc(u.name||'-')}</td><td>${esc(u.email)}</td><td style="text-align:right;"><span class="badge ${u.status==='active'?'success':'pending'}">${esc(u.status)}</span></td></tr>`).join('')||'<tr><td class="muted">No users</td></tr>'}</tbody></table>
-        <h3>Invite a user (WhatsApp)</h3>
-        <div class="grid2"><div class="field"><label>Email</label><input id="invEmail" type="email"></div><div class="field"><label>Phone (e.g. 60123…)</label><input id="invPhone"></div></div>
-        <div class="field"><label>Name</label><input id="invName"></div>
-        <button class="btn btn-primary" onclick="invite(${id})">Send invite</button><div class="msg" id="invMsg"></div></div>
+      <div class="panel" id="ap-settings">
+        <div class="card"><h2>Settings</h2>
+          <div class="grid2">
+            <div class="field"><label>Status</label><select id="setStatus">${['active','suspended','trial'].map(s=>`<option ${d.account.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+            <div class="field"><label>AI model</label><select id="setModel">${['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>`<option ${d.account.ai_model===s?'selected':''}>${s}</option>`).join('')}</select></div>
+          </div>
+          <div class="field"><label>Auto-create Xero bills</label><select id="setAuto"><option value="1" ${d.account.auto_create_bills?'selected':''}>Yes</option><option value="0" ${!d.account.auto_create_bills?'selected':''}>No</option></select></div>
+          <button class="btn btn-primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
 
-      <div class="card"><h2>Wazzup channels</h2>
-        <table class="table"><tbody>${(d.channels||[]).map(c=>`<tr><td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td><td><span class="badge ${c.status==='active'?'success':'skipped'}">${esc(c.status)}</span></td>
-          <td style="text-align:right;white-space:nowrap;"><button class="linkbtn" onclick="registerWebhook(${id},${c.id})">Register webhook</button> &nbsp; <button class="linkbtn danger" onclick="delChannel(${id},${c.id})">Remove</button></td></tr>`).join('')||'<tr><td class="muted">No channels</td></tr>'}</tbody></table>
-        <div class="msg" id="regMsg"></div>
-        <h3>Add channel</h3>
-        <div class="grid2"><div class="field"><label>Channel ID</label><input id="chId"></div><div class="field"><label>Label</label><input id="chLabel"></div></div>
-        <div class="field"><label>API key (optional)</label><input id="chKey"></div>
-        <button class="btn btn-primary" onclick="addChannel(${id})">Add channel</button><div class="msg" id="chMsg"></div></div>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;"><h2 style="margin:0;">AI prompt add-on</h2><button class="btn btn-primary btn-sm" onclick="openPromptModal(null,${id})">＋ Add prompt</button></div>
+          <p class="muted" style="margin:.5rem 0 1rem;">Extra rules for this account only, combined with the general prompt.</p>
+          <div id="acctPromptLib">${addonLib}</div></div>
 
-      <div class="card"><h2>Xero organisations</h2>
-        <table class="table"><tbody>${(d.connections||[]).map(x=>`<tr><td>${esc(x.tenant_name||x.xero_tenant_id)}</td><td style="text-align:right;"><span class="badge ${x.status==='active'?'success':'failed'}">${esc(x.status)}</span>${x.needs_reconnect?' <span class="badge failed">reconnect</span>':''}</td></tr>`).join('')||'<tr><td class="muted">None connected yet</td></tr>'}</tbody></table>
-        <a class="btn btn-primary" style="margin-top:.7rem;" href="/admin/accounts/${id}/xero/connect">＋ Connect Xero</a>
-        <p class="muted" style="margin-top:.5rem;">Opens Xero's consent screen — you'll need this account's Xero login.</p></div>
+        <div class="card"><h2>Users</h2>
+          <table class="table"><tbody>${(d.users||[]).map(u=>`<tr><td>${esc(u.name||'-')}</td><td>${esc(u.email)}</td><td style="text-align:right;"><span class="badge ${u.status==='active'?'success':'pending'}">${esc(u.status)}</span></td></tr>`).join('')||'<tr><td class="muted">No users</td></tr>'}</tbody></table>
+          <h3>Invite a user (WhatsApp)</h3>
+          <div class="grid2"><div class="field"><label>Email</label><input id="invEmail" type="email"></div><div class="field"><label>Phone (e.g. 60123…)</label><input id="invPhone"></div></div>
+          <div class="field"><label>Name</label><input id="invName"></div>
+          <button class="btn btn-primary" onclick="invite(${id})">Send invite</button><div class="msg" id="invMsg"></div></div>
+      </div>
 
-      <div class="card"><h2>Chart of accounts</h2>
-        <p class="muted">CSV columns: code, name, category. Replaces the current ${d.coaCount} codes.</p>
-        <textarea id="coaCsv" rows="6" placeholder="926-0000,Utilities Expenses,Expense"></textarea>
-        <div style="margin-top:.6rem;"><button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button></div><div class="msg" id="coaMsg"></div></div>`;
+      <div class="panel" id="ap-connections">
+        <div class="card"><h2>Wazzup channels</h2>
+          <table class="table"><tbody>${(d.channels||[]).map(c=>`<tr><td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td><td><span class="badge ${c.status==='active'?'success':'skipped'}">${esc(c.status)}</span></td>
+            <td style="text-align:right;white-space:nowrap;"><button class="linkbtn" onclick="registerWebhook(${id},${c.id})">Register webhook</button> &nbsp; <button class="linkbtn danger" onclick="delChannel(${id},${c.id})">Remove</button></td></tr>`).join('')||'<tr><td class="muted">No channels</td></tr>'}</tbody></table>
+          <div class="msg" id="regMsg"></div>
+          <h3>Add channel</h3>
+          <div class="grid2"><div class="field"><label>Channel ID</label><input id="chId"></div><div class="field"><label>Label</label><input id="chLabel"></div></div>
+          <div class="field"><label>API key (optional)</label><input id="chKey"></div>
+          <button class="btn btn-primary" onclick="addChannel(${id})">Add channel</button><div class="msg" id="chMsg"></div></div>
+
+        <div class="card"><h2>Xero organisations</h2>
+          <table class="table"><tbody>${(d.connections||[]).map(x=>`<tr><td>${esc(x.tenant_name||x.xero_tenant_id)}</td><td style="text-align:right;white-space:nowrap;"><span class="badge ${x.status==='active'?'success':'failed'}">${esc(x.status)}</span>${x.needs_reconnect?' <span class="badge failed">reconnect</span>':''} &nbsp; <button class="linkbtn danger" onclick="disconnectXero(${id},${x.id})">Disconnect</button></td></tr>`).join('')||'<tr><td class="muted">None connected yet</td></tr>'}</tbody></table>
+          <a class="btn btn-primary" style="margin-top:.7rem;" href="/admin/accounts/${id}/xero/connect">＋ Connect Xero</a>
+          <p class="muted" style="margin-top:.5rem;">Opens Xero's consent screen — you'll need this account's Xero login.</p></div>
+
+        <div class="card"><h2>Chart of accounts</h2>
+          <p class="muted">Upload a CSV with columns: code, name, category. Replaces the current ${d.coaCount} codes.</p>
+          <label class="file-drop" id="coaDrop">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span class="fd-text" id="coaFileText">Choose a CSV file or drag it here</span>
+            <input type="file" id="coaFile" accept=".csv,text/csv" hidden>
+          </label>
+          <div style="margin-top:.6rem;"><button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button></div><div class="msg" id="coaMsg"></div></div>
+      </div>`;
+    wireFileDrop('coaDrop','coaFile','coaFileText','Choose a CSV file or drag it here');
   };
+  window.disconnectXero = async (id, cid) => {
+    const c = (window.CUR_CONNS||[]).find(x=>x.id===cid);
+    const name = c ? (c.tenant_name||c.xero_tenant_id) : 'this organisation';
+    if(!confirm('Disconnect "'+name+'" from Xero?\n\nThis revokes WazzOCR\'s access to that organisation at Xero, then removes it here.')) return;
+    try { await api('DELETE','/admin/accounts/'+id+'/connections/'+cid); openAccount(id); } catch(e){ alert(e.message); }
+  };
+  // Reusable styled file picker (click or drag-drop), shows the chosen filename.
+  function wireFileDrop(dropId, inputId, textId, placeholder){
+    const drop=document.getElementById(dropId), input=document.getElementById(inputId), text=document.getElementById(textId);
+    if(!drop||!input) return;
+    const show=()=>{ const f=input.files[0]; text.innerHTML = f ? '<strong>'+esc(f.name)+'</strong>' : placeholder; };
+    input.onchange=show;
+    ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('dragover');}));
+    ['dragleave','dragend'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('dragover');}));
+    drop.addEventListener('drop',e=>{ e.preventDefault(); drop.classList.remove('dragover'); if(e.dataTransfer.files.length){ input.files=e.dataTransfer.files; show(); } });
+    show();
+  }
   window.saveSettings = async (id) => { const m=document.getElementById('setMsg');
-    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatus').value, aiModel:document.getElementById('setModel').value, autoCreateBills:document.getElementById('setAuto').value==='1', aiPromptAddon:document.getElementById('setAddon').value });
+    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatus').value, aiModel:document.getElementById('setModel').value, autoCreateBills:document.getElementById('setAuto').value==='1' });
       m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.invite = async (id) => { const m=document.getElementById('invMsg');
     try { const r=await api('POST','/admin/accounts/'+id+'/invite',{ email:document.getElementById('invEmail').value.trim(), phone:document.getElementById('invPhone').value.trim(), name:document.getElementById('invName').value.trim() });
@@ -200,7 +248,11 @@
   window.registerWebhook = async (id,cid) => { const m=document.getElementById('regMsg'); m.className='msg'; m.style.display='block'; m.textContent='Registering…';
     try { await api('POST','/admin/accounts/'+id+'/channels/'+cid+'/register-webhook'); m.className='msg ok'; m.textContent='Webhook registered with Wazzup ✓'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.uploadCoa = async (id) => { const m=document.getElementById('coaMsg');
-    try { const r=await api('POST','/admin/accounts/'+id+'/coa',{ csv:document.getElementById('coaCsv').value }); m.className='msg ok'; m.textContent=`Uploaded ${r.count} codes.`; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+    const f=document.getElementById('coaFile').files[0];
+    if(!f){ m.className='msg err'; m.textContent='Choose a CSV file first.'; return; }
+    try { const csv=await f.text(); const r=await api('POST','/admin/accounts/'+id+'/coa',{ csv }); m.className='msg ok'; m.textContent=`Uploaded ${r.count} codes.`;
+      document.getElementById('coaFile').value=''; const t=document.getElementById('coaFileText'); if(t) t.textContent='Choose a CSV file or drag it here';
+    } catch(e){ m.className='msg err'; m.textContent=e.message; } };
 
   (async () => { if (await guard()) renderList(); })();
   </script>

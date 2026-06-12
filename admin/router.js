@@ -86,6 +86,10 @@ router.get('/accounts/:id', async (req, res) => {
     'SELECT status, COUNT(*) AS n FROM bills WHERE account_id = ? GROUP BY status',
     [accountId]
   );
+  const monthRow = await db.getOne(
+    "SELECT COUNT(*) AS n FROM bills WHERE account_id = ? AND status = 'success' AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')",
+    [accountId]
+  );
   const failureReasons = await db.query(
     `SELECT failure_reason, COUNT(*) AS n FROM bills
      WHERE account_id = ? AND status = 'failed'
@@ -99,6 +103,7 @@ router.get('/accounts/:id', async (req, res) => {
   res.json({
     account,
     statusCounts,
+    successThisMonth: monthRow ? Number(monthRow.n) : 0,
     failureReasons,
     channels,
     connections,
@@ -148,6 +153,18 @@ router.post('/accounts/:id/channels/:cid/register-webhook', async (req, res) => 
   const result = await wazzup.registerWebhook(apiKey, process.env.PUBLIC_WEBHOOK_URL);
   if (!result.ok) return res.status(502).json({ error: result.error });
   res.json({ ok: true });
+});
+
+// Disconnect one of an account's Xero orgs: revoke at Xero, then remove locally.
+router.delete('/accounts/:id/connections/:cid', async (req, res) => {
+  const accountId = Number(req.params.id);
+  if (!(await accounts.getById(accountId))) return res.status(404).json({ error: 'Account not found.' });
+  try {
+    const result = await require('../lib/xeroRevoke').disconnectOrg(accountId, Number(req.params.cid));
+    res.json(result);
+  } catch (err) {
+    res.status(err.message === 'Connection not found.' ? 404 : 500).json({ error: err.message });
+  }
 });
 
 // Admin can also upload an account's COA (CSV: code, name, category).

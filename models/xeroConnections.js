@@ -52,7 +52,30 @@ async function markNeedsReconnect(accountId, tenantId) {
   );
 }
 
+// One connection row scoped to an account (null if not found / not theirs).
+function getById(accountId, id) {
+  return db.getOne('SELECT * FROM xero_connections WHERE id = ? AND account_id = ?', [id, accountId]);
+}
+
+// Delete a connection row. Returns affectedRows.
+async function deleteConnection(accountId, id) {
+  const res = await db.execute('DELETE FROM xero_connections WHERE id = ? AND account_id = ?', [id, accountId]);
+  return res.affectedRows;
+}
+
+// Delete a grant once no connections reference it (so the refresh token isn't
+// left dangling). Returns true if it was removed.
+async function deleteGrantIfOrphaned(grantId) {
+  const row = await db.getOne('SELECT COUNT(*) AS n FROM xero_connections WHERE grant_id = ?', [grantId]);
+  if (row && Number(row.n) === 0) {
+    await db.execute('DELETE FROM xero_grants WHERE id = ?', [grantId]);
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   saveGrant, updateGrantToken, upsertConnection,
-  listByAccount, getGrantForTenant, markNeedsReconnect
+  listByAccount, getGrantForTenant, markNeedsReconnect,
+  getById, deleteConnection, deleteGrantIfOrphaned
 };
