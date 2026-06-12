@@ -57,6 +57,21 @@ router.post('/coa', async (req, res) => {
   res.json({ ok: true, count });
 });
 
+// Download the COA as a CSV the customer can edit and re-upload. Includes the
+// rows already loaded (so they just add new ones); falls back to an example row
+// when the account has no COA yet, so it doubles as the blank template.
+router.get('/coa.csv', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const rows = await coa.list(accountId);
+  const cell = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = ['code,name,category'];
+  if (rows.length) for (const r of rows) lines.push([r.code, r.name, r.category].map(cell).join(','));
+  else lines.push('926-0000,Utilities Expenses,Expense');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="chart-of-accounts.csv"');
+  res.send(lines.join('\n') + '\n');
+});
+
 // Wazzup channels — customers who self-manage can add/remove their own.
 router.get('/channels', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;
@@ -80,6 +95,14 @@ router.delete('/channels/:id', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;
   const removed = await wazzupChannels.remove(accountId, Number(req.params.id));
   res.json({ ok: true, removed });
+});
+
+// Reveal the full (decrypted) API key for one of this account's channels.
+router.get('/channels/:id/api-key', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const apiKey = await wazzupChannels.getDecryptedApiKey(accountId, Number(req.params.id));
+  if (!apiKey) return res.status(404).json({ error: 'No API key stored for this channel.' });
+  res.json({ apiKey });
 });
 
 // One-click: point this channel's Wazzup account at our webhook.php.

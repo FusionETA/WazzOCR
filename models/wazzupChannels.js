@@ -3,11 +3,23 @@
 const db = require('../db');
 const { encrypt, decrypt } = require('../lib/crypto');
 
-function listByAccount(accountId) {
-  return db.query(
-    'SELECT id, account_id, channel_id, label, status FROM wazzup_channels WHERE account_id = ?',
+// Mask a secret for display: keep the first 4 and last 4 chars.
+function maskKey(k) {
+  if (!k) return null;
+  return k.length <= 8 ? '••••' : k.slice(0, 4) + '••••••' + k.slice(-4);
+}
+
+async function listByAccount(accountId) {
+  const rows = await db.query(
+    'SELECT id, account_id, channel_id, api_key, label, status FROM wazzup_channels WHERE account_id = ?',
     [accountId]
   );
+  return rows.map((r) => {
+    let apiKeyMasked = null;
+    if (r.api_key) { try { apiKeyMasked = maskKey(decrypt(r.api_key)); } catch { apiKeyMasked = '••••'; } }
+    const { api_key, ...rest } = r; // never expose the encrypted/plain key in a list
+    return { ...rest, hasApiKey: Boolean(r.api_key), apiKeyMasked };
+  });
 }
 
 // Resolve a channel id to its account id (active channels only).

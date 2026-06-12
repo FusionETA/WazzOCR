@@ -141,7 +141,10 @@
           <div class="card"><h2>Chart of accounts</h2>
             <p class="muted">CSV columns: code, name, category. Replaces your current list; used to auto-code bill line items. <span id="coaCount"></span></p>
             <textarea id="coaCsv" rows="5" placeholder="926-0000,Utilities Expenses,Expense"></textarea>
-            <div style="margin-top:.6rem;"><button class="btn btn-primary" id="coaBtn">Upload COA</button></div>
+            <div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">
+              <button class="btn btn-primary" id="coaBtn">Upload COA</button>
+              <a class="btn btn-ghost" id="coaDownload" href="/api/me/coa.csv">⬇ Download CSV (template + current)</a>
+            </div>
             <div class="msg" id="coaMsg"></div>
           </div>
         </div>
@@ -154,7 +157,10 @@
           fetch('/api/me/channels').then(r=>r.json()),
           fetch('/api/me/coa').then(r=>r.json())
         ]);
-        document.getElementById('connList').textContent = (conn.connections||[]).map(x=>x.tenant_name||x.xero_tenant_id).join(', ') || 'None connected';
+        const conns = conn.connections||[];
+        const cl = document.getElementById('connList');
+        if (!conns.length) cl.textContent = 'None connected';
+        else cl.innerHTML = `<select style="width:auto;min-width:240px;max-width:100%;">${conns.map(x=>`<option>${esc(x.tenant_name||x.xero_tenant_id)}</option>`).join('')}</select> <span class="muted" style="margin-left:.5rem;">${conns.length} connected</span>`;
         renderChannels(chan.channels||[]);
         document.getElementById('coaCount').textContent = '— ' + (coa.accounts||[]).length + ' codes loaded';
       } catch {}
@@ -179,8 +185,9 @@
     function showM(m,t,ok){ m.className='msg '+(ok?'ok':'err'); m.textContent=t; }
     function renderChannels(channels){
       const box=document.getElementById('channelsBox'); if(!box) return;
-      box.innerHTML = channels.length ? `<table class="table"><tbody>${channels.map(c=>`<tr>
+      box.innerHTML = channels.length ? `<table class="table"><thead><tr><th>Label</th><th>Channel ID</th><th>API key</th><th></th></tr></thead><tbody>${channels.map(c=>`<tr>
         <td>${esc(c.label||'(no label)')}</td><td class="muted">${esc(c.channel_id)}</td>
+        <td class="muted" id="key-${c.id}">${c.hasApiKey?`<span style="font-family:ui-monospace,monospace">${esc(c.apiKeyMasked)}</span> <a href="#" onclick="revealKey(event,${c.id})">Show</a>`:'<span style="color:var(--bad)">no API key</span>'}</td>
         <td style="text-align:right;white-space:nowrap;"><a href="#" onclick="regChannel(event,${c.id})">Register webhook</a>
         &nbsp; <a href="#" class="" style="color:var(--bad)" onclick="removeChannel(event,${c.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">No channels yet.</div>';
@@ -190,6 +197,15 @@
       try{ const r=await fetch('/api/me/channels/'+id+'/register-webhook',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); showM(m,'Webhook registered with Wazzup ✓',true); }
       catch(err){ showM(m,err.message,false); } };
     window.removeChannel = async (e,id)=>{ e.preventDefault(); try{ await fetch('/api/me/channels/'+id,{method:'DELETE'}); wireSettings(); }catch(err){ alert(err.message); } };
+    window.revealKey = async (e,id)=>{ e.preventDefault();
+      const cell=document.getElementById('key-'+id); if(!cell) return;
+      try{ const r=await fetch('/api/me/channels/'+id+'/api-key'); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
+        cell.dataset.key=d.apiKey;
+        cell.innerHTML=`<span style="font-family:ui-monospace,monospace">${esc(d.apiKey)}</span> <a href="#" onclick="copyKey(event,${id})">Copy</a>`;
+      }catch(err){ alert(err.message); } };
+    window.copyKey = (e,id)=>{ e.preventDefault(); const cell=document.getElementById('key-'+id); const a=e.target;
+      const k=cell&&cell.dataset.key||''; if(navigator.clipboard) navigator.clipboard.writeText(k);
+      const t=a.textContent; a.textContent='Copied ✓'; setTimeout(()=>a.textContent=t,1200); };
 
     function showToast(text, ok){
       const d=document.createElement('div');
