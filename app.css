@@ -159,3 +159,34 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
   border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--muted); cursor:pointer;
   flex-shrink:0; transition:.15s; }
 .copy-btn:hover { background:#F4F6FB; color:var(--navy); border-color:#cbd5e1; }
+
+/* ── Fixed-layout tables (consistent column widths page-to-page) ── */
+.table.fixed { table-layout:fixed; }
+.table.fixed td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ── Filter bar (search + date range above a table) ── */
+.filterbar { display:flex; flex-wrap:wrap; align-items:flex-end; gap:.6rem; margin:.2rem 0 1rem; }
+.filterbar .fb-field { display:flex; flex-direction:column; gap:.25rem; }
+.filterbar .fb-grow { flex:1; min-width:200px; }
+.filterbar label { font-size:.66rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.filterbar input { padding:.5rem .7rem; font-size:.86rem; }
+.filterbar input[type="date"] { min-width:140px; }
+.filterbar .fb-count { font-size:.78rem; color:var(--muted); margin-left:auto; align-self:center; }
+
+/* ── Styled file upload (custom, replaces the native control) ── */
+.file-drop { display:flex; align-items:center; gap:.65rem; width:100%; padding:.85rem 1rem;
+  border:1.5px dashed var(--line); border-radius:var(--r-sm); background:#FAFBFE; color:var(--muted);
+  font-size:.88rem; cursor:pointer; transition:.15s; }
+.file-drop:hover { border-color:var(--blue); background:#F4F6FB; color:var(--text); }
+.file-drop.dragover { border-color:var(--blue); background:#EEF2FF; color:var(--navy); }
+.file-drop svg { flex-shrink:0; color:var(--blue); }
+.file-drop .fd-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-drop .fd-text strong { color:var(--navy); font-weight:600; }
+
+/* ── Password show/hide toggle ── */
+.pw-wrap { position:relative; }
+.pw-wrap input { padding-right:2.7rem; }
+.pw-toggle { position:absolute; right:.35rem; top:50%; transform:translateY(-50%);
+  width:2rem; height:2rem; display:inline-flex; align-items:center; justify-content:center;
+  border:none; background:none; color:var(--muted); cursor:pointer; border-radius:6px; padding:0; }
+.pw-toggle:hover { color:var(--navy); background:#F4F6FB; }

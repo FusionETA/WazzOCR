@@ -14,15 +14,22 @@
       <p class="sub">Choose a new password for your account.</p>
       <form id="resetForm">
         <label class="fld" for="password">New password</label>
-        <input type="password" id="password" autocomplete="new-password" minlength="8" required>
+        <div class="pw-wrap">
+          <input type="password" id="password" autocomplete="new-password" minlength="8" required>
+          <button type="button" class="pw-toggle" data-pw="password" aria-label="Show password"></button>
+        </div>
         <label class="fld" for="confirm">Confirm password</label>
-        <input type="password" id="confirm" autocomplete="new-password" minlength="8" required>
+        <div class="pw-wrap">
+          <input type="password" id="confirm" autocomplete="new-password" minlength="8" required>
+          <button type="button" class="pw-toggle" data-pw="confirm" aria-label="Show password"></button>
+        </div>
         <button type="submit" class="btn btn-primary" id="submitBtn" style="width:100%;margin-top:1.4rem;">Update password</button>
       </form>
       <div class="msg" id="msg"></div>
       <div class="links"><a href="/login.html">Back to sign in</a></div>
     </div>
   </div>
+  <script src="/pw-toggle.js"></script>
   <script>
     const token = new URLSearchParams(location.search).get('token');
     const msg = document.getElementById('msg');
