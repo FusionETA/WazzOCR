@@ -14,6 +14,7 @@ const coa = require('../models/coa');
 const wazzupChannels = require('../models/wazzupChannels');
 const xeroConnections = require('../models/xeroConnections');
 const appSettings = require('../models/appSettings');
+const aiPrompts = require('../models/aiPrompts');
 const invites = require('../auth/invites');
 const wazzup = require('../lib/wazzup');
 const { parseCoa } = require('../lib/csv');
@@ -34,6 +35,39 @@ router.get('/settings/general-prompt', async (req, res) => {
 router.put('/settings/general-prompt', async (req, res) => {
   await appSettings.set(GENERAL_PROMPT_KEY, String((req.body && req.body.generalPrompt) || ''));
   res.json({ ok: true });
+});
+
+// ── AI prompt blocks (modular general + per-account add-on prompts) ──
+// General blocks (account_id NULL) apply to every account.
+router.get('/prompts', async (req, res) => {
+  res.json({ prompts: await aiPrompts.listGeneral() });
+});
+router.post('/prompts', async (req, res) => {
+  const { title, body, enabled } = req.body || {};
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
+  const id = await aiPrompts.create({ accountId: null, title, body, enabled: enabled !== false });
+  res.json({ ok: true, id });
+});
+// Per-account add-on blocks.
+router.get('/accounts/:id/prompts', async (req, res) => {
+  res.json({ prompts: await aiPrompts.listByAccount(Number(req.params.id)) });
+});
+router.post('/accounts/:id/prompts', async (req, res) => {
+  const accountId = Number(req.params.id);
+  if (!(await accounts.getById(accountId))) return res.status(404).json({ error: 'Account not found.' });
+  const { title, body, enabled } = req.body || {};
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
+  const id = await aiPrompts.create({ accountId, title, body, enabled: enabled !== false });
+  res.json({ ok: true, id });
+});
+// Update / delete any block by id (works for both general and per-account).
+router.put('/prompts/:pid', async (req, res) => {
+  const updated = await aiPrompts.update(Number(req.params.pid), req.body || {});
+  res.json({ ok: true, updated });
+});
+router.delete('/prompts/:pid', async (req, res) => {
+  const removed = await aiPrompts.remove(Number(req.params.pid));
+  res.json({ ok: true, removed });
 });
 
 router.post('/accounts', async (req, res) => {

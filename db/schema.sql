@@ -19,6 +19,24 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Modular AI prompt blocks. account_id NULL = a GENERAL block applied to every
+-- account; account_id set = a per-account add-on. Enabled blocks are concatenated
+-- (ordered by position) to build the extraction prompt. Replaces the single
+-- app_settings.general_ai_prompt / accounts.ai_prompt_addon text fields (which
+-- remain as a fallback for backward compatibility).
+CREATE TABLE IF NOT EXISTS ai_prompt_blocks (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  account_id BIGINT UNSIGNED NULL,
+  title      VARCHAR(255) NOT NULL,
+  body       MEDIUMTEXT NOT NULL,
+  enabled    TINYINT(1) DEFAULT 1,
+  position   INT DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_apb_account (account_id, enabled, position),
+  CONSTRAINT fk_apb_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS users (
   id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   account_id     BIGINT UNSIGNED NULL,

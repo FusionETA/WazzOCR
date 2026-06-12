@@ -1675,8 +1675,12 @@ async function resolveAiPrompts() {
   // (set by runWithCtx in the webhook path). Both fall back to empty/default.
   let generalPrompt = '';
   let accountAddon = '';
+  const aiPrompts = require('./models/aiPrompts');
   try {
-    generalPrompt = (await require('./models/appSettings').get('general_ai_prompt', '')) || '';
+    // New model: concatenate enabled general blocks. Fall back to the legacy
+    // single app_settings.general_ai_prompt if no blocks exist yet.
+    generalPrompt = await aiPrompts.generalText();
+    if (!generalPrompt) generalPrompt = (await require('./models/appSettings').get('general_ai_prompt', '')) || '';
   } catch (err) {
     console.error('[prompt] could not load general prompt from DB:', err.message);
   }
@@ -1684,8 +1688,13 @@ async function resolveAiPrompts() {
     const store = xeroAccountCtx.getStore();
     const accountId = store && store.accountId;
     if (accountId) {
-      const acc = await require('./models/accounts').getById(accountId);
-      accountAddon = (acc && acc.ai_prompt_addon) || '';
+      // New model: enabled add-on blocks for this account; fall back to the
+      // legacy accounts.ai_prompt_addon column.
+      accountAddon = await aiPrompts.accountText(accountId);
+      if (!accountAddon) {
+        const acc = await require('./models/accounts').getById(accountId);
+        accountAddon = (acc && acc.ai_prompt_addon) || '';
+      }
     }
   } catch (err) {
     console.error('[prompt] could not load account prompt add-on from DB:', err.message);

@@ -31,36 +31,115 @@
     } catch { location.href='/login.html'; return false; }
   }
 
+  let ACCOUNTS=[], GENERAL_PROMPTS=[], acctPage=1, acctSearch='';
+  const ACCT_PAGE=10;
+
   async function renderList() {
-    const { accounts } = await api('GET','/admin/accounts');
+    const [acc, pr] = await Promise.all([api('GET','/admin/accounts'), api('GET','/admin/prompts')]);
+    ACCOUNTS = acc.accounts||[]; GENERAL_PROMPTS = pr.prompts||[]; acctPage=1; acctSearch='';
     app.innerHTML = `
       <div class="page-head"><h1>Accounts</h1><p>Manage customer accounts, channels and configuration.</p></div>
       <div class="card">
-        <table class="table"><thead><tr><th>Name</th><th>Status</th><th>AI model</th><th>Created</th><th></th></tr></thead>
-        <tbody>${accounts.map(a=>`<tr><td><strong>${esc(a.name)}</strong></td>
-          <td><span class="badge ${a.status==='active'?'success':'pending'}">${esc(a.status)}</span></td>
-          <td class="muted">${esc(a.ai_model)}</td><td class="muted num-cell">${new Date(a.created_at).toLocaleDateString()}</td>
-          <td style="text-align:right;"><button class="btn btn-ghost btn-sm" onclick="openAccount(${a.id})">Open →</button></td></tr>`).join('')}</tbody></table>
-        ${accounts.length?'':'<div class="empty">No accounts yet.</div>'}</div>
+        <div class="filterbar"><div class="fb-field fb-grow"><label>Search accounts</label><input type="search" id="acctSearch" placeholder="Account name…"></div><span class="fb-count" id="acctCount"></span></div>
+        <div id="acctTable"></div></div>
       <div class="card"><h2>Create account</h2>
         <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap;"><div style="flex:1;min-width:200px;"><input id="newAcctName" placeholder="Company / account name"></div>
         <button class="btn btn-primary" onclick="createAccount()">Create</button></div><div class="msg" id="createMsg"></div></div>
-      <div class="card"><h2>General AI prompt</h2>
-        <p class="muted">Shared base prompt applied to every account. Each account can add its own extra rules.</p>
-        <textarea id="generalPrompt" rows="8"></textarea>
-        <div style="margin-top:.6rem;"><button class="btn btn-primary" onclick="saveGeneralPrompt()">Save general prompt</button></div>
-        <div class="msg" id="gpMsg"></div></div>`;
-    try { document.getElementById('generalPrompt').value = (await api('GET','/admin/settings/general-prompt')).generalPrompt || ''; } catch {}
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;"><h2 style="margin:0;">General AI prompt</h2><button class="btn btn-primary btn-sm" onclick="openPromptModal(null,'general')">＋ Add prompt</button></div>
+        <p class="muted" style="margin:.5rem 0 1rem;">These blocks are combined (top to bottom) and applied to every account. Toggle a block off to exclude it.</p>
+        <div id="promptLib"></div></div>`;
+    document.getElementById('acctSearch').oninput = (e)=>{ acctSearch=e.target.value; acctPage=1; renderAccountsTable(); };
+    renderAccountsTable(); renderPromptLib();
   }
+  function renderAccountsTable(){
+    const q=acctSearch.toLowerCase().trim();
+    const filtered = ACCOUNTS.filter(a=>!q || String(a.name||'').toLowerCase().includes(q));
+    const el=document.getElementById('acctTable'); const cnt=document.getElementById('acctCount');
+    if(cnt) cnt.textContent = q ? `${filtered.length} of ${ACCOUNTS.length}` : `${ACCOUNTS.length} total`;
+    if(!filtered.length){ el.innerHTML='<div class="empty">'+(q?'No accounts match.':'No accounts yet.')+'</div>'; return; }
+    const pages=Math.max(1,Math.ceil(filtered.length/ACCT_PAGE)); if(acctPage>pages)acctPage=pages;
+    const start=(acctPage-1)*ACCT_PAGE; const slice=filtered.slice(start,start+ACCT_PAGE);
+    const rows=slice.map(a=>`<tr><td><strong>${esc(a.name)}</strong></td>
+      <td><span class="badge ${a.status==='active'?'success':'pending'}">${esc(a.status)}</span></td>
+      <td class="muted">${esc(a.ai_model)}</td><td class="muted num-cell">${new Date(a.created_at).toLocaleDateString()}</td>
+      <td style="text-align:right;"><button class="btn btn-ghost btn-sm" onclick="openAccount(${a.id})">Open →</button></td></tr>`).join('');
+    const pager = pages>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.82rem;color:var(--muted);">
+      <span>Showing ${start+1}–${start+slice.length} of ${filtered.length}</span>
+      <span><button class="btn btn-ghost btn-sm" ${acctPage===1?'disabled':''} onclick="acctGo(${acctPage-1})">‹ Prev</button>
+      <span style="margin:0 .6rem;">${acctPage} / ${pages}</span>
+      <button class="btn btn-ghost btn-sm" ${acctPage===pages?'disabled':''} onclick="acctGo(${acctPage+1})">Next ›</button></span></div>`:'';
+    el.innerHTML=`<table class="table"><thead><tr><th>Name</th><th>Status</th><th>AI model</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>${pager}`;
+  }
+  window.acctGo=(p)=>{ acctPage=p; renderAccountsTable(); };
+
+  // ── AI prompt library (general blocks; reused per-account in the detail page) ──
+  function promptRow(p, scope){
+    return `<tr style="cursor:pointer;" onclick="openPromptModal(${p.id},${typeof scope==='number'?scope:`'general'`})">
+      <td><strong>${esc(p.title)}</strong></td>
+      <td>${p.enabled?'<span class="badge success">on</span>':'<span class="badge skipped">off</span>'}</td>
+      <td class="muted" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((p.body||'').replace(/\s+/g,' ').slice(0,110))}</td>
+      <td style="text-align:right;"><span class="linkbtn">Edit</span></td></tr>`;
+  }
+  function renderPromptLib(){
+    const el=document.getElementById('promptLib');
+    el.innerHTML = GENERAL_PROMPTS.length
+      ? `<table class="table"><tbody>${GENERAL_PROMPTS.map(p=>promptRow(p,'general')).join('')}</tbody></table>`
+      : '<div class="empty">No prompt blocks yet. Click “Add prompt” to create one.</div>';
+  }
+  function findPrompt(id){ return GENERAL_PROMPTS.concat(window.ACCOUNT_PROMPTS||[]).find(p=>p.id===id); }
+  // scope: 'general' or an accountId number (per-account add-on).
+  window.openPromptModal = (id, scope) => {
+    const p = id ? findPrompt(id) : null;
+    const isAcct = typeof scope === 'number';
+    const scopeArg = isAcct ? scope : `'general'`;
+    openModal((id?'Edit':'New')+' prompt block', `
+      <div class="field"><label>Title</label><input id="pmTitle" value="${esc(p?p.title:'')}"></div>
+      <div class="field"><label>Prompt text</label><textarea id="pmBody" rows="12">${esc(p?p.body:'')}</textarea></div>
+      <label style="display:flex;align-items:center;gap:.5rem;font-size:.86rem;margin:.4rem 0 .2rem;cursor:pointer;"><input type="checkbox" id="pmEnabled" ${(!p||p.enabled)?'checked':''} style="width:auto;"> Enabled (included in the prompt)</label>
+      <div class="msg" id="pmMsg"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;">
+        ${id?`<button class="btn btn-ghost" style="color:var(--bad);border-color:var(--line);" onclick="deletePrompt(${id},${scopeArg})">Delete</button>`:'<span></span>'}
+        <button class="btn btn-primary" onclick="savePrompt(${id||'null'},${scopeArg})">Save</button></div>`);
+  };
+  window.savePrompt = async (id, scope) => {
+    const m=document.getElementById('pmMsg');
+    const title=document.getElementById('pmTitle').value.trim(), body=document.getElementById('pmBody').value, enabled=document.getElementById('pmEnabled').checked;
+    if(!title){ m.className='msg err'; m.textContent='Title is required.'; return; }
+    const isAcct = typeof scope === 'number';
+    try {
+      if(id) await api('PUT','/admin/prompts/'+id,{title,body,enabled});
+      else if(isAcct) await api('POST','/admin/accounts/'+scope+'/prompts',{title,body,enabled});
+      else await api('POST','/admin/prompts',{title,body,enabled});
+      closeModal();
+      if(isAcct) openAccount(scope);
+      else { GENERAL_PROMPTS=(await api('GET','/admin/prompts')).prompts||[]; renderPromptLib(); }
+    } catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  window.deletePrompt = async (id, scope) => {
+    if(!confirm('Delete this prompt block?')) return;
+    const isAcct = typeof scope === 'number';
+    try { await api('DELETE','/admin/prompts/'+id); closeModal();
+      if(isAcct) openAccount(scope);
+      else { GENERAL_PROMPTS=(await api('GET','/admin/prompts')).prompts||[]; renderPromptLib(); }
+    } catch(e){ alert(e.message); }
+  };
+
+  // ── Modal ──
+  function openModal(title, bodyHtml){
+    let m=document.getElementById('appModal'); if(!m){ m=document.createElement('div'); m.id='appModal'; document.body.appendChild(m); }
+    m.style.cssText='position:fixed;inset:0;z-index:2000;background:rgba(15,27,45,.45);display:flex;align-items:center;justify-content:center;padding:1rem;';
+    m.innerHTML=`<div style="background:#fff;border-radius:14px;max-width:640px;width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(8,16,45,.3);">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:1rem 1.25rem;border-bottom:1px solid var(--line);"><strong>${title}</strong><button class="linkbtn" style="font-size:1.1rem;" onclick="closeModal()">✕</button></div>
+      <div style="padding:1.25rem;overflow:auto;">${bodyHtml}</div></div>`;
+    m.onclick=(ev)=>{ if(ev.target===m) closeModal(); };
+  }
+  window.closeModal=()=>{ const m=document.getElementById('appModal'); if(m) m.remove(); };
+
   window.createAccount = async () => {
     const name = document.getElementById('newAcctName').value.trim(); const m = document.getElementById('createMsg');
     if (!name) { m.className='msg err'; m.textContent='Enter a name.'; return; }
     try { await api('POST','/admin/accounts',{name}); renderList(); } catch(e){ m.className='msg err'; m.textContent=e.message; }
-  };
-  window.saveGeneralPrompt = async () => {
-    const m = document.getElementById('gpMsg');
-    try { await api('PUT','/admin/settings/general-prompt',{ generalPrompt: document.getElementById('generalPrompt').value }); m.className='msg ok'; m.textContent='Saved.'; }
-    catch(e){ m.className='msg err'; m.textContent=e.message; }
   };
 
   window.openAccount = async (id) => {
