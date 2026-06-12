@@ -302,7 +302,8 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
 
     // Pipeline: send the raw file to server.js → extract/Gemini-vision → AI → match
     wlog("WAZZOCR BRIDGE PROCESS: posting file to " . BRIDGE_PROCESS_URL);
-    $result = process_file_via_bridge($chatId, $file, $filename);
+    $channelId = $msg['channelId'] ?? '';
+    $result = process_file_via_bridge($chatId, $file, $filename, $channelId);
 
     if ($result === null) {
         wazzup_send($chatId, $chatType,
@@ -338,10 +339,11 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
 
 // POSTs the binary file to server.js as JSON (base64) along with chatId,
 // so the bridge can remember "this chat is awaiting picker reply" if needed.
-function process_file_via_bridge(string $chatId, array $file, string $filename = ''): ?array
+function process_file_via_bridge(string $chatId, array $file, string $filename = '', string $channelId = ''): ?array
 {
     $payload = [
         'chatId'     => $chatId,
+        'channelId'  => $channelId,   // lets the bridge route to the right account
         'fileBase64' => base64_encode($file['bytes']),
         'mime'       => $file['mime'],
         'fileName'   => $filename,

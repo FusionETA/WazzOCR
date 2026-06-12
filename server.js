@@ -2669,12 +2669,32 @@ async function resolvePickerForChat(chatId, choice) {
 
 app.use(express.json({ limit: '20mb' }));
 
+// Auth + admin API routers. Mounted first so real API paths (/auth/login,
+// /admin/accounts, ...) are handled before the source-path block and static.
+// Unmatched /auth/* or /admin/* paths fall through to the block below.
+app.use('/auth', require('./auth/router'));
+app.use('/admin', require('./admin/router'));
+app.use('/api/me', require('./user/router'));
+
 app.use((req, res, next) => {
   const blocked = [
     /^\/\.env(?:$|\.)/,
     /^\/env\.js$/,
     /^\/data(?:\/|$)/,
-    /^\/OCR-Xero(?:\/|$)/
+    /^\/OCR-Xero(?:\/|$)/,
+    // Server-side source and secrets — never serve these as static files.
+    /^\/certs(?:\/|$)/,
+    /^\/db(?:\/|$)/,
+    /^\/auth(?:\/|$)/,
+    /^\/admin(?:\/|$)/,
+    /^\/models(?:\/|$)/,
+    /^\/lib(?:\/|$)/,
+    /^\/user(?:\/|$)/,
+    /^\/scripts(?:\/|$)/,
+    /^\/node_modules(?:\/|$)/,
+    /^\/server\.js$/,
+    /^\/webhook\.php$/,
+    /^\/master-coa\.json$/
   ];
   if (blocked.some((pattern) => pattern.test(req.path))) {
     return res.status(404).send('Not found');
@@ -2905,6 +2925,50 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
 
 // ── WhatsApp full-pipeline endpoints (extract → AI → match) ────────────────
 
+// Maps pipeline outcomes to bills rows in the multi-tenant DB. Best-effort:
+// any error is swallowed so it can never affect the live WhatsApp flow.
+async function logBillOutcomes({ accountId, channelDbId, chatId, source, outcomes }) {
+  if (!accountId || !Array.isArray(outcomes)) return;
+  let billsModel;
+  try { billsModel = require('./models/bills'); } catch { return; }
+  for (const o of outcomes) {
+    try {
+      const b = o.bill || {};
+      let status = 'pending', failureReason = null, xeroInvoiceId = null, xeroUrl = null;
+      if (o.status === 'created') {
+        status = 'success';
+        xeroInvoiceId = (o.xero && o.xero.invoiceId) || null;
+        xeroUrl = (o.xero && (o.xero.xeroUrl || o.xero.url)) || null;
+      } else if (o.status === 'xero-error') {
+        status = 'failed';
+        failureReason = String(o.xeroError || 'Xero error').slice(0, 500);
+      } else if (o.status === 'pending') {
+        status = 'pending';
+        failureReason = (o.pending && o.pending.reason) ? String(o.pending.reason).slice(0, 500) : null;
+      } else if (o.status === 'empty') {
+        continue;
+      }
+      await billsModel.record({
+        accountId,
+        wazzupChannelId: channelDbId || null,
+        chatId: chatId || null,
+        status,
+        failureReason,
+        supplier: b.supplier || null,
+        invoiceNo: b.invoiceNo || null,
+        total: (b.total != null ? b.total : null),
+        currency: b.currency || null,
+        documentType: b.documentType || null,
+        xeroInvoiceId,
+        xeroUrl,
+        source: source || 'whatsapp'
+      });
+    } catch (err) {
+      console.error('[bills] record failed:', err.message);
+    }
+  }
+}
+
 // Accepts the raw file (base64) from webhook.php OR a multipart upload.
 // Runs extract → AI → tenant match. If matched, creates the Xero draft.
 // If unmatched, stores pending bill AND sets per-chat picker state.
@@ -2912,7 +2976,19 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
   try {
     const body = req.body || {};
     const chatId = (body.chatId || '').toString().trim();
+    const channelId = (body.channelId || '').toString().trim();
     const fileName = body.fileName || body.filename || (req.file?.originalname) || '';
+
+    // Multi-tenant (best-effort, non-breaking): if this Wazzup channel is
+    // registered to an account in the DB, we'll log bill outcomes against it.
+    // If not registered, everything below behaves exactly as before.
+    let logCtx = null;
+    if (channelId) {
+      try {
+        const ch = await require('./models/wazzupChannels').getByChannelId(channelId);
+        if (ch && ch.account_id) logCtx = { accountId: ch.account_id, channelDbId: ch.id };
+      } catch (err) { console.error('[bills] channel resolve failed:', err.message); }
+    }
 
     let buffer = null;
     let mime = body.mime || body.imageMime || req.file?.mimetype || 'application/octet-stream';
@@ -2999,6 +3075,12 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
           throw err;
         }
       }
+    }
+
+    // Best-effort bill logging to the multi-tenant DB. Never blocks the response.
+    if (logCtx) {
+      try { await logBillOutcomes({ ...logCtx, chatId, source: 'whatsapp', outcomes }); }
+      catch (err) { console.error('[bills] logging failed:', err.message); }
     }
 
     const primary = outcomes[0] || { status: 'empty', bill: bills[0] || normalizeBillPayload({}) };
