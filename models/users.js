@@ -1,0 +1,61 @@
+// User (login identity) data access. Email is the unique identifier.
+const db = require('../db');
+
+const norm = (email) => String(email || '').trim().toLowerCase();
+
+function getById(id) {
+  return db.getOne('SELECT * FROM users WHERE id = ?', [id]);
+}
+
+function getByEmail(email) {
+  return db.getOne('SELECT * FROM users WHERE email = ?', [norm(email)]);
+}
+
+function getByGoogleSub(googleSub) {
+  if (!googleSub) return null;
+  return db.getOne('SELECT * FROM users WHERE google_sub = ?', [googleSub]);
+}
+
+// Create a pending (invited) user. account_id may be null for super admins.
+async function createInvited({ accountId = null, email, phone = null, name = null, role = 'owner', isSuperAdmin = false }) {
+  if (!email) throw new Error('Email is required.');
+  return db.insert(
+    `INSERT INTO users (account_id, email, phone_number, name, role, is_super_admin, status)
+     VALUES (?, ?, ?, ?, ?, ?, 'invited')`,
+    [accountId, norm(email), phone, name, role, isSuperAdmin ? 1 : 0]
+  );
+}
+
+// Link a Google identity to a user (claim-on-first-login). Activates if invited.
+async function attachGoogle(userId, { googleSub, name = null, avatarUrl = null }) {
+  await db.execute(
+    `UPDATE users
+     SET google_sub = ?,
+         name = COALESCE(name, ?),
+         avatar_url = COALESCE(avatar_url, ?),
+         status = IF(status = 'invited', 'active', status)
+     WHERE id = ?`,
+    [googleSub, name, avatarUrl, userId]
+  );
+}
+
+// Set/replace the password hash. Activates if invited.
+async function setPasswordHash(userId, passwordHash) {
+  await db.execute(
+    `UPDATE users SET password_hash = ?, status = IF(status = 'invited', 'active', status) WHERE id = ?`,
+    [passwordHash, userId]
+  );
+}
+
+async function markLogin(userId) {
+  await db.execute('UPDATE users SET last_login_at = NOW() WHERE id = ?', [userId]);
+}
+
+function listByAccount(accountId) {
+  return db.query('SELECT * FROM users WHERE account_id = ? ORDER BY created_at', [accountId]);
+}
+
+module.exports = {
+  getById, getByEmail, getByGoogleSub,
+  createInvited, attachGoogle, setPasswordHash, markLogin, listByAccount
+};
