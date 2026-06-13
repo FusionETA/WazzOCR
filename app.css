@@ -27,7 +27,9 @@ h1,h2,h3 { font-family:var(--head); color:var(--ink); }
 .topbar { position:sticky; top:0; z-index:20; background:rgba(255,255,255,.82);
   -webkit-backdrop-filter:saturate(180%) blur(12px); backdrop-filter:saturate(180%) blur(12px);
   border-bottom:1px solid var(--line);
-  padding:.8rem 1.5rem; display:flex; align-items:center; justify-content:space-between; box-shadow:var(--shadow-sm); }
+  /* full-width bar, but content aligned to the centered 1280px content column */
+  padding:.8rem max(1.25rem, calc((100% - 1280px) / 2 + 1.25rem));
+  display:flex; align-items:center; justify-content:space-between; box-shadow:var(--shadow-sm); }
 .topbar .brand { display:flex; align-items:center; gap:.6rem; font-family:var(--head); font-weight:800; color:var(--navy); font-size:1.1rem; }
 .topbar .right { display:flex; align-items:center; gap:.75rem; }
 .who { font-size:.82rem; color:var(--muted); }
@@ -233,3 +235,13 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .card { transition:box-shadow .2s ease; }
 .empty { text-align:center; color:var(--muted); font-size:.9rem; padding:2rem 0; }
 .tabs { background:rgba(255,255,255,.9); }
+
+/* ── Count pill beside a card title ── */
+.title-count { display:inline-flex; align-items:center; margin-left:.55rem; vertical-align:middle;
+  font-family:var(--font); font-size:.72rem; font-weight:700; color:var(--muted);
+  background:#EEF2F8; border-radius:999px; padding:.14rem .55rem; }
+
+/* ── Stacked chart panels: card height = the taller panel, no jump on toggle ── */
+.chart-stack { display:grid; }
+.chart-stack > .cpanel { grid-column:1; grid-row:1; visibility:hidden; opacity:0; pointer-events:none; transition:opacity .15s ease; }
+.chart-stack > .cpanel.active { visibility:visible; opacity:1; pointer-events:auto; }

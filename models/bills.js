@@ -58,6 +58,16 @@ async function successCountThisMonth(accountId) {
   return r ? Number(r.n) : 0;
 }
 
+// Delete a non-success bill (pending/failed/skipped) scoped to its account.
+// Success bills are protected — they're the created-in-Xero audit trail + counter.
+async function remove(accountId, id) {
+  const r = await db.execute(
+    "DELETE FROM bills WHERE id = ? AND account_id = ? AND status <> 'success'",
+    [id, accountId]
+  );
+  return r.affectedRows;
+}
+
 function statusCounts(accountId) {
   return db.query('SELECT status, COUNT(*) AS n FROM bills WHERE account_id = ? GROUP BY status', [accountId]);
 }
@@ -87,4 +97,4 @@ function recent(accountId, limit = 50, status = null) {
   );
 }
 
-module.exports = { record, successCount, successCountThisMonth, statusCounts, failureReasons, recent, getResolvable, markResolved };
+module.exports = { record, successCount, successCountThisMonth, statusCounts, failureReasons, recent, getResolvable, markResolved, remove };

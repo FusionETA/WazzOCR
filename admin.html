@@ -6,6 +6,7 @@
   <title>Admin — WazzOCR</title>
   <link rel="stylesheet" href="/app.css">
   <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <script src="/assets/chart.min.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -36,6 +37,7 @@
   const ACCT_PAGE=10;
 
   async function renderList() {
+    history.replaceState(null, '', '#accounts');
     const [acc, pr] = await Promise.all([api('GET','/admin/accounts'), api('GET','/admin/prompts')]);
     ACCOUNTS = acc.accounts||[]; GENERAL_PROMPTS = pr.prompts||[]; acctPage=1; acctSearch='';
     app.innerHTML = `
@@ -182,10 +184,20 @@
   };
 
   window.adminTab = (name) => {
-    document.querySelectorAll('#app .tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-    document.querySelectorAll('#app .panel').forEach(p=>p.classList.toggle('active', p.id==='ap-'+name));
+    document.querySelectorAll('#app > .tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+    document.querySelectorAll('#app > .panel').forEach(p=>p.classList.toggle('active', p.id==='ap-'+name));
+    if (window.CUR_ACCOUNT) history.replaceState(null, '', '#account/'+window.CUR_ACCOUNT+'/'+name);
   };
-  window.openAccount = async (id) => {
+  // In-card switcher for the two analytics charts.
+  window.chartTab = (name) => {
+    document.querySelectorAll('.chart-tabs button').forEach(b=>b.classList.toggle('active', b.dataset.ctab===name));
+    document.querySelectorAll('.chart-stack > .cpanel').forEach(p=>p.classList.toggle('active', p.id==='cpanel-'+name));
+    const ch = name==='ai' ? window._aiChart : window._actChart;
+    if (ch) { try { ch.resize(); } catch(_){} }
+  };
+  window.openAccount = async (id, subtab) => {
+    // If no sub-tab passed (e.g. a re-render after saving), keep the one in the URL.
+    if (!subtab) { const p=(location.hash||'').replace(/^#/,'').split('/'); if(p[0]==='account' && Number(p[1])===Number(id) && p[2]) subtab=p[2]; }
     const [d, pr] = await Promise.all([ api('GET','/admin/accounts/'+id), api('GET','/admin/accounts/'+id+'/prompts') ]);
     window.ACCOUNT_PROMPTS = pr.prompts||[]; window.CUR_CONNS = d.connections||[];
     window.CUR_ACCOUNT = id; window.CHAN_BY_ID = {}; (d.channels||[]).forEach(c=>{ window.CHAN_BY_ID[c.id]=c; });
@@ -212,6 +224,24 @@
             <div class="stat-tile"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span><span class="t-num">${d.coaCount}</span><span class="t-label">COA codes</span></div>
           </div>
           ${(d.failureReasons||[]).length?`<h3>Why bills failed</h3><table class="table"><thead><tr><th>Reason</th><th style="text-align:right;">Count</th></tr></thead><tbody>${d.failureReasons.map(f=>`<tr><td>${esc(f.failure_reason||'(none)')}</td><td style="text-align:right" class="num-cell">${f.n}</td></tr>`).join('')}</tbody></table>`:'<p class="muted" style="margin-top:1rem;margin-bottom:0;">No failed bills 🎉</p>'}</div>
+        <div class="card">
+          <div class="tabs chart-tabs" style="margin-bottom:1.1rem;">
+            <button class="active" data-ctab="activity" onclick="chartTab('activity')">Activity over time</button>
+            <button data-ctab="ai" onclick="chartTab('ai')">AI usage &amp; cost</button>
+          </div>
+          <div class="chart-stack">
+            <div id="cpanel-activity" class="cpanel active">
+              <div class="stat-grid" id="actTiles" style="margin-bottom:1.1rem;"></div>
+              <div style="position:relative;height:300px;"><canvas id="actChart"></canvas></div>
+              <p class="muted" style="margin:.7rem 0 0;"><strong style="color:var(--blue);">Documents processed</strong> ≈ AI extraction runs (one per document sent in). <strong style="color:var(--accent);">Bills created</strong> = drafts pushed to Xero. Last 12 months.</p>
+            </div>
+            <div id="cpanel-ai" class="cpanel">
+              <div class="stat-grid" id="aiTiles" style="margin-bottom:1.1rem;"></div>
+              <div style="position:relative;height:300px;"><canvas id="aiChart"></canvas></div>
+              <p class="muted" style="margin:.7rem 0 0;">Estimated from Gemini token counts (input + output) at current prices (1 USD ≈ <span id="aiRate">—</span> MYR). Token tracking started when this feature went live, so months before then read zero.</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="panel" id="ap-settings">
@@ -277,11 +307,90 @@
         </div>
       </div>`;
     wireFileDrop('coaDrop','coaFile','coaFileText','Choose a CSV file or drag it here');
+    renderAnalytics(id);
     if ((d.connections||[]).length) {
       window.__searchDropdown('xeroDrop', d.connections.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
       document.getElementById('xeroDiscBtn').onclick = () => disconnectSelectedXero(id);
     }
+    // restore / set the URL so a refresh stays on this account + sub-tab
+    if (['settings','connections'].includes(subtab)) adminTab(subtab);
+    else history.replaceState(null, '', '#account/'+id+'/stats');
   };
+  // Last N calendar months as [{ym:'2026-06', label:'Jun'}], oldest → newest.
+  function lastNMonths(n){
+    const out=[]; const now=new Date();
+    for(let i=n-1;i>=0;i--){ const m=new Date(now.getFullYear(), now.getMonth()-i, 1);
+      const ym = m.getFullYear()+'-'+String(m.getMonth()+1).padStart(2,'0');
+      let label = m.toLocaleDateString('en-GB',{month:'short'});
+      if(m.getMonth()===0) label += " '"+String(m.getFullYear()).slice(-2);
+      out.push({ ym, label }); }
+    return out;
+  }
+  async function renderAnalytics(id){
+    if (typeof Chart === 'undefined') return;
+    let data; try { data = await api('GET','/admin/accounts/'+id+'/analytics'); } catch { return; }
+    const months = lastNMonths(12); const labels = months.map(m=>m.label);
+
+    // ── Activity chart (documents processed vs bills created) ──
+    const byYm = {}; (data.monthly||[]).forEach(r=>{ byYm[r.ym]=r; });
+    const procArr = months.map(m=>byYm[m.ym]?byYm[m.ym].processed:0);
+    const creaArr = months.map(m=>byYm[m.ym]?byYm[m.ym].created:0);
+    const sum = (a)=>a.reduce((x,y)=>x+y,0);
+    const actTiles = document.getElementById('actTiles');
+    if (actTiles) actTiles.innerHTML = `
+      <div class="stat-tile"><span class="t-num">${procArr[procArr.length-1]||0}</span><span class="t-label">Processed this month</span></div>
+      <div class="stat-tile ok"><span class="t-num">${creaArr[creaArr.length-1]||0}</span><span class="t-label">Created this month</span></div>
+      <div class="stat-tile"><span class="t-num">${sum(procArr)}</span><span class="t-label">Processed (12 mo)</span></div>
+      <div class="stat-tile ok"><span class="t-num">${sum(creaArr)}</span><span class="t-label">Created (12 mo)</span></div>`;
+    const actCtx = document.getElementById('actChart');
+    if (actCtx) {
+      if (window._actChart) { window._actChart.destroy(); window._actChart=null; }
+      window._actChart = new Chart(actCtx, {
+        type:'line',
+        data:{ labels, datasets:[
+          { label:'Documents processed', data:procArr, borderColor:'#2D4DB3', backgroundColor:'rgba(45,77,179,.12)', fill:true, tension:.35, borderWidth:2, pointRadius:3, pointHoverRadius:5 },
+          { label:'Bills created', data:creaArr, borderColor:'#FF6B35', backgroundColor:'rgba(255,107,53,.10)', fill:true, tension:.35, borderWidth:2, pointRadius:3, pointHoverRadius:5 }
+        ]},
+        options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+          plugins:{ legend:{ position:'bottom', labels:{ usePointStyle:true, boxWidth:8, font:{ family:'Inter', size:12 } } } },
+          scales:{ y:{ beginAtZero:true, ticks:{ precision:0, color:'#6B7A8D' }, grid:{ color:'#EEF2F8' } }, x:{ ticks:{ color:'#6B7A8D' }, grid:{ display:false } } } }
+      });
+    }
+
+    // ── AI usage & cost ──
+    const ai = data.ai || { monthly:[], totalTokens:0, totalCostMyr:0, myrPerUsd:0 };
+    const aiYm = {}; (ai.monthly||[]).forEach(r=>{ aiYm[r.ym]=r; });
+    const tokens = months.map(m=>aiYm[m.ym]?aiYm[m.ym].tokens:0);
+    const cost   = months.map(m=>aiYm[m.ym]?aiYm[m.ym].costMyr:0);
+    const fmtTok = (n)=> n>=1e6?(n/1e6).toFixed(2)+'M' : n>=1e3?(n/1e3).toFixed(1)+'k' : String(n||0);
+    const fmtMyr = (n)=> 'RM '+Number(n||0).toFixed(2);
+    const tiles = document.getElementById('aiTiles');
+    if (tiles) tiles.innerHTML = `
+      <div class="stat-tile"><span class="t-num">${fmtTok(tokens[tokens.length-1])}</span><span class="t-label">Tokens this month</span></div>
+      <div class="stat-tile"><span class="t-num" style="font-size:1.5rem;">${fmtMyr(cost[cost.length-1])}</span><span class="t-label">Est. cost this month</span></div>
+      <div class="stat-tile"><span class="t-num">${fmtTok(ai.totalTokens)}</span><span class="t-label">Tokens all-time</span></div>
+      <div class="stat-tile"><span class="t-num" style="font-size:1.5rem;">${fmtMyr(ai.totalCostMyr)}</span><span class="t-label">Est. cost all-time</span></div>`;
+    const rate = document.getElementById('aiRate'); if (rate) rate.textContent = Number(ai.myrPerUsd||0).toFixed(2);
+    const aiCtx = document.getElementById('aiChart');
+    if (aiCtx) {
+      if (window._aiChart) { window._aiChart.destroy(); window._aiChart=null; }
+      window._aiChart = new Chart(aiCtx, {
+        data:{ labels, datasets:[
+          { type:'bar', label:'Tokens', data:tokens, backgroundColor:'rgba(45,77,179,.22)', borderColor:'#2D4DB3', borderWidth:1, borderRadius:4, yAxisID:'y' },
+          { type:'line', label:'Est. cost (MYR)', data:cost, borderColor:'#FF6B35', backgroundColor:'rgba(255,107,53,.12)', fill:true, tension:.35, borderWidth:2, pointRadius:3, pointHoverRadius:5, yAxisID:'y1' }
+        ]},
+        options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+          plugins:{ legend:{ position:'bottom', labels:{ usePointStyle:true, boxWidth:8, font:{ family:'Inter', size:12 } } } },
+          scales:{
+            y:{ beginAtZero:true, position:'left', grid:{ color:'#EEF2F8' }, title:{ display:true, text:'Tokens', color:'#6B7A8D' },
+                ticks:{ color:'#6B7A8D', callback:(v)=> v>=1e6?(v/1e6)+'M' : v>=1e3?(v/1e3)+'k' : v } },
+            y1:{ beginAtZero:true, position:'right', grid:{ display:false }, title:{ display:true, text:'Cost (MYR)', color:'#6B7A8D' },
+                 ticks:{ color:'#6B7A8D', callback:(v)=>'RM '+v } },
+            x:{ ticks:{ color:'#6B7A8D' }, grid:{ display:false } } }
+        }
+      });
+    }
+  }
   window.disconnectSelectedXero = async (id) => {
     const dd=document.getElementById('xeroDrop'); const tid = dd && dd.value ? dd.value() : '';
     const m=document.getElementById('xeroDiscMsg');
@@ -322,7 +431,13 @@
       document.getElementById('coaFile').value=''; const t=document.getElementById('coaFileText'); if(t) t.textContent='Choose a CSV file or drag it here';
     } catch(e){ m.className='msg err'; m.textContent=e.message; } };
 
-  (async () => { if (await guard()) renderList(); })();
+  // Restore the view (accounts list, or a specific account + sub-tab) after refresh.
+  function route() {
+    const p = (location.hash||'').replace(/^#/,'').split('/');
+    if (p[0]==='account' && p[1]) openAccount(Number(p[1]), p[2]).catch(()=>renderList());
+    else renderList();
+  }
+  (async () => { if (await guard()) route(); })();
   </script>
 </body>
 </html>

@@ -37,6 +37,21 @@ CREATE TABLE IF NOT EXISTS ai_prompt_blocks (
   CONSTRAINT fk_apb_account FOREIGN KEY (account_id) REFERENCES accounts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Per-call Gemini token usage, for AI usage/cost analytics. One row per AI call.
+-- account_id NULL = a call made outside any account context (legacy/global path).
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  account_id    BIGINT UNSIGNED NULL,
+  model         VARCHAR(64),
+  purpose       VARCHAR(32),            -- extraction | coa | chat | other
+  prompt_tokens INT DEFAULT 0,
+  output_tokens INT DEFAULT 0,
+  total_tokens  INT DEFAULT 0,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_aiusage_acct_created (account_id, created_at),
+  CONSTRAINT fk_aiusage_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS users (
   id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   account_id     BIGINT UNSIGNED NULL,

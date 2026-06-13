@@ -45,12 +45,15 @@
           <button data-tab="unmatched" onclick="switchTab('unmatched')">Unmatched</button>
           <button data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
-        <div class="panel active" id="panel-bills"><div class="card"><h2>Created bills</h2>${filterBar('bills')}<div id="billsList">Loading…</div></div></div>
-        <div class="panel" id="panel-unmatched"><div class="card"><h2>Unmatched / pending</h2>${filterBar('pending')}<div id="pendingList">Loading…</div></div></div>
+        <div class="panel active" id="panel-bills"><div class="card"><h2>Created bills <span class="title-count" id="count-bills"></span></h2>${filterBar('bills')}<div id="billsList">Loading…</div></div></div>
+        <div class="panel" id="panel-unmatched"><div class="card"><h2>Unmatched / pending <span class="title-count" id="count-pending"></span></h2>${filterBar('pending')}<div id="pendingList">Loading…</div></div></div>
         <div class="panel" id="panel-settings">${settingsHtml(data)}</div>`;
       fetch('/api/me/connections').then(r=>r.json()).then(d=>{ CONNECTIONS = d.connections||[]; }).catch(()=>{});
       wireFilters('bills'); wireFilters('pending');
       loadBills(); loadPending(); wireSettings();
+      // restore the tab the user was on before a refresh
+      const initialTab = (location.hash||'').replace(/^#/,'');
+      if (['bills','unmatched','settings'].includes(initialTab)) switchTab(initialTab);
     }
     // ── Table filtering (search by supplier/invoice/org + date range) ──
     function filterBar(key){
@@ -58,8 +61,7 @@
         <div class="fb-field fb-grow"><label>Search</label><input type="search" id="f-search-${key}" placeholder="Supplier, invoice${key==='bills'?' or Xero org':''}…"></div>
         <div class="fb-field"><label>From</label><input type="date" id="f-from-${key}"></div>
         <div class="fb-field"><label>To</label><input type="date" id="f-to-${key}"></div>
-        <button class="btn btn-ghost btn-sm" type="button" id="f-clear-${key}">Clear</button>
-        <span class="fb-count" id="f-count-${key}"></span></div>`;
+        <button class="btn btn-ghost btn-sm" type="button" id="f-clear-${key}">Clear</button></div>`;
     }
     function filteredItems(cfg){
       let arr = cfg.items;
@@ -80,13 +82,14 @@
     function switchTab(name){
       document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
       document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+name));
+      history.replaceState(null, '', '#'+name);  // remember tab across refresh
     }
     function billRow(b, withXero){
       return `<tr id="row-${b.id}"><td class="num-cell" style="color:var(--muted)">${dt(b.created_at)}</td>
         <td title="${esc(b.supplier||'')}">${esc(b.supplier||'-')}</td><td title="${esc(b.invoice_no||'')}">${esc(b.invoice_no||'-')}</td>
         <td class="num-cell">${money(b)}</td>
         ${withXero ? `<td title="${esc(b.xero_tenant_name||'')}">${esc(b.xero_tenant_name||'—')}</td><td>${b.xero_url?`<a href="${esc(b.xero_url)}" target="_blank" rel="noopener">Open ↗</a>`:'-'}</td>`
-                   : `<td title="${esc(b.failure_reason||'')}"><span class="muted">${esc(b.failure_reason||'-')}</span></td><td style="text-align:right;"><button class="linkbtn" onclick="openResolve(event,${b.id})">Resolve →</button></td>`}</tr>`;
+                   : `<td title="${esc(b.failure_reason||'')}"><span class="muted">${esc(b.failure_reason||'-')}</span></td><td style="text-align:right;white-space:nowrap;"><button class="linkbtn" onclick="openResolve(event,${b.id})">Resolve →</button> &nbsp; <button class="linkbtn danger" onclick="deletePending(event,${b.id})">Delete</button></td>`}</tr>`;
     }
     const PAGE_SIZE = 15;
     const PG = {
@@ -105,8 +108,8 @@
       const cfg = PG[key]; const el = document.getElementById(cfg.container);
       const items = filteredItems(cfg);
       const active = !!(cfg.search || cfg.from || cfg.to);
-      const cnt = document.getElementById('f-count-'+key);
-      if (cnt) cnt.textContent = active ? `${items.length} of ${cfg.items.length}` : (cfg.items.length ? `${cfg.items.length} total` : '');
+      const cnt = document.getElementById('count-'+key);
+      if (cnt) cnt.textContent = active ? `${items.length} / ${cfg.items.length}` : `${cfg.items.length}`;
       if (!items.length) { el.innerHTML = '<div class="empty">'+(active?'No bills match your filters.':cfg.empty)+'</div>'; return; }
       const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
       if (cfg.page > pages) cfg.page = pages;
@@ -117,7 +120,7 @@
         : '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Reason</th><th></th>';
       const cols = cfg.withXero
         ? '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col><col style="width:84px">'
-        : '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col><col style="width:118px">';
+        : '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col><col style="width:168px">';
       const pager = pages > 1 ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.82rem;color:var(--muted);">
           <span>Showing ${start+1}–${start+slice.length} of ${items.length}</span>
           <span><button class="btn btn-ghost btn-sm" ${cfg.page===1?'disabled':''} onclick="goPage('${key}',${cfg.page-1})">‹ Prev</button>
@@ -140,6 +143,19 @@
         <button class="linkbtn" onclick="loadPending()">Cancel</button>
         <span id="rmsg-${id}" class="muted"></span></div></td>`;
       window.__searchDropdown('rdrop-'+id, items, { placeholder:'Choose organisation' });
+    };
+    // Delete an unmatched/pending bill (created bills are protected server-side).
+    window.deletePending = async (e, id) => {
+      e.preventDefault();
+      if (!confirm('Delete this unmatched bill? This cannot be undone.')) return;
+      const row = document.getElementById('row-'+id);
+      try {
+        const r = await fetch('/api/me/bills/'+id, { method:'DELETE' });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error||'Delete failed.');
+        // drop locally and re-render so the count updates without a full refetch
+        PG.pending.items = PG.pending.items.filter(b => b.id !== id);
+        renderTab('pending');
+      } catch (err) { alert(err.message); }
     };
     window.doResolve = async (id) => {
       const dd = document.getElementById('rdrop-'+id);

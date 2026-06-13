@@ -1941,7 +1941,7 @@ async function callGroqBill(ocrText, model, knownOrgs = []) {
 
 // Shared Gemini generateContent call → parsed JSON. `parts` is the array of
 // content parts: text and/or inlineData (base64 image/PDF) for the vision path.
-async function callGeminiJson(parts, model) {
+async function callGeminiJson(parts, model, purpose = 'extraction') {
   if (!GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY in .env.');
   }
@@ -1972,6 +1972,18 @@ async function callGeminiJson(parts, model) {
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload?.error?.message || `Gemini analysis failed (${response.status}).`);
+  }
+
+  // Record token usage (best-effort, fire-and-forget) against the active account.
+  const usage = payload.usageMetadata;
+  if (usage) {
+    const store = xeroAccountCtx.getStore();
+    require('./models/aiUsage').record({
+      accountId: (store && store.accountId) || null,
+      model: useModel, purpose,
+      promptTokens: usage.promptTokenCount, outputTokens: usage.candidatesTokenCount,
+      totalTokens: usage.totalTokenCount
+    });
   }
 
   const candidate = payload.candidates?.[0];
@@ -2043,7 +2055,7 @@ ${lineList}
 
 Return ONLY valid JSON: { "assignments": [ { "index": <number>, "accountCode": "<code from list or null>" } ] }`;
   try {
-    const parsed = await callGeminiJson([{ text: prompt }], model);
+    const parsed = await callGeminiJson([{ text: prompt }], model, 'coa');
     const map = {};
     const valid = new Set(accounts.map((a) => a.code));
     for (const a of (parsed?.assignments || [])) {

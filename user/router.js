@@ -142,4 +142,12 @@ router.get('/bills', async (req, res) => {
   res.json({ bills: await bills.recent(accountId, req.query.limit, req.query.status) });
 });
 
+// Delete an unmatched/pending (or failed) bill. Created (success) bills are protected.
+router.delete('/bills/:id', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const removed = await bills.remove(accountId, Number(req.params.id));
+  if (!removed) return res.status(404).json({ error: 'Bill not found, or it is a created bill that cannot be deleted.' });
+  res.json({ ok: true, removed });
+});
+
 module.exports = router;

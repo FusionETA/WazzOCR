@@ -127,6 +127,50 @@ router.get('/accounts/:id/bills', async (req, res) => {
   res.json({ bills: await bills.recent(Number(req.params.id), req.query.limit) });
 });
 
+// Monthly analytics series (last 12 months) for the Stats charts.
+//   processed = every bill row (≈ one Gemini extraction run per document → AI usage)
+//   created   = bills successfully pushed to Xero
+//   amount    = total MYR of created bills
+router.get('/accounts/:id/analytics', async (req, res) => {
+  const accountId = Number(req.params.id);
+  if (!(await accounts.getById(accountId))) return res.status(404).json({ error: 'Account not found.' });
+  const rows = await db.query(
+    `SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym,
+            SUM(status = 'success')                                AS created,
+            COUNT(*)                                               AS processed,
+            SUM(CASE WHEN status = 'success' THEN total ELSE 0 END) AS amount
+       FROM bills
+      WHERE account_id = ?
+        AND created_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 11 MONTH), '%Y-%m-01')
+      GROUP BY ym ORDER BY ym`,
+    [accountId]
+  );
+  // AI token usage → cost (derived from token counts × price table).
+  const aiUsage = require('../models/aiUsage');
+  const pricing = require('../lib/geminiPricing');
+  const aiMonthlyRows = await aiUsage.monthlyByModel(accountId);
+  const aiTotalsRows = await aiUsage.totalsByModel(accountId);
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const aiByMonth = {};
+  for (const r of aiMonthlyRows) {
+    const b = aiByMonth[r.ym] || (aiByMonth[r.ym] = { tokens: 0, costMyr: 0 });
+    b.tokens += Number(r.ttl || 0);
+    b.costMyr += pricing.costMyr(r.model, r.pin, r.pout);
+  }
+  let totalTokens = 0, totalCostMyr = 0;
+  for (const r of aiTotalsRows) { totalTokens += Number(r.ttl || 0); totalCostMyr += pricing.costMyr(r.model, r.pin, r.pout); }
+
+  res.json({
+    monthly: rows.map((r) => ({
+      ym: r.ym, created: Number(r.created || 0), processed: Number(r.processed || 0), amount: Number(r.amount || 0)
+    })),
+    ai: {
+      monthly: Object.entries(aiByMonth).map(([ym, v]) => ({ ym, tokens: v.tokens, costMyr: round2(v.costMyr) })),
+      totalTokens, totalCostMyr: round2(totalCostMyr), myrPerUsd: pricing.myrPerUsd()
+    }
+  });
+});
+
 // Wazzup channels (the routing key). Add / remove.
 router.post('/accounts/:id/channels', async (req, res) => {
   const accountId = Number(req.params.id);
