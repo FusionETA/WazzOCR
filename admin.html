@@ -201,15 +201,15 @@
         <button data-tab="connections" onclick="adminTab('connections')">Connections</button></div>
 
       <div class="panel active" id="ap-stats">
-        <div class="card"><div class="eyebrow">Bills created this month</div>
+        <div class="card hero"><div class="eyebrow">Bills created this month</div>
           <div class="stat" style="margin-top:.35rem;"><span class="num">${d.successThisMonth||0}</span><span class="unit">bills</span></div>
           <div class="muted" style="margin-top:.25rem;">${counts.success||0} all-time</div></div>
         <div class="card">
           <div class="stat-grid">
-            <div class="stat-tile ok"><span class="t-num">${counts.success||0}</span><span class="t-label">Success</span></div>
-            <div class="stat-tile bad"><span class="t-num">${counts.failed||0}</span><span class="t-label">Failed</span></div>
-            <div class="stat-tile warn"><span class="t-num">${counts.pending||0}</span><span class="t-label">Pending</span></div>
-            <div class="stat-tile"><span class="t-num">${d.coaCount}</span><span class="t-label">COA codes</span></div>
+            <div class="stat-tile ok"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span class="t-num">${counts.success||0}</span><span class="t-label">Success</span></div>
+            <div class="stat-tile bad"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span class="t-num">${counts.failed||0}</span><span class="t-label">Failed</span></div>
+            <div class="stat-tile warn"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="t-num">${counts.pending||0}</span><span class="t-label">Pending</span></div>
+            <div class="stat-tile"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span><span class="t-num">${d.coaCount}</span><span class="t-label">COA codes</span></div>
           </div>
           ${(d.failureReasons||[]).length?`<h3>Why bills failed</h3><table class="table"><thead><tr><th>Reason</th><th style="text-align:right;">Count</th></tr></thead><tbody>${d.failureReasons.map(f=>`<tr><td>${esc(f.failure_reason||'(none)')}</td><td style="text-align:right" class="num-cell">${f.n}</td></tr>`).join('')}</tbody></table>`:'<p class="muted" style="margin-top:1rem;margin-bottom:0;">No failed bills 🎉</p>'}</div>
       </div>

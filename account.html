@@ -37,7 +37,7 @@
       }
       c.innerHTML = `
         <div class="page-head"><h1>${esc(data.account?data.account.name:'My account')}</h1><p>Bill automation overview</p></div>
-        <div class="card"><div class="eyebrow">Bills created this month</div>
+        <div class="card hero"><div class="eyebrow">Bills created this month</div>
           <div class="stat" style="margin-top:.4rem;"><span class="num">${data.successThisMonth!=null?data.successThisMonth:data.successCount}</span><span class="unit">bills</span></div>
           <div class="muted" style="margin-top:.3rem;">${data.successCount} all-time</div></div>
         <div class="tabs">
