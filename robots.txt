@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Allow: /login.html
+Disallow: /account.html
+Disallow: /admin.html
+Disallow: /reset.html
+Disallow: /claim.html
+Disallow: /api/
+Disallow: /admin/
+Disallow: /auth/
+Disallow: /assets/chart.min.js
+
+Sitemap: https://wazzocr.fusioneta.com.my/sitemap.xml

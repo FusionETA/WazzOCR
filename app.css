@@ -138,6 +138,12 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .divider { display:flex; align-items:center; gap:.7rem; margin:1.1rem 0 .25rem; color:var(--muted); font-size:.76rem; }
 .divider::before, .divider::after { content:''; flex:1; height:1px; background:var(--line); }
 .links { margin-top:1.25rem; text-align:center; font-size:.85rem; }
+.auth-foot { margin:1.1rem 0 0; padding-top:1rem; border-top:1px solid var(--line); text-align:center; font-size:.82rem; color:var(--muted); }
+.auth-foot a { font-weight:600; }
+.auth-contact { display:flex; flex-wrap:wrap; justify-content:center; gap:.4rem 1.1rem; margin-top:.55rem; font-size:.82rem; }
+.auth-contact a { display:inline-flex; align-items:center; gap:.35rem; color:var(--muted); font-weight:600; }
+.auth-contact a:hover { color:var(--navy); text-decoration:none; }
+.auth-contact svg { color:var(--accent); flex-shrink:0; }
 
 @media (max-width:600px){ .grid2 { grid-template-columns:1fr; } .kv { flex-direction:column; gap:.15rem; } .kv .k { min-width:0; } }
 
