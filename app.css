@@ -32,7 +32,7 @@ h1,h2,h3 { font-family:var(--head); color:var(--ink); }
   display:flex; align-items:center; justify-content:space-between; box-shadow:var(--shadow-sm); }
 .topbar .brand { display:flex; align-items:center; gap:.6rem; font-family:var(--head); font-weight:800; color:var(--navy); font-size:1.1rem; }
 .topbar .right { display:flex; align-items:center; gap:.75rem; }
-.who { font-size:.82rem; color:var(--muted); }
+.who { font-size:.82rem; color:var(--muted); display:inline-block; max-width:40vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
 
 /* ── Layout ──────────────────────────────────────────────── */
 .container { max-width:1280px; margin:1.75rem auto; padding:0 1.25rem; }
@@ -60,6 +60,7 @@ h1,h2,h3 { font-family:var(--head); color:var(--ink); }
 .kv { display:flex; gap:1rem; padding:.45rem 0; font-size:.9rem; border-bottom:1px dashed var(--line); }
 .kv:last-child { border-bottom:none; }
 .kv .k { color:var(--muted); min-width:160px; }
+.kv > div { min-width:0; overflow-wrap:anywhere; }  /* long values wrap instead of overflowing the card */
 
 /* ── Buttons ─────────────────────────────────────────────── */
 .btn { display:inline-flex; align-items:center; justify-content:center; gap:.45rem;
@@ -146,7 +147,7 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
   padding:.55rem .8rem; border:1px solid var(--line); border-radius:var(--r-sm); background:#fff;
   font-family:var(--font); font-size:.9rem; color:var(--text); cursor:pointer; text-align:left; }
 .sdrop-btn:hover { border-color:#cbd5e1; }
-.sdrop-cur { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sdrop-cur { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sdrop-caret { color:var(--muted); flex-shrink:0; }
 .sdrop-panel { position:absolute; z-index:30; top:calc(100% + 4px); left:0; right:0; display:none;
   background:#fff; border:1px solid var(--line); border-radius:var(--r-sm); box-shadow:var(--shadow);
