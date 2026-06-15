@@ -245,32 +245,16 @@ function normalizeTokenGrant(tokens = {}, connections = tokens.connections || []
   };
 }
 
+// The file token store (xero-tokens.json) is RETIRED — the DB (xero_grants /
+// xero_connections) is the single source of truth. These remain as inert stubs
+// so any lingering legacy caller is a harmless no-op rather than reviving the
+// dual-store rotation race that consumed Xero's single-use refresh tokens.
 async function loadTokenStore() {
-  const saved = await readJson(TOKEN_FILE, null);
-  if (!saved) {
-    return { grants: [], updatedAt: isoNow() };
-  }
-  if (Array.isArray(saved.grants)) {
-    return {
-      ...saved,
-      grants: saved.grants.filter((grant) => grant?.refreshToken || grant?.accessToken)
-    };
-  }
-  if (saved.refreshToken || saved.accessToken) {
-    return {
-      grants: [normalizeTokenGrant(saved, saved.connections || [])],
-      updatedAt: saved.updatedAt || isoNow(),
-      migratedFromLegacy: true
-    };
-  }
   return { grants: [], updatedAt: isoNow() };
 }
 
-async function saveTokenStore(store) {
-  await writeJson(TOKEN_FILE, {
-    grants: store.grants || [],
-    updatedAt: isoNow()
-  });
+async function saveTokenStore() {
+  // no-op: never write xero-tokens.json again.
 }
 
 function mergeGrantConnections(grants) {
@@ -877,74 +861,65 @@ async function fetchConnections(accessToken) {
 // JSON store. The single-use refresh token is rotated and saved back to the DB.
 const { AsyncLocalStorage } = require('async_hooks');
 const xeroAccountCtx = new AsyncLocalStorage();
-const _dbAccessTokenCache = new Map(); // key "accountId:tenantId" -> { accessToken, expiresAt }
+const _dbAccessTokenCache = new Map(); // key grantId -> { accessToken, expiresAt }
+const _dbRefreshInflight = new Map();  // key grantId -> Promise<accessToken>
 
 async function getDbTokensForTenant(accountId, tenantId) {
   const xc = require('./models/xeroConnections');
-  const key = accountId + ':' + tenantId;
-  const cached = _dbAccessTokenCache.get(key);
-  if (cached && cached.expiresAt - Date.now() > 60000) return { accessToken: cached.accessToken };
-
   const grant = await xc.getGrantForTenant(accountId, tenantId);
   if (!grant) return null;
 
-  const response = await fetch(`${XERO_IDENTITY_BASE}/token`, {
-    method: 'POST',
-    headers: {
-      Authorization: basicAuthHeader(XERO_CLIENT_ID, XERO_CLIENT_SECRET),
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: urlEncode({ grant_type: 'refresh_token', refresh_token: grant.refreshToken })
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    await xc.markNeedsReconnect(accountId, tenantId).catch(() => {});
-    throw new Error(payload.error_description || payload.error || `Xero token refresh failed (${response.status})`);
+  // A Xero access token is valid for EVERY tenant under a grant, so cache it per
+  // grant (not per tenant): one refresh then serves all the connection's orgs,
+  // instead of re-refreshing the shared single-use token once per tenant.
+  const cached = _dbAccessTokenCache.get(grant.grantId);
+  if (cached && cached.expiresAt - Date.now() > 60000) return { accessToken: cached.accessToken };
+
+  // Coalesce concurrent refreshes of the same grant — Xero refresh tokens are
+  // single-use, so two parallel refreshes would make one fail as "consumed".
+  let inflight = _dbRefreshInflight.get(grant.grantId);
+  if (!inflight) {
+    inflight = (async () => {
+      const response = await fetch(`${XERO_IDENTITY_BASE}/token`, {
+        method: 'POST',
+        headers: {
+          Authorization: basicAuthHeader(XERO_CLIENT_ID, XERO_CLIENT_SECRET),
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: urlEncode({ grant_type: 'refresh_token', refresh_token: grant.refreshToken })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        await xc.markNeedsReconnect(accountId, tenantId).catch(() => {});
+        throw new Error(payload.error_description || payload.error || `Xero token refresh failed (${response.status})`);
+      }
+      // Persist the rotated refresh token (Xero refresh tokens are single-use).
+      if (payload.refresh_token && payload.refresh_token !== grant.refreshToken) {
+        await xc.updateGrantToken(grant.grantId, payload.refresh_token);
+      }
+      _dbAccessTokenCache.set(grant.grantId, {
+        accessToken: payload.access_token,
+        expiresAt: Date.now() + (Number(payload.expires_in || 1800) * 1000)
+      });
+      return payload.access_token;
+    })().finally(() => _dbRefreshInflight.delete(grant.grantId));
+    _dbRefreshInflight.set(grant.grantId, inflight);
   }
-  // Persist the rotated refresh token (Xero refresh tokens are single-use).
-  if (payload.refresh_token && payload.refresh_token !== grant.refreshToken) {
-    await xc.updateGrantToken(grant.grantId, payload.refresh_token);
-  }
-  _dbAccessTokenCache.set(key, {
-    accessToken: payload.access_token,
-    expiresAt: Date.now() + (Number(payload.expires_in || 1800) * 1000)
-  });
-  return { accessToken: payload.access_token };
+  return { accessToken: await inflight };
 }
 
 async function getTokensForTenant(tenantId, { refreshIfNeeded = true } = {}) {
-  // Account context → DB-backed tokens for that account.
+  // DB is the single source of truth for Xero tokens. Prefer the account in
+  // context; otherwise resolve the owning account from the tenant id (so the
+  // context-less bill-status cron uses the DB path too — no file store).
   const ctx = xeroAccountCtx.getStore();
-  if (ctx && ctx.accountId) {
-    try { return await getDbTokensForTenant(ctx.accountId, tenantId); }
-    catch (err) { console.error(`[xero-db] token for tenant ${tenantId}:`, err.message); return null; }
+  let accountId = ctx && ctx.accountId;
+  if (!accountId) {
+    accountId = await require('./models/xeroConnections').findAccountByTenant(tenantId).catch(() => null);
   }
-  ensureConfig();
-  const store = await loadTokenStore();
-  let grants = store.grants || [];
-  let changed = Boolean(store.migratedFromLegacy);
-  const candidates = grants.filter((grant) => tenantBelongsToGrant(grant, tenantId));
-
-  for (const grant of candidates.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))) {
-    try {
-      let current = grant;
-      if (refreshIfNeeded && isTokenExpiringSoon(current)) {
-        current = await refreshTokens(current);
-        const idx = grants.findIndex((item) => item.id === grant.id);
-        if (idx !== -1) {
-          grants[idx] = normalizeTokenGrant(current, current.connections || [], grants[idx]);
-          changed = true;
-        }
-      }
-      if (changed) await saveTokenStore({ grants });
-      return current;
-    } catch (error) {
-      console.error(`Could not refresh Xero token for tenant ${tenantId}:`, error.message);
-    }
-  }
-
-  if (changed) await saveTokenStore({ grants });
-  return null;
+  if (!accountId) return null;
+  try { return await getDbTokensForTenant(accountId, tenantId); }
+  catch (err) { console.error(`[xero-db] token for tenant ${tenantId}:`, err.message); return null; }
 }
 
 async function getValidConnections() {
@@ -2668,6 +2643,17 @@ app.use(express.json({ limit: '20mb' }));
 // /admin/accounts, ...) are handled before the source-path block and static.
 // Unmatched /auth/* or /admin/* paths fall through to the block below.
 app.use('/auth', require('./auth/router'));
+// Admin connects a specific account's Xero on their behalf. Registered here
+// (before the static-source blocker below) so it isn't 404'd as an unhandled
+// /admin/* path. redirectToAccountXero/buildAccountXeroState are hoisted fn
+// declarations, so they're callable from this point.
+{
+  const mw = require('./auth/middleware');
+  app.get('/admin/accounts/:id/xero/connect', mw.attachUser, mw.requireAuth, mw.requireSuperAdmin, (req, res) => {
+    redirectToAccountXero(req, res, Number(req.params.id), 'admin');
+  });
+}
+
 app.use('/admin', require('./admin/router'));
 app.use('/api/me', require('./user/router'));
 
@@ -3302,8 +3288,12 @@ app.get('/api/xero/connect', async (req, res) => {
 
 // ── Per-account Xero connect (stateless signed state, stores tokens in DB) ──
 const _xeroAuthMw = require('./auth/middleware');
-function buildAccountXeroState(accountId) {
-  const data = `acct.${accountId}.${crypto.randomBytes(8).toString('hex')}`;
+// State carries the account id plus the origin of the connect ('admin' when an
+// admin connects on an account's behalf, 'me' for a customer connecting their
+// own). origin is folded into the random segment so the state stays a valid
+// 4-part token — older 'acct.<id>.<hex>.<hmac>' links still parse as 'me'.
+function buildAccountXeroState(accountId, origin = 'me') {
+  const data = `acct.${accountId}.${origin}-${crypto.randomBytes(8).toString('hex')}`;
   const hmac = crypto.createHmac('sha256', process.env.APP_ENCRYPTION_KEY || XERO_CLIENT_SECRET).update(data).digest('hex').slice(0, 32);
   return `${data}.${hmac}`;
 }
@@ -3314,9 +3304,10 @@ function parseAccountXeroState(state) {
   const data = parts.slice(0, 3).join('.');
   const expected = crypto.createHmac('sha256', process.env.APP_ENCRYPTION_KEY || XERO_CLIENT_SECRET).update(data).digest('hex').slice(0, 32);
   if (parts[3] !== expected) return null;
-  return { accountId: Number(parts[1]) };
+  const origin = parts[2].includes('-') ? parts[2].split('-')[0] : 'me';
+  return { accountId: Number(parts[1]), origin };
 }
-function redirectToAccountXero(req, res, accountId) {
+function redirectToAccountXero(req, res, accountId, origin = 'me') {
   try {
     ensureConfig();
     const authUrl = new URL(`${XERO_IDENTITY_BASE}/authorize`);
@@ -3324,19 +3315,18 @@ function redirectToAccountXero(req, res, accountId) {
     authUrl.searchParams.set('client_id', XERO_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', getOAuthRedirectUri(req));
     authUrl.searchParams.set('scope', XERO_SCOPES);
-    authUrl.searchParams.set('state', buildAccountXeroState(accountId));
+    authUrl.searchParams.set('state', buildAccountXeroState(accountId, origin));
     res.redirect(authUrl.toString());
   } catch (error) { res.status(500).send(error.message); }
 }
 // Customer connects their own account's Xero.
 app.get('/api/me/xero/connect', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth, (req, res) => {
   if (!req.user.account_id) return res.status(400).send('Your login has no account.');
-  redirectToAccountXero(req, res, req.user.account_id);
+  redirectToAccountXero(req, res, req.user.account_id, 'me');
 });
-// Admin connects a specific account's Xero on their behalf.
-app.get('/admin/accounts/:id/xero/connect', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth, _xeroAuthMw.requireSuperAdmin, (req, res) => {
-  redirectToAccountXero(req, res, Number(req.params.id));
-});
+// NOTE: the admin "/admin/accounts/:id/xero/connect" route is registered EARLIER
+// (just before the static-source blocker), because that blocker 404s any
+// unhandled /admin/* path. See the registration above app.use('/admin', ...).
 
 // Resolve a pending/unmatched bill: pick a Xero org → create the draft under
 // this account's Xero. The full bill data was stored in `payload` when pending.
@@ -3371,11 +3361,21 @@ app.get('/api/xero/callback', async (req, res) => {
     const { code, state, error, error_description: errorDescription } = req.query;
     const acctState = parseAccountXeroState(state);
 
+    // Where to land after the connect, on its connections view. Admins go back
+    // to that account's page in the admin console; customers to the Settings tab
+    // of their own dashboard (where Xero connections live).
+    const acctDest = (status, reason) => {
+      const q = `?xero=${status}` + (reason ? '&reason=' + encodeURIComponent(reason) : '');
+      return acctState && acctState.origin === 'admin'
+        ? `/admin.html${q}#account/${acctState.accountId}/connections`
+        : `/account.html${q}#settings`;
+    };
+
     // User cancelled / denied consent (or Xero returned an error): go back to
     // the dashboard with a friendly message instead of an error page.
     if (error) {
-      const reason = encodeURIComponent(errorDescription || error || 'cancelled');
-      return res.redirect((acctState ? '/account.html' : '/') + '?xero=error&reason=' + reason);
+      if (acctState) return res.redirect(acctDest('error', errorDescription || error || 'cancelled'));
+      return res.redirect('/?xero=error&reason=' + encodeURIComponent(errorDescription || error || 'cancelled'));
     }
 
     // Per-account connect (stateless signed state) → store tokens in the DB.
@@ -3390,10 +3390,10 @@ app.get('/api/xero/callback', async (req, res) => {
           if (c.tenantId) { await xc.upsertConnection(acctState.accountId, grantId, c.tenantId, c.tenantName || null); n++; }
         }
         console.log(`[xero] account ${acctState.accountId} connected ${n} org(s).`);
-        return res.redirect('/account.html?xero=connected');
+        return res.redirect(acctDest('connected'));
       } catch (e) {
         console.error('[xero] account connect failed:', e.message);
-        return res.redirect('/account.html?xero=error&reason=' + encodeURIComponent(e.message));
+        return res.redirect(acctDest('error', e.message));
       }
     }
 

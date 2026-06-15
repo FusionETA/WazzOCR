@@ -45,6 +45,17 @@ async function getGrantForTenant(accountId, tenantId) {
   return row ? { grantId: row.grant_id, refreshToken: decrypt(row.refresh_token) } : null;
 }
 
+// Resolve which account owns an active connection to this Xero tenant.
+// Lets context-less callers (e.g. the bill-status cron) use the DB token path
+// instead of the retired file store. Returns accountId or null.
+async function findAccountByTenant(tenantId) {
+  const row = await db.getOne(
+    "SELECT account_id FROM xero_connections WHERE xero_tenant_id = ? AND status = 'active' LIMIT 1",
+    [tenantId]
+  );
+  return row ? row.account_id : null;
+}
+
 async function markNeedsReconnect(accountId, tenantId) {
   await db.execute(
     "UPDATE xero_connections SET needs_reconnect = 1, status = 'expired' WHERE account_id = ? AND xero_tenant_id = ?",
@@ -76,6 +87,6 @@ async function deleteGrantIfOrphaned(grantId) {
 
 module.exports = {
   saveGrant, updateGrantToken, upsertConnection,
-  listByAccount, getGrantForTenant, markNeedsReconnect,
+  listByAccount, getGrantForTenant, findAccountByTenant, markNeedsReconnect,
   getById, deleteConnection, deleteGrantIfOrphaned
 };

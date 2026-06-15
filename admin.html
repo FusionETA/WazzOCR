@@ -437,7 +437,22 @@
     if (p[0]==='account' && p[1]) openAccount(Number(p[1]), p[2]).catch(()=>renderList());
     else renderList();
   }
-  (async () => { if (await guard()) route(); })();
+  // Surface the result of a Xero connect (admin connected an account's Xero),
+  // then strip the ?xero query but keep the hash so route() lands on the right
+  // account + connections tab.
+  function flashXeroResult() {
+    const q = new URLSearchParams(location.search); const x = q.get('xero'); if (!x) return;
+    const reason = decodeURIComponent(q.get('reason') || '');
+    const ok = x === 'connected';
+    const d = document.createElement('div');
+    d.textContent = ok ? 'Xero connected successfully ✓'
+      : (/denied|cancel|access_denied/i.test(reason) ? 'Xero connection was cancelled.' : ('Xero connection failed' + (reason ? ': ' + reason : '.')));
+    d.style.cssText = 'position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:1000;padding:.7rem 1.1rem;border-radius:10px;font-size:.9rem;font-weight:600;box-shadow:0 8px 24px rgba(16,35,92,.18);background:' + (ok ? '#ECFDF3' : '#FEF3F2') + ';color:' + (ok ? '#067647' : '#B42318') + ';';
+    document.body.appendChild(d);
+    setTimeout(() => { d.style.transition = 'opacity .4s'; d.style.opacity = '0'; setTimeout(() => d.remove(), 400); }, 4500);
+    history.replaceState({}, '', location.pathname + location.hash);
+  }
+  (async () => { if (await guard()) { route(); flashXeroResult(); } })();
   </script>
 </body>
 </html>

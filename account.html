@@ -361,7 +361,9 @@
       const reason=decodeURIComponent(q.get('reason')||'');
       if (x==='connected') showToast('Xero connected successfully ✓', true);
       else if (x==='error') showToast(/denied|cancel|access_denied/i.test(reason) ? 'Xero connection was cancelled.' : ('Xero connection failed' + (reason?': '+reason:'.')), false);
-      history.replaceState({}, '', location.pathname);
+      // Strip the query but KEEP the hash, so load() can still honour e.g.
+      // "#settings" (the Xero connect flow lands the user on that tab).
+      history.replaceState({}, '', location.pathname + location.hash);
     })();
     load();
   </script>
