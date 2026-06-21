@@ -116,6 +116,7 @@ router.post('/channels/:id/register-webhook', async (req, res) => {
   if (!apiKey) return res.status(400).json({ error: 'No API key stored for this channel. Add the API key first.' });
   const result = await wazzup.registerWebhook(apiKey, process.env.PUBLIC_WEBHOOK_URL);
   if (!result.ok) return res.status(502).json({ error: result.error });
+  await wazzupChannels.markWebhookRegistered(accountId, Number(req.params.id));
   res.json({ ok: true });
 });
 

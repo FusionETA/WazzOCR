@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS wazzup_channels (
   api_key    VARBINARY(512),
   label      VARCHAR(255),
   status     ENUM('active','disabled') DEFAULT 'active',
+  webhook_registered TINYINT(1) NOT NULL DEFAULT 0,
   CONSTRAINT fk_wazzup_account FOREIGN KEY (account_id) REFERENCES accounts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

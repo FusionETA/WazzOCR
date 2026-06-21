@@ -11,15 +11,24 @@ function maskKey(k) {
 
 async function listByAccount(accountId) {
   const rows = await db.query(
-    'SELECT id, account_id, channel_id, api_key, label, status FROM wazzup_channels WHERE account_id = ?',
+    'SELECT id, account_id, channel_id, api_key, label, status, webhook_registered FROM wazzup_channels WHERE account_id = ?',
     [accountId]
   );
   return rows.map((r) => {
     let apiKeyMasked = null;
     if (r.api_key) { try { apiKeyMasked = maskKey(decrypt(r.api_key)); } catch { apiKeyMasked = '••••'; } }
     const { api_key, ...rest } = r; // never expose the encrypted/plain key in a list
-    return { ...rest, hasApiKey: Boolean(r.api_key), apiKeyMasked };
+    return { ...rest, hasApiKey: Boolean(r.api_key), apiKeyMasked, webhookRegistered: Boolean(r.webhook_registered) };
   });
+}
+
+// Mark a channel's webhook as registered (called after a successful registerWebhook).
+async function markWebhookRegistered(accountId, id) {
+  const r = await db.execute(
+    'UPDATE wazzup_channels SET webhook_registered = 1 WHERE id = ? AND account_id = ?',
+    [id, accountId]
+  );
+  return r.affectedRows;
 }
 
 // Resolve a channel id to its account id (active channels only).
@@ -58,4 +67,4 @@ async function remove(accountId, id) {
   return r.affectedRows;
 }
 
-module.exports = { listByAccount, resolveAccountId, getByChannelId, getDecryptedApiKey, add, remove };
+module.exports = { listByAccount, resolveAccountId, getByChannelId, getDecryptedApiKey, add, remove, markWebhookRegistered };

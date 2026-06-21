@@ -281,7 +281,7 @@
           <div class="col-right">
             <div class="card"><h2>Wazzup channels</h2>
               <table class="table"><tbody>${(d.channels||[]).map(c=>`<tr>
-                <td><strong>${esc(c.label||'(no label)')}</strong></td>
+                <td><strong>${esc(c.label||'(no label)')}</strong> ${c.webhookRegistered?'<span class="badge success">Webhook registered</span>':'<span class="badge skipped">Not registered</span>'}</td>
                 <td style="text-align:right;white-space:nowrap;">
                   <button class="linkbtn" onclick="openChannelModal(${c.id})">View</button>
                   &nbsp; <button class="linkbtn" onclick="registerWebhook(${id},${c.id})">Register webhook</button>
@@ -423,7 +423,7 @@
     try { await api('POST','/admin/accounts/'+id+'/channels',{ channelId:document.getElementById('chId').value.trim(), label:document.getElementById('chLabel').value.trim(), apiKey:document.getElementById('chKey').value.trim()||undefined }); openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.delChannel = async (id,cid) => { try { await api('DELETE','/admin/accounts/'+id+'/channels/'+cid); openAccount(id); } catch(e){ alert(e.message); } };
   window.registerWebhook = async (id,cid) => { const m=document.getElementById('regMsg'); m.className='msg'; m.style.display='block'; m.textContent='Registering…';
-    try { await api('POST','/admin/accounts/'+id+'/channels/'+cid+'/register-webhook'); m.className='msg ok'; m.textContent='Webhook registered with Wazzup ✓'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+    try { await api('POST','/admin/accounts/'+id+'/channels/'+cid+'/register-webhook'); m.className='msg ok'; m.textContent='Webhook registered with Wazzup ✓'; openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.uploadCoa = async (id) => { const m=document.getElementById('coaMsg');
     const f=document.getElementById('coaFile').files[0];
     if(!f){ m.className='msg err'; m.textContent='Choose a CSV file first.'; return; }

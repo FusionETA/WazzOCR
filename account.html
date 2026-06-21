@@ -290,7 +290,7 @@
       const box=document.getElementById('channelsBox'); if(!box) return;
       CHAN_BY_ID = {}; channels.forEach(c=>{ CHAN_BY_ID[c.id]=c; });
       box.innerHTML = channels.length ? `<table class="table"><tbody>${channels.map(c=>`<tr>
-        <td><strong>${esc(c.label||'(no label)')}</strong></td>
+        <td><strong>${esc(c.label||'(no label)')}</strong> ${c.webhookRegistered?'<span class="badge success">Webhook registered</span>':'<span class="badge skipped">Not registered</span>'}</td>
         <td style="text-align:right;white-space:nowrap;">
           <button class="linkbtn" onclick="openChannelModal(${c.id})">View</button>
           &nbsp; <a href="#" onclick="regChannel(event,${c.id})">Register webhook</a>
@@ -299,7 +299,7 @@
     }
     window.switchTab = switchTab;
     window.regChannel = async (e,id)=>{ e.preventDefault(); const m=document.getElementById('chanMsg'); showM(m,'Registering…',true);
-      try{ const r=await fetch('/api/me/channels/'+id+'/register-webhook',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); showM(m,'Webhook registered with Wazzup ✓',true); }
+      try{ const r=await fetch('/api/me/channels/'+id+'/register-webhook',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); showM(m,'Webhook registered with Wazzup ✓',true); wireSettings(); }
       catch(err){ showM(m,err.message,false); } };
     window.removeChannel = async (e,id)=>{ e.preventDefault(); try{ await fetch('/api/me/channels/'+id,{method:'DELETE'}); wireSettings(); }catch(err){ alert(err.message); } };
 
