@@ -3385,11 +3385,22 @@ app.get('/api/xero/callback', async (req, res) => {
         const connections = await fetchConnections(tokens.accessToken);
         const xc = require('./models/xeroConnections');
         const grantId = await xc.saveGrant(acctState.accountId, tokens.refreshToken, tokens.scope || null);
-        let n = 0;
+        // Xero's /connections returns EVERY org this login ever authorised for the
+        // app — not just the one just picked. An admin who sets up several accounts
+        // with one Xero login would otherwise pull every client's orgs into each
+        // account. So attach only orgs that are unowned or already this account's;
+        // skip any org that already belongs to a DIFFERENT WazzOCR account.
+        let n = 0, skipped = 0;
         for (const c of (connections || [])) {
-          if (c.tenantId) { await xc.upsertConnection(acctState.accountId, grantId, c.tenantId, c.tenantName || null); n++; }
+          if (!c.tenantId) continue;
+          const owner = await xc.findAccountByTenant(c.tenantId);
+          if (owner && Number(owner) !== Number(acctState.accountId)) { skipped++; continue; }
+          await xc.upsertConnection(acctState.accountId, grantId, c.tenantId, c.tenantName || null);
+          n++;
         }
-        console.log(`[xero] account ${acctState.accountId} connected ${n} org(s).`);
+        // Nothing attached → the grant has no rows pointing at it; don't leave it dangling.
+        if (n === 0) await xc.deleteGrantIfOrphaned(grantId).catch(() => {});
+        console.log(`[xero] account ${acctState.accountId} connected ${n} org(s), skipped ${skipped} owned by other accounts.`);
         return res.redirect(acctDest('connected'));
       } catch (e) {
         console.error('[xero] account connect failed:', e.message);
