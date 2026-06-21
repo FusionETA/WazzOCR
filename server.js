@@ -3189,6 +3189,30 @@ app.post('/api/whatsapp/chat', async (req, res) => {
   }
 });
 
+// Outbound bridge: send a WhatsApp reply on a SPECIFIC channel, using that
+// channel's own API key from the DB (falls back to the env key). This lets
+// webhook.php reply on the channel a message actually arrived on, instead of
+// one hardcoded env channel — fixing replies landing on the wrong channel.
+app.post('/api/whatsapp/send', async (req, res) => {
+  const b = req.body || {};
+  const channelId = (b.channelId || '').toString().trim();
+  const chatId = (b.chatId || '').toString().trim();
+  const text = (b.text || '').toString();
+  const chatType = (b.chatType || 'whatsapp').toString();
+  if (!channelId || !chatId || !text) {
+    return res.status(400).json({ error: 'channelId, chatId and text are required.' });
+  }
+  let apiKey = null;
+  try {
+    const ch = await require('./models/wazzupChannels').getByChannelId(channelId);
+    if (ch && ch.api_key) apiKey = ch.api_key; // channel's own (decrypted) key
+  } catch (err) { console.error('[wa-send] channel lookup failed:', err.message); }
+  if (!apiKey) apiKey = process.env.WAZZUP_API_KEY || '';
+  const ok = await require('./lib/wazzup').sendMessage({ channelId, apiKey, chatId, text, chatType });
+  if (!ok) return res.status(502).json({ error: 'Wazzup send failed.' });
+  res.json({ ok: true });
+});
+
 // Direct picker resolution endpoint (alternative to the chat-routing path).
 // Useful if webhook.php parses a button reply explicitly.
 app.post('/api/whatsapp/picker/resolve', async (req, res) => {

@@ -163,7 +163,13 @@ function process_message(array $msg): void
     $status   = $msg['status']   ?? '';
     $chatId   = preg_replace('/@[a-z.]+$/i', '', $msg['chatId'] ?? '');
 
-    wlog("WAZZOCR PROCESS: type=$type chatId=$chatId isEcho=" . ($isEcho ? 'true' : 'false') . " status=$status");
+    // Reply on the SAME channel the message arrived on. Wazzup delivers every
+    // channel on the account to this one webhook, so without this the reply would
+    // always go out on the single env channel (WAZZUP_CHANNEL_ID).
+    $inChannel = trim($msg['channelId'] ?? '');
+    $GLOBALS['REPLY_CHANNEL'] = $inChannel !== '' ? $inChannel : WAZZUP_CHANNEL_ID;
+
+    wlog("WAZZOCR PROCESS: type=$type chatId=$chatId channel={$GLOBALS['REPLY_CHANNEL']} isEcho=" . ($isEcho ? 'true' : 'false') . " status=$status");
 
     if ($isEcho === true || $status === 'outbound') {
         wlog("WAZZOCR SKIP: outbound echo.");
@@ -930,44 +936,74 @@ function download_file(string $url): ?array
 
 function wazzup_send(string $chatId, string $chatType, string $text): void
 {
-    wlog("WAZZOCR SEND START: chatId=$chatId chatType=$chatType len=" . mb_strlen($text));
+    // Always reply on the channel the message arrived on (set per message in
+    // process_message). Sending is routed through the Node bridge so it can use
+    // the channel's own API key from the DB; if the bridge is unreachable we
+    // fall back to a direct Wazzup call with the env key.
+    $channelId = $GLOBALS['REPLY_CHANNEL'] ?? WAZZUP_CHANNEL_ID;
     $chunks = split_message($text, 4000);
-    wlog("WAZZOCR SEND CHUNKS: count=" . count($chunks));
+    wlog("WAZZOCR SEND START: chatId=$chatId channel=$channelId chunks=" . count($chunks));
 
     foreach ($chunks as $i => $chunk) {
-        $payload = [
-            'channelId' => WAZZUP_CHANNEL_ID,
-            'chatId'    => $chatId,
-            'chatType'  => $chatType,
-            'text'      => $chunk,
-        ];
-
-        $ch = curl_init('https://api.wazzup24.com/v3/message');
-        curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . WAZZUP_API_KEY,
-            ],
-            CURLOPT_POSTFIELDS => json_encode($payload),
-            CURLOPT_TIMEOUT    => 15,
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($httpCode < 200 || $httpCode >= 300) {
-            wlog("WAZZOCR SEND ERROR: HTTP $httpCode chunk $i to $chatId — " . substr($response, 0, 200));
-        } else {
-            wlog("WAZZOCR SEND OK: chunk $i to $chatId (" . mb_strlen($chunk) . " chars)");
-        }
-
+        $ok = bridge_send($channelId, $chatId, $chatType, $chunk)
+           || wazzup_send_direct($channelId, $chatId, $chatType, $chunk);
+        wlog(($ok ? "WAZZOCR SEND OK" : "WAZZOCR SEND ERROR") . ": chunk $i to $chatId on $channelId");
         if (count($chunks) > 1) {
             usleep(400000);
         }
     }
+}
+
+// Preferred path: let the Node bridge send using the channel's own API key.
+function bridge_send(string $channelId, string $chatId, string $chatType, string $text): bool
+{
+    $ch = curl_init(XERO_BRIDGE_BASE . '/api/whatsapp/send');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode([
+            'channelId' => $channelId, 'chatId' => $chatId,
+            'chatType'  => $chatType,  'text'   => $text,
+        ]),
+        CURLOPT_TIMEOUT => 20,
+    ]);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code < 200 || $code >= 300) {
+        wlog("WAZZOCR BRIDGE SEND MISS: HTTP $code — " . substr((string) $resp, 0, 200));
+        return false;
+    }
+    return true;
+}
+
+// Fallback: send directly to Wazzup with the env key (works when the channel is
+// under the same Wazzup account as WAZZUP_API_KEY).
+function wazzup_send_direct(string $channelId, string $chatId, string $chatType, string $text): bool
+{
+    $ch = curl_init('https://api.wazzup24.com/v3/message');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . WAZZUP_API_KEY,
+        ],
+        CURLOPT_POSTFIELDS => json_encode([
+            'channelId' => $channelId, 'chatId' => $chatId,
+            'chatType'  => $chatType,  'text'   => $text,
+        ]),
+        CURLOPT_TIMEOUT => 15,
+    ]);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code < 200 || $code >= 300) {
+        wlog("WAZZOCR DIRECT SEND ERR: HTTP $code — " . substr((string) $resp, 0, 200));
+        return false;
+    }
+    return true;
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
