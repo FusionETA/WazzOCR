@@ -275,7 +275,11 @@
                   <span class="muted">${d.connections.length} connected</span>
                   <button class="linkbtn danger" type="button" id="xeroDiscBtn">Disconnect selected</button></div>
                 <div class="msg" id="xeroDiscMsg"></div>`:'<p class="muted">None connected yet</p>'}
-              <a class="btn btn-primary" style="margin-top:.7rem;" href="/admin/accounts/${id}/xero/connect">＋ Connect Xero</a>
+              <div style="margin-top:.7rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+                <a class="btn btn-primary" href="/admin/accounts/${id}/xero/connect">＋ Connect Xero</a>
+                <button class="btn btn-ghost" type="button" onclick="refreshXeroCache(${id},this)" title="Reload tax rates & accounts from Xero (after adding a new tax rate)">↻ Refresh tax rates</button>
+              </div>
+              <div class="msg" id="xeroCacheMsg"></div>
               <p class="muted" style="margin-top:.5rem;">Opens Xero's consent screen — you'll need this account's Xero login.</p></div>
           </div>
           <div class="col-right">
@@ -422,6 +426,8 @@
   window.addChannel = async (id) => { const m=document.getElementById('chMsg');
     try { await api('POST','/admin/accounts/'+id+'/channels',{ channelId:document.getElementById('chId').value.trim(), label:document.getElementById('chLabel').value.trim(), apiKey:document.getElementById('chKey').value.trim()||undefined }); openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.delChannel = async (id,cid) => { try { await api('DELETE','/admin/accounts/'+id+'/channels/'+cid); openAccount(id); } catch(e){ alert(e.message); } };
+  window.refreshXeroCache = async (id,btn) => { const m=document.getElementById('xeroCacheMsg'); m.className='msg'; m.style.display='block'; m.textContent='Refreshing…'; if(btn) btn.disabled=true;
+    try { const d=await api('POST','/admin/accounts/'+id+'/xero/refresh-cache'); m.className='msg ok'; m.textContent='Tax rates & accounts refreshed for '+d.refreshed+' org(s). Re-send the bill to apply.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
   window.registerWebhook = async (id,cid) => { const m=document.getElementById('regMsg'); m.className='msg'; m.style.display='block'; m.textContent='Registering…';
     try { await api('POST','/admin/accounts/'+id+'/channels/'+cid+'/register-webhook'); m.className='msg ok'; m.textContent='Webhook registered with Wazzup ✓'; openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.uploadCoa = async (id) => { const m=document.getElementById('coaMsg');

@@ -126,6 +126,16 @@ router.get('/connections', async (req, res) => {
   res.json({ connections: await xeroConnections.listByAccount(accountId) });
 });
 
+// Refresh cached Xero tax rates + expense accounts for this account's orgs, so
+// rates/accounts just added in Xero are picked up without a server restart.
+router.post('/xero/refresh-cache', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const conns = await xeroConnections.listByAccount(accountId);
+  const { clearTenant } = require('../lib/xeroCaches');
+  for (const c of conns) clearTenant(c.xero_tenant_id);
+  res.json({ ok: true, refreshed: conns.length });
+});
+
 // Disconnect one org: revoke it at Xero, then remove it locally.
 router.delete('/connections/:id', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;

@@ -1022,9 +1022,10 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
 
 // ── Xero bill creation (per-tenant) ─────────────────────────────────────────
 
-// Per-tenant cache for tax rates (TTL: process lifetime). Tax rates change
-// rarely, no need to hit /TaxRates on every bill.
-const _taxRateCache = new Map();
+// Per-tenant caches for tax rates + expense accounts. These live in a shared
+// module so the dashboards' "Refresh" action can clear them when a tax rate /
+// account is added in Xero (otherwise they'd persist for the whole process).
+const { taxRateCache: _taxRateCache, expenseAccountsCache: _expenseAccountsCache } = require('./lib/xeroCaches');
 
 async function getTenantTaxRates(tenantId) {
   if (_taxRateCache.has(tenantId)) return _taxRateCache.get(tenantId);
@@ -1047,8 +1048,7 @@ async function getTenantTaxRates(tenantId) {
   }
 }
 
-// Per-tenant cache of expense-type Xero accounts (TTL: process lifetime).
-const _expenseAccountsCache = new Map();
+// (_expenseAccountsCache is provided by lib/xeroCaches, required above.)
 
 // Fetch the active expense/cost accounts a bill line can be coded to in this
 // tenant's Xero chart. Includes EXPENSE, OVERHEADS and DIRECTCOSTS (Xero's

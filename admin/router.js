@@ -207,6 +207,17 @@ router.post('/accounts/:id/channels/:cid/register-webhook', async (req, res) => 
   res.json({ ok: true });
 });
 
+// Refresh cached Xero tax rates + expense accounts for this account's orgs, so
+// rates/accounts just added in Xero are picked up without a server restart.
+router.post('/accounts/:id/xero/refresh-cache', async (req, res) => {
+  const accountId = Number(req.params.id);
+  if (!(await accounts.getById(accountId))) return res.status(404).json({ error: 'Account not found.' });
+  const conns = await xeroConnections.listByAccount(accountId);
+  const { clearTenant } = require('../lib/xeroCaches');
+  for (const c of conns) clearTenant(c.xero_tenant_id);
+  res.json({ ok: true, refreshed: conns.length });
+});
+
 // Disconnect one of an account's Xero orgs: revoke at Xero, then remove locally.
 router.delete('/accounts/:id/connections/:cid', async (req, res) => {
   const accountId = Number(req.params.id);

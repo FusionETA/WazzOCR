@@ -181,7 +181,11 @@
             <div class="kv"><div class="k">Organisation</div><div>${esc(data.account?data.account.name:'-')}</div></div>
             <div class="kv"><div class="k">Signed in as</div><div>${esc(data.user.name||data.user.email)}</div></div>
             <div class="kv"><div class="k">Xero organisations</div><div id="connList">…</div></div>
-            <a class="btn btn-primary" style="margin-top:.9rem;" href="/api/me/xero/connect">＋ Connect Xero</a>
+            <div style="margin-top:.9rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+              <a class="btn btn-primary" href="/api/me/xero/connect">＋ Connect Xero</a>
+              <button class="btn btn-ghost" type="button" onclick="refreshXeroCache(this)" title="Reload tax rates & accounts from Xero (after adding a new tax rate)">↻ Refresh tax rates</button>
+            </div>
+            <div class="msg" id="xeroCacheMsg"></div>
           </div>
         </div>
         <div class="col-right">
@@ -258,6 +262,15 @@
       };
     }
     function showM(m,t,ok){ m.className='msg '+(ok?'ok':'err'); m.textContent=t; }
+    // Reload cached Xero tax rates + accounts (use after adding a tax rate in Xero).
+    window.refreshXeroCache = async (btn) => {
+      const m=document.getElementById('xeroCacheMsg'); showM(m,'Refreshing…',true);
+      if(btn) btn.disabled=true;
+      try { const r=await fetch('/api/me/xero/refresh-cache',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
+        showM(m,'Tax rates & accounts refreshed for '+d.refreshed+' org(s). Re-send the bill to apply.',true); }
+      catch(err){ showM(m,err.message,false); }
+      finally { if(btn) btn.disabled=false; }
+    };
     // Disconnect the org currently chosen in the Xero dropdown (revokes at Xero).
     window.disconnectSelectedXero = async () => {
       const dd=document.getElementById('xeroDrop'); const tid = dd && dd.value ? dd.value() : '';
