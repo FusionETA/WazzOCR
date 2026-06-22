@@ -244,7 +244,9 @@ function handle_text(string $chatId, string $chatType, array $msg): void
 // a command (orgs/pending/help), or a general Groq chat.
 function forward_text_to_bridge(string $chatId, string $text): ?string
 {
-    $payload = ['chatId' => $chatId, 'text' => $text];
+    // Pass the inbound channelId so the bridge resolves the account and runs the
+    // picker / draft creation against THAT account's Xero connections.
+    $payload = ['chatId' => $chatId, 'text' => $text, 'channelId' => $GLOBALS['REPLY_CHANNEL'] ?? WAZZUP_CHANNEL_ID];
 
     $ch = curl_init(BRIDGE_CHAT_URL);
     curl_setopt_array($ch, [

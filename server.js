@@ -3123,12 +3123,24 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
 //   3) General AI chat
 app.post('/api/whatsapp/chat', async (req, res) => {
   try {
-    const { chatId, text } = req.body || {};
+    const { chatId, text, channelId } = req.body || {};
     const message = String(text || '').trim();
     if (!chatId || !message) {
       return res.status(400).json({ error: 'Missing chatId or text.' });
     }
 
+    // Resolve the Wazzup channel → account so picker resolution, connection
+    // checks and draft creation run against THIS account's Xero (same context
+    // as /process-file). Without it the chat/reply path can't see the account's
+    // orgs and a valid pick fails with "Tenant not connected anymore".
+    let chatAccountId = null;
+    if (channelId) {
+      try {
+        const ch = await require('./models/wazzupChannels').getByChannelId(String(channelId).trim());
+        if (ch && ch.account_id) chatAccountId = ch.account_id;
+      } catch (err) { console.error('[chat] channel resolve failed:', err.message); }
+    }
+    const runChat = async () => {
     // 1) Picker resolution
     const state = await getChatState(chatId);
     if (state?.awaitingPicker?.pendingBillId) {
@@ -3204,6 +3216,10 @@ app.post('/api/whatsapp/chat', async (req, res) => {
     // 3) General AI chat (provider per loadAiSettings — Gemini by default)
     const reply = await callAiChat(message);
     return res.json({ ok: true, kind: 'chat', reply });
+    };
+    return await (chatAccountId
+      ? xeroAccountCtx.run({ accountId: chatAccountId }, runChat)
+      : runChat());
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });
   }
