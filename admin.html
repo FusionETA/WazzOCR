@@ -248,8 +248,8 @@
       <div class="panel" id="ap-settings">
         <div class="card"><h2>Settings</h2>
           <div class="grid2">
-            <div class="field"><label>Status</label><select id="setStatus">${['active','suspended','trial'].map(s=>`<option ${d.account.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
-            <div class="field"><label>AI model</label><select id="setModel">${['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>`<option ${d.account.ai_model===s?'selected':''}>${s}</option>`).join('')}</select></div>
+            <div class="field"><label>Status</label><div id="setStatusDrop"></div></div>
+            <div class="field"><label>AI model</label><div id="setModelDrop"></div></div>
           </div>
           <button class="btn btn-primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
 
@@ -312,6 +312,8 @@
       </div>`;
     wireFileDrop('coaDrop','coaFile','coaFileText','Choose a CSV file or drag it here');
     renderAnalytics(id);
+    window.__searchDropdown('setStatusDrop', ['active','suspended','trial'].map(s=>({value:s,label:s})), { selected:d.account.status });
+    window.__searchDropdown('setModelDrop', ['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>({value:s,label:s})), { selected:d.account.ai_model });
     if ((d.connections||[]).length) {
       window.__searchDropdown('xeroDrop', d.connections.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
       document.getElementById('xeroDiscBtn').onclick = () => disconnectSelectedXero(id);
@@ -418,7 +420,7 @@
     show();
   }
   window.saveSettings = async (id) => { const m=document.getElementById('setMsg');
-    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatus').value, aiModel:document.getElementById('setModel').value });
+    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatusDrop').value(), aiModel:document.getElementById('setModelDrop').value() });
       m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.invite = async (id) => { const m=document.getElementById('invMsg');
     try { const r=await api('POST','/admin/accounts/'+id+'/invite',{ email:document.getElementById('invEmail').value.trim(), phone:document.getElementById('invPhone').value.trim(), name:document.getElementById('invName').value.trim() });
