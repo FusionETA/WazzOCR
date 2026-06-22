@@ -1378,19 +1378,39 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     accountCode: XERO_DEFAULT_ACCOUNT_CODE,
     taxType: resolvedTaxType
   });
-  const hasAppliedTaxType = lineItems.some((line) => {
+  let hasAppliedTaxType = lineItems.some((line) => {
     const code = String(line.TaxType || '').trim().toUpperCase();
     return code && code !== 'NONE' && code !== 'EXEMPT';
   });
   const billTaxAmount = normalizeNumber(bill.tax);
   if (billTaxAmount > 0 && !hasAppliedTaxType) {
-    const taxLine = {
-      Description: `${bill.taxLabel || 'Tax'}${bill.invoiceNo ? ` for ${bill.invoiceNo}` : ''}`,
-      Quantity: 1,
-      UnitAmount: Number(billTaxAmount.toFixed(2))
-    };
-    if (XERO_DEFAULT_ACCOUNT_CODE) taxLine.AccountCode = XERO_DEFAULT_ACCOUNT_CODE;
-    lineItems.push(taxLine);
+    // Whole-bill tax/surcharge with no per-line tax tagged. Only apply the
+    // matched Xero rate to the lines if it RECONCILES — i.e. rate × the
+    // (tax-exclusive) lines ≈ the stated tax, so lines + tax = the invoice
+    // total. That's true for an ordinary whole-bill tax (e.g. SST 6% on
+    // everything), so it becomes real per-line tax. It's false when the % is
+    // charged on only PART of the bill (e.g. an admin/finance fee that skips
+    // some lines) — then keep it as its own line so the total stays exact.
+    const netSum = lineItems.reduce((s, li) => s + (normalizeNumber(li.Quantity, 1) * normalizeNumber(li.UnitAmount, 0)), 0);
+    const expectedTax = netSum * (percent / 100);
+    const reconciles = resolvedTaxType && resolvedTaxType !== 'NONE' && percent > 0 &&
+      Math.abs(expectedTax - billTaxAmount) <= Math.max(billTaxAmount * 0.02, 1);
+    if (reconciles) {
+      for (const li of lineItems) li.TaxType = resolvedTaxType;
+      hasAppliedTaxType = true;
+      console.log(`[tax] applied ${percent.toFixed(2)}% (${resolvedTaxType}) per line — computed ${expectedTax.toFixed(2)} ≈ stated ${billTaxAmount.toFixed(2)}.`);
+    } else {
+      if (resolvedTaxType && resolvedTaxType !== 'NONE') {
+        console.log(`[tax] ${percent.toFixed(2)}% does not reconcile (rate×lines ${expectedTax.toFixed(2)} ≠ stated ${billTaxAmount.toFixed(2)}) — keeping tax as a line item.`);
+      }
+      const taxLine = {
+        Description: `${bill.taxLabel || 'Tax'}${bill.invoiceNo ? ` for ${bill.invoiceNo}` : ''}`,
+        Quantity: 1,
+        UnitAmount: Number(billTaxAmount.toFixed(2))
+      };
+      if (XERO_DEFAULT_ACCOUNT_CODE) taxLine.AccountCode = XERO_DEFAULT_ACCOUNT_CODE;
+      lineItems.push(taxLine);
+    }
   }
 
   const invoicePayload = {
