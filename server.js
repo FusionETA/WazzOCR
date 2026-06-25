@@ -1191,6 +1191,26 @@ async function findDuplicateBill(invoiceNumber, tenantId) {
   return (payload.Invoices || []).find(isBlockingDuplicateBill) || null;
 }
 
+// Build a Xero-safe attachment filename from a possibly messy original name
+// (spaces, parens, dots, very long). Keeps only URL-safe chars, collapses runs,
+// trims leading/trailing separators, caps length, and guarantees an extension —
+// so the attachment URL can never be rejected as "Invalid URL".
+function sanitizeAttachmentName(name) {
+  const raw = String(name || '').trim();
+  const dot = raw.lastIndexOf('.');
+  let base = dot > 0 ? raw.slice(0, dot) : raw;
+  let ext = (dot > 0 ? raw.slice(dot + 1) : '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 5);
+  base = base
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/[-.]{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 50)
+    .replace(/[-.]+$/g, '');
+  if (!base) base = 'receipt-upload';
+  if (!ext) ext = 'pdf';
+  return `${base}.${ext}`;
+}
+
 function deriveLineItems(bill, defaults) {
   const provided = Array.isArray(bill.lineItems) ? bill.lineItems : [];
   const accountCode = bill.accountCode || defaults.accountCode || null;
@@ -1452,16 +1472,23 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
 
   let attachment = null;
   if (sourceFile?.buffer?.length) {
-    const safeName = (sourceFile.originalname || 'receipt-upload').replace(/[^a-zA-Z0-9._-]/g, '-');
-    await xeroApi(`/Invoices/${invoice.InvoiceID}/Attachments/${encodeURIComponent(safeName)}?IncludeOnline=true`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': sourceFile.mimetype || 'application/octet-stream'
-      },
-      body: sourceFile.buffer,
-      raw: true
-    }, tenantId);
-    attachment = { fileName: safeName };
+    const safeName = sanitizeAttachmentName(sourceFile.originalname);
+    try {
+      await xeroApi(`/Invoices/${encodeURIComponent(invoice.InvoiceID)}/Attachments/${encodeURIComponent(safeName)}?IncludeOnline=true`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': sourceFile.mimetype || 'application/octet-stream'
+        },
+        body: sourceFile.buffer,
+        raw: true
+      }, tenantId);
+      attachment = { fileName: safeName };
+    } catch (err) {
+      // The invoice is ALREADY created in Xero. A failed attachment must not
+      // fail the whole bill — otherwise it's reported as "rejected" and the
+      // user re-sends, creating a duplicate draft. Log and continue.
+      console.error(`[xero] attachment upload failed for invoice ${invoice.InvoiceID} (${safeName}):`, err.message);
+    }
   }
 
   return {
@@ -1789,11 +1816,15 @@ function extractJsonText(raw) {
   if (start === -1 || end === -1 || end < start) {
     throw new Error('The model did not return valid JSON.');
   }
-  // LLMs (especially on bigger multi-bill payloads) often emit a trailing comma
-  // before a closing } or ], which V8's JSON.parse rejects with
-  // "Expected double-quoted property name...". A comma immediately before a
-  // closing brace/bracket is never valid JSON, so stripping it only repairs.
-  return cleaned.slice(start, end + 1).replace(/,(\s*[}\]])/g, '$1');
+  // Two common LLM JSON defects we can safely repair:
+  //  1. Thousands separators inside numbers, e.g. "total": 1,100.65 — JSON.parse
+  //     rejects with "Expected ',' or '}' after property value". Strip a comma
+  //     sitting between a digit and a 3-digit group (a thousands separator).
+  //  2. A trailing comma before a closing } or ] (never valid JSON).
+  return cleaned
+    .slice(start, end + 1)
+    .replace(/(?<=\d),(?=\d{3}(?:\D|$))/g, '')
+    .replace(/,(\s*[}\]])/g, '$1');
 }
 
 function normalizeBillPayload(bill) {
