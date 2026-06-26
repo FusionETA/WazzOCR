@@ -1827,6 +1827,48 @@ function extractJsonText(raw) {
     .replace(/,(\s*[}\]])/g, '$1');
 }
 
+// Best-effort recovery for almost-valid LLM JSON, used ONLY as a fallback when
+// the strict parse fails. Walks the text tracking string/bracket state to (a)
+// trim any prose after the top-level value and (b) close unclosed strings and
+// brackets (truncated output), then strips the common comma defects. The goal
+// is simply "make it parseable" so a bill isn't lost to one stray character.
+function repairJson(raw) {
+  let s = String(raw || '').replace(/```json|```/gi, '').trim();
+  const o = s.indexOf('{'), a = s.indexOf('[');
+  const start = [o, a].filter((i) => i >= 0).sort((x, y) => x - y)[0] ?? -1;
+  if (start < 0) throw new Error('No JSON object/array found.');
+  s = s.slice(start);
+
+  let inStr = false, esc = false;
+  const stack = [];
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    out += c;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{') stack.push('}');
+    else if (c === '[') stack.push(']');
+    else if (c === '}' || c === ']') {
+      stack.pop();
+      if (stack.length === 0) break; // top-level value closed; ignore trailing junk
+    }
+  }
+  if (inStr) out += '"';            // close a truncated string
+  while (stack.length) out += stack.pop(); // close truncated objects/arrays
+
+  return out
+    .replace(/(?<=\d),(?=\d{3}(?:\D|$))/g, '') // thousands separators in numbers
+    .replace(/,\s*,/g, ',')                    // doubled commas
+    .replace(/([{[])\s*,/g, '$1')              // comma right after { or [
+    .replace(/,(\s*[}\]])/g, '$1');            // trailing comma before } or ]
+}
+
 function normalizeBillPayload(bill) {
   const lineItems = Array.isArray(bill?.lineItems)
     ? bill.lineItems.map((item) => {
@@ -2032,6 +2074,14 @@ async function callGeminiJson(parts, model, purpose = 'extraction') {
     ].join('\n');
     console.error(diag);
     try { require('fs').appendFileSync(__dirname + '/gemini-diag.log', new Date().toISOString() + ' ' + diag + '\n'); } catch {}
+    // Fallback: aggressively repair (truncation, double/trailing commas, etc.)
+    // and retry once. Only reached when the strict parse already failed, so this
+    // can only recover bills that would otherwise be lost — never breaks a good one.
+    try {
+      const recovered = JSON.parse(repairJson(text));
+      console.error('[gemini-diag] recovered via repairJson fallback');
+      return recovered;
+    } catch { /* repair didn't help — surface the original parse error */ }
     throw err;
   }
 }
