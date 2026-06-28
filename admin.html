@@ -12,7 +12,7 @@
 <body>
   <div class="topbar">
     <span class="brand"><img class="brand-logo" src="/assets/fusioneta-logo.png" alt="FusionETA"><span class="brand-divider"></span><span class="brand-name">WazzOCR</span> <span class="badge neutral" style="margin-left:.4rem;">Admin</span></span>
-    <div class="right"><span class="who" id="whoLabel"></span><button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button></div>
+    <div class="right"><button class="btn btn-ghost btn-sm" onclick="renderList()">Accounts</button><button class="btn btn-ghost btn-sm" onclick="renderTickets()">Tickets</button><span class="who" id="whoLabel"></span><button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button></div>
   </div>
   <div class="container" id="app"><div class="card">Loading…</div></div>
   <script>
@@ -439,10 +439,65 @@
       document.getElementById('coaFile').value=''; const t=document.getElementById('coaFileText'); if(t) t.textContent='Choose a CSV file or drag it here';
     } catch(e){ m.className='msg err'; m.textContent=e.message; } };
 
-  // Restore the view (accounts list, or a specific account + sub-tab) after refresh.
+  // ── Support tickets (error tracking) ──────────────────────────────────────
+  let TICKET_FILTER = null;
+  async function renderTickets() {
+    history.replaceState(null, '', '#tickets');
+    app.innerHTML = `
+      <div class="page-head"><h1>Support tickets</h1><p>Errors customers hit. Look up a code they quoted, see the raw cause, and mark it resolved.</p></div>
+      <div class="card" id="ticketsCard">Loading…</div>`;
+    await loadTickets();
+  }
+  async function loadTickets() {
+    const card = document.getElementById('ticketsCard');
+    if (!card) return;
+    try {
+      const d = await api('GET', '/admin/tickets' + (TICKET_FILTER ? ('?status=' + TICKET_FILTER) : ''));
+      const counts = { open:0, investigating:0, resolved:0 };
+      (d.counts||[]).forEach(c => counts[c.status] = Number(c.n));
+      const total = counts.open + counts.investigating + counts.resolved;
+      const chip = (key,label,n) => `<button class="btn btn-sm ${TICKET_FILTER===key?'btn-primary':'btn-ghost'}" onclick="setTicketFilter(${key?`'${key}'`:'null'})">${label} · ${n}</button>`;
+      const filters = `<div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem;">
+        ${chip(null,'All',total)}${chip('open','Open',counts.open)}${chip('investigating','Investigating',counts.investigating)}${chip('resolved','Resolved',counts.resolved)}</div>`;
+      const rows = (d.tickets||[]).map(ticketRow).join('');
+      card.innerHTML = filters + (rows
+        ? `<table class="table"><thead><tr><th>Code</th><th>Account</th><th>Stage</th><th>Error</th><th>When</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="empty">No tickets here 🎉</div>');
+    } catch (e) { card.innerHTML = '<div class="msg err">' + esc(e.message) + '</div>'; }
+  }
+  function ticketRow(t) {
+    const when = new Date(t.created_at).toLocaleString();
+    const badge = t.status==='resolved' ? 'success' : (t.status==='investigating' ? 'pending' : 'neutral');
+    const errPreview = esc((t.error_message||'').replace(/\s+/g,' ').slice(0,70)) || '<span class="muted">—</span>';
+    const acts = [];
+    if (t.status === 'open') acts.push(`<button class="btn btn-ghost btn-sm" onclick="setTicket(${t.id},'investigating')">Investigating</button>`);
+    acts.push(t.status === 'resolved'
+      ? `<button class="btn btn-ghost btn-sm" onclick="setTicket(${t.id},'open')">Reopen</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="setTicket(${t.id},'resolved')">Resolve</button>`);
+    const detail = typeof t.error_detail === 'string' ? t.error_detail : (t.error_detail ? JSON.stringify(t.error_detail, null, 2) : '');
+    return `<tr style="cursor:pointer;" onclick="toggleTicket(${t.id})">
+        <td><strong>${esc(t.ticket_code)}</strong></td>
+        <td>${esc(t.account_name||'—')}</td>
+        <td><span class="badge neutral">${esc(t.stage||'')}</span></td>
+        <td class="muted">${errPreview}</td>
+        <td class="muted num-cell">${esc(when)}</td>
+        <td><span class="badge ${badge}">${esc(t.status)}</span></td>
+        <td style="text-align:right;white-space:nowrap;" onclick="event.stopPropagation()">${acts.join(' ')}</td></tr>
+      <tr id="tk-${t.id}" style="display:none;"><td colspan="7">
+        <div style="background:#f6f7fb;border-radius:8px;padding:.75rem;font-size:.8rem;white-space:pre-wrap;word-break:break-word;line-height:1.5;">`
+        + `<strong>chat:</strong> ${esc(t.chat_id||'—')}\n<strong>error:</strong> ${esc(t.error_message||'—')}`
+        + (detail ? `\n<strong>detail:</strong> ${esc(detail)}` : '')
+        + `</div></td></tr>`;
+  }
+  function setTicketFilter(f){ TICKET_FILTER = f; loadTickets(); }
+  function toggleTicket(id){ const r = document.getElementById('tk-'+id); if (r) r.style.display = r.style.display==='none' ? '' : 'none'; }
+  async function setTicket(id, status){ try { await api('PUT','/admin/tickets/'+id,{status}); await loadTickets(); } catch(e){ alert(e.message); } }
+
+  // Restore the view (accounts list, tickets, or a specific account + sub-tab) after refresh.
   function route() {
     const p = (location.hash||'').replace(/^#/,'').split('/');
-    if (p[0]==='account' && p[1]) openAccount(Number(p[1]), p[2]).catch(()=>renderList());
+    if (p[0]==='tickets') renderTickets();
+    else if (p[0]==='account' && p[1]) openAccount(Number(p[1]), p[2]).catch(()=>renderList());
     else renderList();
   }
   // Surface the result of a Xero connect (admin connected an account's Xero),

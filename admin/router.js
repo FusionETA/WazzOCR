@@ -15,6 +15,7 @@ const wazzupChannels = require('../models/wazzupChannels');
 const xeroConnections = require('../models/xeroConnections');
 const appSettings = require('../models/appSettings');
 const aiPrompts = require('../models/aiPrompts');
+const supportTickets = require('../models/supportTickets');
 const invites = require('../auth/invites');
 const wazzup = require('../lib/wazzup');
 const { parseCoa } = require('../lib/csv');
@@ -273,6 +274,29 @@ router.post('/accounts/:id/invite', async (req, res) => {
   const { link, sent } = await invites.sendInvite(userId);
   // Return the link only if the WhatsApp send failed, so the admin can share it manually.
   res.json({ ok: true, userId, sent, link: sent ? undefined : link });
+});
+
+// ── Support tickets (error tracking) ──────────────────────────────────────
+// List recent tickets (optionally ?status=open|investigating|resolved) plus
+// per-status counts for the dashboard badges.
+router.get('/tickets', async (req, res) => {
+  const status = ['open', 'investigating', 'resolved'].includes(req.query.status) ? req.query.status : null;
+  const [list, counts] = await Promise.all([
+    supportTickets.list({ status, limit: req.query.limit || 100 }),
+    supportTickets.statusCounts()
+  ]);
+  res.json({ tickets: list, counts });
+});
+
+// Update a ticket's status (open → investigating → resolved).
+router.put('/tickets/:id', async (req, res) => {
+  const status = (req.body && req.body.status) || '';
+  try {
+    const updated = await supportTickets.setStatus(Number(req.params.id), status);
+    res.json({ ok: true, updated });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 module.exports = router;

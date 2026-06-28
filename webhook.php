@@ -275,11 +275,12 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
 {
     $fileUrl  = $msg['contentUri'] ?? ($msg['media']['url'] ?? '') ?? '';
     $filename = $msg['text'] ?? $msg['fileName'] ?? $msg['media']['filename'] ?? '';
+    $channelId = $msg['channelId'] ?? '';
 
     wlog("WAZZOCR FILE: url=$fileUrl filename=$filename");
 
     if (empty($fileUrl)) {
-        wazzup_send($chatId, $chatType, "⚠️ Received your file but couldn't get the download URL. Please try again.");
+        wazzup_send($chatId, $chatType, client_error_message('download-url', 'No download URL on inbound file', $chatId, $channelId));
         return;
     }
 
@@ -293,7 +294,7 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
 
     if ($file === null) {
         wlog("WAZZOCR ERROR: download failed for $fileUrl");
-        wazzup_send($chatId, $chatType, "❌ Could not download the file. Please try again.");
+        wazzup_send($chatId, $chatType, client_error_message('download', "Download failed for $fileUrl", $chatId, $channelId));
         return;
     }
 
@@ -310,19 +311,24 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
 
     // Pipeline: send the raw file to server.js → extract/Gemini-vision → AI → match
     wlog("WAZZOCR BRIDGE PROCESS: posting file to " . BRIDGE_PROCESS_URL);
-    $channelId = $msg['channelId'] ?? '';
     $result = process_file_via_bridge($chatId, $file, $filename, $channelId);
 
     if ($result === null) {
-        wazzup_send($chatId, $chatType,
-            "❌ Sorry, I had trouble reading the {$typeLabel}. Please try again.\n\n" .
-            "_(The OCR server may be down or busy.)_"
-        );
+        // Bridge unreachable — try to mint a ticket (may also fail if the server
+        // is down, in which case client_error_message returns a code-less message).
+        wazzup_send($chatId, $chatType, client_error_message('bridge-down', "Bridge unreachable while reading $typeLabel", $chatId, $channelId));
         return;
     }
 
     if (!empty($result['error'])) {
-        wazzup_send($chatId, $chatType, "❌ {$result['error']}");
+        // server.js already minted a ticket → its `error` is a friendly, client-safe
+        // message (with the code). Send it verbatim. If somehow no ticketCode came
+        // back (unexpected non-2xx), mint one now so the client still gets a code.
+        if (!empty($result['ticketCode'])) {
+            wazzup_send($chatId, $chatType, $result['error']);
+        } else {
+            wazzup_send($chatId, $chatType, client_error_message('process-file', (string)$result['error'], $chatId, $channelId));
+        }
         return;
     }
 
@@ -343,6 +349,37 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
     }
 
     wazzup_send($chatId, $chatType, $output);
+}
+
+// Mint a support ticket via the bridge for a failure that happened HERE (in the
+// webhook), and return a generic, client-safe message that quotes the ticket code.
+// If the bridge can't be reached (e.g. it's the thing that's down), fall back to a
+// code-less generic message so the customer still gets a friendly reply — never a
+// raw error.
+function client_error_message(string $stage, string $rawError, string $chatId, string $channelId): string
+{
+    $payload = ['stage' => $stage, 'error' => $rawError, 'chatId' => $chatId, 'channelId' => $channelId];
+    $ch = curl_init(XERO_BRIDGE_BASE . '/api/whatsapp/ticket');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_TIMEOUT        => 10,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode >= 200 && $httpCode < 300) {
+        $data = json_decode((string)$response, true);
+        if (is_array($data) && !empty($data['clientMessage'])) {
+            return $data['clientMessage'];
+        }
+    }
+    wlog("WAZZOCR TICKET MINT FAILED: stage=$stage http=$httpCode");
+    return "⚠️ Sorry — something went wrong while processing your message. " .
+           "Please try again shortly, or contact us if it keeps happening.";
 }
 
 // POSTs the binary file to server.js as JSON (base64) along with chatId,

@@ -3064,6 +3064,35 @@ async function logBillOutcomes({ accountId, channelDbId, chatId, source, outcome
 // Accepts the raw file (base64) from webhook.php OR a multipart upload.
 // Runs extract → AI → tenant match. If matched, creates the Xero draft.
 // If unmatched, stores pending bill AND sets per-chat picker state.
+// Mint a support ticket for a failed WhatsApp interaction and return a generic,
+// client-safe reply (so customers never see a raw stack / JSON-parse error).
+// Resolves the account from logCtx or, failing that, the inbound channelId.
+async function ticketReply({ stage, error, logCtx = null, channelId = null, chatId = null, fileName = null, mime = null, ocrText = null }) {
+  const errorNotify = require('./lib/errorNotify');
+  if (!logCtx && channelId) {
+    try {
+      const ch = await require('./models/wazzupChannels').getByChannelId(String(channelId).trim());
+      if (ch && ch.account_id) logCtx = { accountId: ch.account_id, channelDbId: ch.id };
+    } catch { /* non-fatal */ }
+  }
+  let accountName = null;
+  if (logCtx && logCtx.accountId) {
+    try { const a = await require('./models/accounts').getById(logCtx.accountId); accountName = a && a.name; }
+    catch { /* non-fatal */ }
+  }
+  const { code, clientMessage } = await errorNotify.reportError({
+    stage,
+    error,
+    context: {
+      accountId: logCtx ? logCtx.accountId : null,
+      accountName,
+      channelDbId: logCtx ? logCtx.channelDbId : null,
+      chatId, fileName, mime, ocrText
+    }
+  });
+  return { ticketCode: code, message: clientMessage };
+}
+
 app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) => {
   try {
     const body = req.body || {};
@@ -3133,7 +3162,8 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
     } catch (analysisErr) {
       console.error('File analysis failed:', analysisErr.message);
       await deleteUploadedFile(filename);
-      return res.status(500).json({ error: `Analysis failed: ${analysisErr.message}`, ocrText });
+      const t = await ticketReply({ stage: 'extraction', error: analysisErr, logCtx, chatId, fileName, mime, ocrText });
+      return res.status(200).json({ error: t.message, ticketCode: t.ticketCode });
     }
 
     if (!bills || !bills.length) {
@@ -3191,10 +3221,20 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       ...primary
     });
   } catch (error) {
-    res.status(error.statusCode || 500).json({
-      error: error.message,
-      needsReconnect: Boolean(error.statusCode === 401 || String(error.message || '').toLowerCase().includes('reconnect xero'))
+    const b = req.body || {};
+    const needsReconnect = Boolean(error.statusCode === 401 || String(error.message || '').toLowerCase().includes('reconnect xero'));
+    // Reconnect is an actionable business state (the account owner reconnects Xero),
+    // not a bug — keep its specific message, no ticket.
+    if (needsReconnect) {
+      return res.status(error.statusCode || 500).json({ error: error.message, needsReconnect: true });
+    }
+    const t = await ticketReply({
+      stage: 'process-file', error,
+      channelId: (b.channelId || '').toString().trim(),
+      chatId: (b.chatId || '').toString().trim(),
+      fileName: b.fileName || b.filename || ''
     });
+    res.status(200).json({ error: t.message, ticketCode: t.ticketCode });
   }
 });
 
@@ -3203,6 +3243,7 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
 //   2) Built-in commands (orgs / pending / help)
 //   3) General AI chat
 app.post('/api/whatsapp/chat', async (req, res) => {
+  let chatAccountId = null;
   try {
     const { chatId, text, channelId } = req.body || {};
     const message = String(text || '').trim();
@@ -3214,7 +3255,6 @@ app.post('/api/whatsapp/chat', async (req, res) => {
     // checks and draft creation run against THIS account's Xero (same context
     // as /process-file). Without it the chat/reply path can't see the account's
     // orgs and a valid pick fails with "Tenant not connected anymore".
-    let chatAccountId = null;
     if (channelId) {
       try {
         const ch = await require('./models/wazzupChannels').getByChannelId(String(channelId).trim());
@@ -3302,7 +3342,39 @@ app.post('/api/whatsapp/chat', async (req, res) => {
       ? xeroAccountCtx.run({ accountId: chatAccountId }, runChat)
       : runChat());
   } catch (error) {
-    res.status(error.statusCode || 500).json({ error: error.message });
+    const b = req.body || {};
+    const t = await ticketReply({
+      stage: 'chat', error,
+      logCtx: chatAccountId ? { accountId: chatAccountId, channelDbId: null } : null,
+      channelId: (b.channelId || '').toString().trim(),
+      chatId: (b.chatId || '').toString().trim()
+    });
+    // Return as `reply` so webhook.php sends the friendly message (with ticket code)
+    // instead of its generic no-code fallback.
+    res.status(200).json({ ok: false, kind: 'error', reply: t.message, ticketCode: t.ticketCode });
+  }
+});
+
+// Mint a support ticket for a failure that happened in webhook.php itself
+// (download failed, file too large, etc.) so those also get a code + admin alert
+// and a consistent generic message. Returns { ticketCode, clientMessage }.
+app.post('/api/whatsapp/ticket', async (req, res) => {
+  const b = req.body || {};
+  try {
+    const t = await ticketReply({
+      stage: (b.stage || 'webhook').toString().slice(0, 32),
+      error: new Error((b.error || 'Unknown error').toString()),
+      channelId: (b.channelId || '').toString().trim(),
+      chatId: (b.chatId || '').toString().trim(),
+      fileName: (b.fileName || '').toString() || null
+    });
+    res.json({ ok: true, ticketCode: t.ticketCode, clientMessage: t.message });
+  } catch (err) {
+    // Never let the ticketing endpoint itself fail the caller — return a code-less
+    // generic message so webhook.php can still reply to the client.
+    console.error('[ticket] mint failed:', err.message);
+    const { clientMessage } = require('./lib/errorNotify');
+    res.status(200).json({ ok: false, ticketCode: null, clientMessage: clientMessage(null) });
   }
 });
 

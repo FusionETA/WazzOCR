@@ -155,6 +155,28 @@ CREATE TABLE IF NOT EXISTS bills (
   CONSTRAINT fk_bills_account FOREIGN KEY (account_id) REFERENCES accounts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Support tickets — one row per pipeline error surfaced to a WhatsApp client.
+-- The client only ever sees `ticket_code` (e.g. WZ-7K3M9Q) + a generic message;
+-- the raw error and context are kept here for the admin to investigate. account_id
+-- NULL = error happened before/outside any resolved account (e.g. unregistered channel).
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id                BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ticket_code       VARCHAR(20) NOT NULL UNIQUE,    -- shown to the client
+  account_id        BIGINT UNSIGNED NULL,
+  wazzup_channel_id BIGINT UNSIGNED NULL,
+  chat_id           VARCHAR(128),
+  stage             VARCHAR(32),                    -- extraction | xero | download | bridge | chat | other
+  client_message    VARCHAR(512),                   -- the generic text the client was shown
+  error_message     TEXT,                           -- the raw error (admin-only)
+  error_detail      JSON NULL,                      -- stack, fileName, mime, model, ocr snippet
+  status            ENUM('open','investigating','resolved') DEFAULT 'open',
+  created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+  resolved_at       DATETIME NULL,
+  INDEX idx_ticket_acct_created (account_id, created_at),
+  INDEX idx_ticket_status_created (status, created_at),
+  CONSTRAINT fk_ticket_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS whatsapp_chat_state (
   chat_id    VARCHAR(128) PRIMARY KEY,
   account_id BIGINT UNSIGNED NOT NULL,
