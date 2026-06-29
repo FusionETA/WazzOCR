@@ -189,6 +189,10 @@
           </div>
         </div>
         <div class="col-right">
+          ${(data.account&&data.account.plan==='trial') ? `
+          <div class="card"><h2>WhatsApp <span class="badge success">Trial plan</span></h2>
+            <p class="muted">You're on the <strong>Trial plan</strong> — no Wazzup setup needed. Just message our shared WhatsApp number from the phone numbers you list below. Only listed numbers are processed; everything else is ignored.</p>
+          </div>` : `
           <div class="card"><h2>WhatsApp channels</h2>
             <p class="muted">Add your Wazzup channel so bills sent to it are processed for your account. After adding, click “Register webhook” once.</p>
             <div id="channelsBox" style="margin:.6rem 0;">…</div>
@@ -196,6 +200,15 @@
             <div class="field"><label>API key</label><input id="chanKey"></div>
             <button class="btn btn-primary" id="chanAddBtn">Add channel</button>
             <div class="msg" id="chanMsg"></div>
+          </div>`}
+          <div class="card"><h2>Allowed phone numbers</h2>
+            <p class="muted">${(data.account&&data.account.plan==='trial')
+              ? 'These numbers can send bills to our WhatsApp for your account. Messages from any other number are ignored.'
+              : 'When a channel above has phone restriction ON, only these numbers may use it.'}</p>
+            <div id="phonesBox" style="margin:.6rem 0;">…</div>
+            <div class="grid2"><div class="field"><label>Phone number</label><input id="phoneNum" placeholder="60123456789"></div><div class="field"><label>Label (optional)</label><input id="phoneLabel"></div></div>
+            <button class="btn btn-primary" id="phoneAddBtn">Add number</button>
+            <div class="msg" id="phoneMsg"></div>
           </div>
           <div class="card"><h2>Chart of accounts</h2>
             <p class="muted">Upload a CSV with columns: code, name, category. Replaces your current list; used to auto-code bill line items. <span id="coaCount"></span></p>
@@ -237,7 +250,8 @@
         document.getElementById('coaCount').textContent = '— ' + (coa.accounts||[]).length + ' codes loaded';
       } catch {}
       wireFileDrop('coaDrop','coaFile','coaFileText','Choose a CSV file or drag it here');
-      document.getElementById('chanAddBtn').onclick = async () => {
+      const chanAddBtn = document.getElementById('chanAddBtn'); // absent on the trial plan
+      if (chanAddBtn) chanAddBtn.onclick = async () => {
         const m = document.getElementById('chanMsg');
         const channelId=document.getElementById('chanId').value.trim(), apiKey=document.getElementById('chanKey').value.trim(), label=document.getElementById('chanLabel').value.trim();
         if (!channelId){ showM(m,'Channel ID is required.',false); return; }
@@ -245,6 +259,19 @@
           const d=await r.json(); if(!r.ok) throw new Error(d.error||'Add failed.');
           document.getElementById('chanId').value='';document.getElementById('chanKey').value='';document.getElementById('chanLabel').value='';
           showM(m,'Channel added. Now click “Register webhook”.',true); wireSettings();
+        } catch(e){ showM(m,e.message,false); }
+      };
+      // Allowed phone numbers (both plans)
+      loadPhones();
+      const phoneAddBtn = document.getElementById('phoneAddBtn');
+      if (phoneAddBtn) phoneAddBtn.onclick = async () => {
+        const m=document.getElementById('phoneMsg');
+        const phone=document.getElementById('phoneNum').value.trim(), label=document.getElementById('phoneLabel').value.trim();
+        if(!phone){ showM(m,'Enter a phone number.',false); return; }
+        try { const r=await fetch('/api/me/phones',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,label:label||undefined})});
+          const d=await r.json(); if(!r.ok) throw new Error(d.error||'Add failed.');
+          document.getElementById('phoneNum').value=''; document.getElementById('phoneLabel').value='';
+          showM(m,'Number added.',true); loadPhones();
         } catch(e){ showM(m,e.message,false); }
       };
       document.getElementById('coaBtn').onclick = async () => {
@@ -306,10 +333,27 @@
         <td><strong>${esc(c.label||'(no label)')}</strong> ${c.webhookRegistered?'<span class="badge success">Webhook registered</span>':'<span class="badge skipped">Not registered</span>'}</td>
         <td style="text-align:right;white-space:nowrap;">
           <button class="linkbtn" onclick="openChannelModal(${c.id})">View</button>
+          &nbsp; <a href="#" onclick="toggleRestrict(event,${c.id},${c.phoneRestrictionEnabled?1:0})" title="Limit this channel to your allowed phone numbers">${c.phoneRestrictionEnabled?'🔒 Restricted':'🔓 Open'}</a>
           &nbsp; <a href="#" onclick="regChannel(event,${c.id})">Register webhook</a>
           &nbsp; <a href="#" style="color:var(--bad)" onclick="removeChannel(event,${c.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">No channels yet.</div>';
     }
+    window.toggleRestrict = async (e,id,cur)=>{ e.preventDefault();
+      try{ const r=await fetch('/api/me/channels/'+id+'/phone-restriction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!cur})});
+        const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); wireSettings(); }
+      catch(err){ alert(err.message); } };
+    async function loadPhones(){
+      const box=document.getElementById('phonesBox'); if(!box) return;
+      try {
+        const d = await (await fetch('/api/me/phones')).json();
+        const phones = d.phones||[];
+        box.innerHTML = phones.length ? `<table class="table"><tbody>${phones.map(p=>`<tr>
+          <td><strong>${esc(p.phone)}</strong>${p.label?` <span class="muted">— ${esc(p.label)}</span>`:''}</td>
+          <td style="text-align:right;"><a href="#" style="color:var(--bad)" onclick="delPhone(event,${p.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
+          : '<div class="empty">No numbers yet.</div>';
+      } catch { box.innerHTML='<div class="empty">Could not load.</div>'; }
+    }
+    window.delPhone = async (e,id)=>{ e.preventDefault(); try{ await fetch('/api/me/phones/'+id,{method:'DELETE'}); loadPhones(); }catch(err){ alert(err.message); } };
     window.switchTab = switchTab;
     window.regChannel = async (e,id)=>{ e.preventDefault(); const m=document.getElementById('chanMsg'); showM(m,'Registering…',true);
       try{ const r=await fetch('/api/me/channels/'+id+'/register-webhook',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); showM(m,'Webhook registered with Wazzup ✓',true); wireSettings(); }

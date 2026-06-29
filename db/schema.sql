@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   ai_model          VARCHAR(64)  DEFAULT 'gemini-2.5-flash',
   ai_prompt_addon   TEXT,
   auto_create_bills TINYINT(1) DEFAULT 0,
+  -- Billing plan. New accounts default to 'trial' (they share the system trial
+  -- Wazzup channel and are routed by sender phone). 'paid' accounts use their own
+  -- channel(s). The migration backfills all pre-existing accounts to 'paid'.
+  plan              ENUM('trial','paid') NOT NULL DEFAULT 'trial',
   created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -119,7 +123,27 @@ CREATE TABLE IF NOT EXISTS wazzup_channels (
   label      VARCHAR(255),
   status     ENUM('active','disabled') DEFAULT 'active',
   webhook_registered TINYINT(1) NOT NULL DEFAULT 0,
+  -- When 1, only sender phones in wazzup_channel_phones may use this channel; all
+  -- other senders are silently ignored. When 0 (default), anyone can use it.
+  phone_restriction_enabled TINYINT(1) NOT NULL DEFAULT 0,
   CONSTRAINT fk_wazzup_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Per-channel allowed sender phones. Doubles as the trial routing map: on the
+-- shared trial channel, each row maps a sender phone to the trial account that
+-- registered it (so one channel serves many trial accounts). On a normal paid
+-- channel, rows are the whitelist of numbers allowed to use that account's channel.
+CREATE TABLE IF NOT EXISTS wazzup_channel_phones (
+  id                BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  wazzup_channel_id BIGINT UNSIGNED NOT NULL,
+  account_id        BIGINT UNSIGNED NOT NULL,
+  phone             VARCHAR(32) NOT NULL,           -- digits only, no + / spaces
+  label             VARCHAR(255),
+  created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_channel_phone (wazzup_channel_id, phone),
+  INDEX idx_wcp_account (account_id),
+  CONSTRAINT fk_wcp_channel FOREIGN KEY (wazzup_channel_id) REFERENCES wazzup_channels(id) ON DELETE CASCADE,
+  CONSTRAINT fk_wcp_account FOREIGN KEY (account_id) REFERENCES accounts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS coa_accounts (

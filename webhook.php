@@ -181,6 +181,14 @@ function process_message(array $msg): void
         return;
     }
 
+    // ── Phone-restriction gate ─────────────────────────────────────────────
+    // Silently drop messages from senders not allowed on this channel. Runs
+    // before any reply (even greetings) so blocked numbers get nothing.
+    if (!is_authorized($inChannel, $chatId)) {
+        wlog("WAZZOCR SKIP: $chatId not authorised on channel $inChannel.");
+        return;
+    }
+
     // ── Route by message type ──────────────────────────────────────────────
     if ($type === 'text') {
         handle_text($chatId, $chatType, $msg);
@@ -349,6 +357,30 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
     }
 
     wazzup_send($chatId, $chatType, $output);
+}
+
+// Ask the bridge whether this sender may use this channel. Fails OPEN (returns
+// true) if the bridge is unreachable — a network blip must never silence a
+// legitimate sender. The bridge enforces the real rule against the DB.
+function is_authorized(string $channelId, string $chatId): bool
+{
+    $payload = ['channelId' => $channelId, 'chatId' => $chatId];
+    $ch = curl_init(XERO_BRIDGE_BASE . '/api/whatsapp/authorize');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_TIMEOUT        => 8,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode < 200 || $httpCode >= 300) return true; // fail open
+    $data = json_decode((string)$response, true);
+    if (!is_array($data) || !array_key_exists('allowed', $data)) return true; // fail open
+    return (bool)$data['allowed'];
 }
 
 // Mint a support ticket via the bridge for a failure that happened HERE (in the

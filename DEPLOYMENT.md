@@ -10,6 +10,39 @@ get the actual values from the project's local `.env`.
 
 ---
 
+## 0b. Latest update — plans & phone restriction (server checklist)
+
+Adds a **plan** per account (`trial` / `paid`) and a per-channel **phone
+restriction** (only listed sender numbers may use a channel; others are silently
+ignored). Trial accounts share one Wazzup channel and are routed by sender phone.
+
+Changed files: `server.js` (new `/api/whatsapp/authorize`), `webhook.php` (auth
+gate), `admin.html`, `account.html`, plus new models/libs. **Deploy both
+`server.js` and `webhook.php`.**
+
+1. Run the migration (idempotent). It **backfills every existing account to
+   `paid`** and leaves phone restriction **off**, so live clients (Ayu Borneo)
+   are unaffected. New accounts default to `trial`.
+   ```bash
+   node scripts/add-plans-and-phone-restriction.js
+   ```
+   No new env vars.
+2. **Activate the trial plan when ready** (optional, in the Admin UI):
+   - Accounts page → *Trial default channel* → confirm the channel id
+     (seeded to the Fusion Demo Wazzup channel).
+   - Open that channel's account (Zi Rong Test) → Connections → set the channel
+     to **🔒 Restricted**, and add the numbers allowed on it (including your own
+     test number, or it'll stop processing your messages).
+   - For each trial account: set plan = `trial`, then add their phone number(s)
+     under Connections → *Allowed phone numbers*.
+3. Restart the Node app.
+
+Verify: `node scripts/db-test.js` lists `wazzup_channel_phones`; the admin account
+page shows a **Plan** dropdown; a restricted channel ignores messages from
+unlisted numbers.
+
+---
+
 ## 0. Latest update — error tickets (server checklist)
 
 This release adds **support-ticket error tracking + admin WhatsApp alerts**.

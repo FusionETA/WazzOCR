@@ -52,10 +52,22 @@
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;"><h2 style="margin:0;">General AI prompt</h2><button class="btn btn-primary btn-sm" onclick="openPromptModal(null,'general')">＋ Add prompt</button></div>
         <p class="muted" style="margin:.5rem 0 1rem;">These blocks are combined (top to bottom) and applied to every account. Toggle a block off to exclude it.</p>
-        <div id="promptLib"></div></div>`;
+        <div id="promptLib"></div></div>
+      <div class="card">
+        <h2>Trial default channel</h2>
+        <p class="muted" style="margin:.5rem 0 1rem;">The shared Wazzup channel id that all <strong>trial</strong> accounts use. Trial senders are routed to their account by phone number, so this channel must have phone restriction ON and each trial account's numbers added.</p>
+        <div class="grid2"><div class="field"><label>Channel ID</label><input id="trialChanId" placeholder="61e245cf-…"></div><div style="display:flex;align-items:flex-end;"><button class="btn btn-primary" onclick="saveTrialChannel()">Save</button></div></div>
+        <div class="msg" id="trialChanMsg"></div></div>`;
     document.getElementById('acctSearch').oninput = (e)=>{ acctSearch=e.target.value; acctPage=1; renderAccountsTable(); };
-    renderAccountsTable(); renderPromptLib();
+    renderAccountsTable(); renderPromptLib(); loadTrialChannel();
   }
+  async function loadTrialChannel(){
+    const el=document.getElementById('trialChanId'); if(!el) return;
+    try { const d=await api('GET','/admin/settings/trial-channel'); el.value=d.channelId||''; } catch {}
+  }
+  window.saveTrialChannel = async () => { const m=document.getElementById('trialChanMsg');
+    try { await api('PUT','/admin/settings/trial-channel',{ channelId:document.getElementById('trialChanId').value.trim() });
+      m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   function renderAccountsTable(){
     const q=acctSearch.toLowerCase().trim();
     const filtered = ACCOUNTS.filter(a=>!q || String(a.name||'').toLowerCase().includes(q));
@@ -249,8 +261,10 @@
         <div class="card"><h2>Settings</h2>
           <div class="grid2">
             <div class="field"><label>Status</label><div id="setStatusDrop"></div></div>
+            <div class="field"><label>Plan</label><div id="setPlanDrop"></div></div>
             <div class="field"><label>AI model</label><div id="setModelDrop"></div></div>
           </div>
+          <p class="muted" style="margin:.2rem 0 .8rem;">Trial accounts share the default trial channel and are routed by sender phone — add their numbers under <strong>Connections → Allowed phone numbers</strong>.</p>
           <button class="btn btn-primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
 
         <div class="card">
@@ -288,6 +302,7 @@
                 <td><strong>${esc(c.label||'(no label)')}</strong> ${c.webhookRegistered?'<span class="badge success">Webhook registered</span>':'<span class="badge skipped">Not registered</span>'}</td>
                 <td style="text-align:right;white-space:nowrap;">
                   <button class="linkbtn" onclick="openChannelModal(${c.id})">View</button>
+                  &nbsp; <button class="linkbtn" onclick="toggleChannelRestrict(${id},${c.id},${c.phoneRestrictionEnabled?1:0})" title="Limit this channel to the allowed phone numbers">${c.phoneRestrictionEnabled?'🔒 Restricted':'🔓 Open'}</button>
                   &nbsp; <button class="linkbtn" onclick="registerWebhook(${id},${c.id})">Register webhook</button>
                   &nbsp; <button class="linkbtn danger" onclick="delChannel(${id},${c.id})">Remove</button></td></tr>`).join('')||'<tr><td class="muted">No channels</td></tr>'}</tbody></table>
               <div class="msg" id="regMsg"></div>
@@ -295,6 +310,12 @@
               <div class="grid2"><div class="field"><label>Channel ID</label><input id="chId"></div><div class="field"><label>Label</label><input id="chLabel"></div></div>
               <div class="field"><label>API key (optional)</label><input id="chKey"></div>
               <button class="btn btn-primary" onclick="addChannel(${id})">Add channel</button><div class="msg" id="chMsg"></div></div>
+
+            <div class="card"><h2>Allowed phone numbers</h2>
+              <p class="muted">Numbers that may use this account. For <strong>trial</strong> accounts these attach to the shared trial channel and route messages to this account. For paid accounts they apply when a channel above is set to 🔒 Restricted.</p>
+              <div id="acctPhonesBox" style="margin:.6rem 0;">…</div>
+              <div class="grid2"><div class="field"><label>Phone number</label><input id="acctPhoneNum" placeholder="60123456789"></div><div class="field"><label>Label (optional)</label><input id="acctPhoneLabel"></div></div>
+              <button class="btn btn-primary" onclick="addAcctPhone(${id})">Add number</button><div class="msg" id="acctPhoneMsg"></div></div>
 
             <div class="card"><h2>Chart of accounts</h2>
               <p class="muted">Upload a CSV with columns: code, name, category. Replaces the current ${d.coaCount} codes.</p>
@@ -313,7 +334,9 @@
     wireFileDrop('coaDrop','coaFile','coaFileText','Choose a CSV file or drag it here');
     renderAnalytics(id);
     window.__searchDropdown('setStatusDrop', ['active','suspended','trial'].map(s=>({value:s,label:s})), { selected:d.account.status });
+    window.__searchDropdown('setPlanDrop', ['trial','paid'].map(s=>({value:s,label:s})), { selected:d.account.plan||'paid' });
     window.__searchDropdown('setModelDrop', ['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>({value:s,label:s})), { selected:d.account.ai_model });
+    loadAcctPhones(id);
     if ((d.connections||[]).length) {
       window.__searchDropdown('xeroDrop', d.connections.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
       document.getElementById('xeroDiscBtn').onclick = () => disconnectSelectedXero(id);
@@ -420,8 +443,28 @@
     show();
   }
   window.saveSettings = async (id) => { const m=document.getElementById('setMsg');
-    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatusDrop').value(), aiModel:document.getElementById('setModelDrop').value() });
+    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatusDrop').value(), plan:document.getElementById('setPlanDrop').value(), aiModel:document.getElementById('setModelDrop').value() });
       m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  // Per-channel phone restriction toggle + allowed-phone management.
+  window.toggleChannelRestrict = async (id,cid,cur) => {
+    try { await api('POST','/admin/accounts/'+id+'/channels/'+cid+'/phone-restriction',{ enabled:!cur }); openAccount(id); }
+    catch(e){ alert(e.message); } };
+  async function loadAcctPhones(id){
+    const box=document.getElementById('acctPhonesBox'); if(!box) return;
+    try { const d=await api('GET','/admin/accounts/'+id+'/phones'); const phones=d.phones||[];
+      box.innerHTML = phones.length ? `<table class="table"><tbody>${phones.map(p=>`<tr>
+        <td><strong>${esc(p.phone)}</strong>${p.label?` <span class="muted">— ${esc(p.label)}</span>`:''}</td>
+        <td style="text-align:right;"><button class="linkbtn danger" onclick="delAcctPhone(${id},${p.id})">Remove</button></td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">No numbers yet.</div>';
+    } catch(e){ box.innerHTML='<div class="empty">Could not load.</div>'; } }
+  window.addAcctPhone = async (id) => { const m=document.getElementById('acctPhoneMsg');
+    const phone=document.getElementById('acctPhoneNum').value.trim(), label=document.getElementById('acctPhoneLabel').value.trim();
+    if(!phone){ m.className='msg err'; m.textContent='Enter a phone number.'; return; }
+    try { await api('POST','/admin/accounts/'+id+'/phones',{ phone, label:label||undefined });
+      document.getElementById('acctPhoneNum').value=''; document.getElementById('acctPhoneLabel').value='';
+      m.className='msg ok'; m.textContent='Number added.'; loadAcctPhones(id); }
+    catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  window.delAcctPhone = async (id,pid) => { try { await api('DELETE','/admin/accounts/'+id+'/phones/'+pid); loadAcctPhones(id); } catch(e){ alert(e.message); } };
   window.invite = async (id) => { const m=document.getElementById('invMsg');
     try { const r=await api('POST','/admin/accounts/'+id+'/invite',{ email:document.getElementById('invEmail').value.trim(), phone:document.getElementById('invPhone').value.trim(), name:document.getElementById('invName').value.trim() });
       m.className='msg ok'; m.textContent = r.sent?'Invite sent via WhatsApp.':('WhatsApp send failed. Share this link: '+r.link); openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };

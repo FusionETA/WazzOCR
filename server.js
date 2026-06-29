@@ -3103,13 +3103,20 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
     // Multi-tenant (best-effort, non-breaking): if this Wazzup channel is
     // registered to an account in the DB, we'll log bill outcomes against it.
     // If not registered, everything below behaves exactly as before.
+    // Resolve which account to process for, following the SENDER phone when the
+    // channel is restricted (and routing trial senders to their trial account).
+    // Unregistered channels resolve to no account (legacy global path).
     let logCtx = null;
-    if (channelId) {
-      try {
-        const ch = await require('./models/wazzupChannels').getByChannelId(channelId);
-        if (ch && ch.account_id) logCtx = { accountId: ch.account_id, channelDbId: ch.id };
-      } catch (err) { console.error('[bills] channel resolve failed:', err.message); }
-    }
+    try {
+      const { resolveInbound } = require('./lib/inboundRouting');
+      const r = await resolveInbound({ channelId, phone: chatId });
+      if (!r.allowed) {
+        // Restricted channel + unmapped sender. webhook.php should already have
+        // dropped this; enforce here too. Nothing persisted yet, just ignore.
+        return res.json({ ok: true, status: 'ignored' });
+      }
+      if (r.accountId) logCtx = { accountId: r.accountId, channelDbId: r.channelDbId };
+    } catch (err) { console.error('[bills] channel resolve failed:', err.message); }
     // Runs a function inside this account's Xero context (DB-backed tokens/orgs).
     // With no registered channel, runs as-is on the legacy global Xero path.
     const runWithCtx = (fn) => logCtx ? xeroAccountCtx.run({ accountId: logCtx.accountId }, fn) : fn();
@@ -3257,8 +3264,10 @@ app.post('/api/whatsapp/chat', async (req, res) => {
     // orgs and a valid pick fails with "Tenant not connected anymore".
     if (channelId) {
       try {
-        const ch = await require('./models/wazzupChannels').getByChannelId(String(channelId).trim());
-        if (ch && ch.account_id) chatAccountId = ch.account_id;
+        const { resolveInbound } = require('./lib/inboundRouting');
+        const r = await resolveInbound({ channelId: String(channelId).trim(), phone: chatId });
+        if (!r.allowed) return res.json({ ok: true, kind: 'ignored' });
+        if (r.accountId) chatAccountId = r.accountId;
       } catch (err) { console.error('[chat] channel resolve failed:', err.message); }
     }
     const runChat = async () => {
@@ -3362,6 +3371,28 @@ app.post('/api/whatsapp/chat', async (req, res) => {
     // Return as `reply` so webhook.php sends the friendly message (with ticket code)
     // instead of its generic no-code fallback.
     res.status(200).json({ ok: false, kind: 'error', reply: t.message, ticketCode: t.ticketCode });
+  }
+});
+
+// Authorisation gate for inbound messages. webhook.php calls this at the very
+// top of processing: if a channel has phone-restriction on and the sender isn't
+// in its allow-list, we return allowed:false and the webhook silently drops the
+// message. Unregistered channels stay allowed (legacy global path).
+app.post('/api/whatsapp/authorize', async (req, res) => {
+  const b = req.body || {};
+  try {
+    const { resolveInbound } = require('./lib/inboundRouting');
+    const result = await resolveInbound({
+      channelId: (b.channelId || '').toString().trim(),
+      phone: (b.chatId || b.phone || '').toString().trim()
+    });
+    res.json({ allowed: result.allowed });
+  } catch (err) {
+    // On any internal error, fail OPEN — never block a legitimate sender because
+    // the lookup hiccuped. (A restricted channel still can't leak data: the
+    // pipeline re-resolves the account context below.)
+    console.error('[authorize] failed (failing open):', err.message);
+    res.json({ allowed: true });
   }
 });
 

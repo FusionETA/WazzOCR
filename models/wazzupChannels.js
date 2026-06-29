@@ -11,15 +11,30 @@ function maskKey(k) {
 
 async function listByAccount(accountId) {
   const rows = await db.query(
-    'SELECT id, account_id, channel_id, api_key, label, status, webhook_registered FROM wazzup_channels WHERE account_id = ?',
+    'SELECT id, account_id, channel_id, api_key, label, status, webhook_registered, phone_restriction_enabled FROM wazzup_channels WHERE account_id = ?',
     [accountId]
   );
   return rows.map((r) => {
     let apiKeyMasked = null;
     if (r.api_key) { try { apiKeyMasked = maskKey(decrypt(r.api_key)); } catch { apiKeyMasked = '••••'; } }
     const { api_key, ...rest } = r; // never expose the encrypted/plain key in a list
-    return { ...rest, hasApiKey: Boolean(r.api_key), apiKeyMasked, webhookRegistered: Boolean(r.webhook_registered) };
+    return {
+      ...rest,
+      hasApiKey: Boolean(r.api_key),
+      apiKeyMasked,
+      webhookRegistered: Boolean(r.webhook_registered),
+      phoneRestrictionEnabled: Boolean(r.phone_restriction_enabled)
+    };
   });
+}
+
+// Toggle the per-channel phone restriction. Scoped to the owning account.
+async function setPhoneRestriction(accountId, id, enabled) {
+  const r = await db.execute(
+    'UPDATE wazzup_channels SET phone_restriction_enabled = ? WHERE id = ? AND account_id = ?',
+    [enabled ? 1 : 0, id, accountId]
+  );
+  return r.affectedRows;
 }
 
 // Mark a channel's webhook as registered (called after a successful registerWebhook).
@@ -67,4 +82,4 @@ async function remove(accountId, id) {
   return r.affectedRows;
 }
 
-module.exports = { listByAccount, resolveAccountId, getByChannelId, getDecryptedApiKey, add, remove, markWebhookRegistered };
+module.exports = { listByAccount, resolveAccountId, getByChannelId, getDecryptedApiKey, add, remove, markWebhookRegistered, setPhoneRestriction };

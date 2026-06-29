@@ -7,8 +7,10 @@ const db = require('../db');
 const coa = require('../models/coa');
 const bills = require('../models/bills');
 const wazzupChannels = require('../models/wazzupChannels');
+const channelPhones = require('../models/channelPhones');
 const xeroConnections = require('../models/xeroConnections');
 const wazzup = require('../lib/wazzup');
+const trialChannel = require('../lib/trialChannel');
 const { parseCoa } = require('../lib/csv');
 const { attachUser, requireAuth } = require('../auth/middleware');
 
@@ -39,7 +41,7 @@ router.get('/summary', async (req, res) => {
   );
   res.json({
     user: { id: u.id, email: u.email, name: u.name, isSuperAdmin: false },
-    account: req.account ? { id: req.account.id, name: req.account.name } : null,
+    account: req.account ? { id: req.account.id, name: req.account.name, plan: req.account.plan || 'paid' } : null,
     successCount: row ? Number(row.total) : 0,
     successThisMonth: row ? Number(row.this_month || 0) : 0
   });
@@ -107,6 +109,56 @@ router.get('/channels/:id/api-key', async (req, res) => {
   const apiKey = await wazzupChannels.getDecryptedApiKey(accountId, Number(req.params.id));
   if (!apiKey) return res.status(404).json({ error: 'No API key stored for this channel.' });
   res.json({ apiKey });
+});
+
+// ── Allowed sender phones (phone restriction + trial routing) ──────────────
+// Trial accounts: this is the list of numbers that may use the shared channel,
+// and is what routes their messages to them. Paid accounts: the whitelist for
+// their own channel (only enforced when the channel's restriction is on).
+router.get('/phones', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const phones = await channelPhones.listByAccount(accountId);
+  const target = await trialChannel.targetChannelForAccount(req.account);
+  res.json({
+    phones: phones.map((p) => ({ id: p.id, phone: p.phone, label: p.label })),
+    plan: req.account.plan || 'paid',
+    ready: Boolean(target) // false for trial accounts before the trial channel is set up
+  });
+});
+
+router.post('/phones', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const { phone, label } = req.body || {};
+  if (!phone || !channelPhones.normalizePhone(phone)) {
+    return res.status(400).json({ error: 'A valid phone number is required (digits only).' });
+  }
+  const channelDbId = await trialChannel.targetChannelForAccount(req.account);
+  if (!channelDbId) {
+    return res.status(409).json({ error: 'No channel is set up for your account yet. Please contact support.' });
+  }
+  try {
+    const id = await channelPhones.add({ channelDbId, accountId, phone, label: label || null });
+    res.json({ ok: true, id });
+  } catch (err) {
+    const dup = /Duplicate/.test(err.message);
+    res.status(dup ? 409 : 500).json({ error: dup ? 'That number is already on the list.' : err.message });
+  }
+});
+
+router.delete('/phones/:id', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const removed = await channelPhones.remove(accountId, Number(req.params.id));
+  res.json({ ok: true, removed });
+});
+
+// Paid accounts toggle restriction on their own channel. (Trial accounts share a
+// channel whose restriction is admin-controlled, so this is owner-scoped.)
+router.post('/channels/:id/phone-restriction', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const enabled = Boolean(req.body && req.body.enabled);
+  const updated = await wazzupChannels.setPhoneRestriction(accountId, Number(req.params.id), enabled);
+  if (!updated) return res.status(404).json({ error: 'Channel not found.' });
+  res.json({ ok: true, enabled });
 });
 
 // One-click: point this channel's Wazzup account at our webhook.php.

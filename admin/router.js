@@ -12,7 +12,9 @@ const users = require('../models/users');
 const bills = require('../models/bills');
 const coa = require('../models/coa');
 const wazzupChannels = require('../models/wazzupChannels');
+const channelPhones = require('../models/channelPhones');
 const xeroConnections = require('../models/xeroConnections');
+const trialChannel = require('../lib/trialChannel');
 const appSettings = require('../models/appSettings');
 const aiPrompts = require('../models/aiPrompts');
 const supportTickets = require('../models/supportTickets');
@@ -274,6 +276,61 @@ router.post('/accounts/:id/invite', async (req, res) => {
   const { link, sent } = await invites.sendInvite(userId);
   // Return the link only if the WhatsApp send failed, so the admin can share it manually.
   res.json({ ok: true, userId, sent, link: sent ? undefined : link });
+});
+
+// ── Trial default channel (shared Wazzup channel for trial accounts) ───────
+router.get('/settings/trial-channel', async (req, res) => {
+  res.json({ channelId: await trialChannel.getTrialChannelId() });
+});
+router.put('/settings/trial-channel', async (req, res) => {
+  await trialChannel.setTrialChannelId((req.body && req.body.channelId) || '');
+  res.json({ ok: true });
+});
+
+// ── Phone restriction + allow-list per account ─────────────────────────────
+// Toggle restriction on one of an account's channels.
+router.post('/accounts/:id/channels/:cid/phone-restriction', async (req, res) => {
+  const accountId = Number(req.params.id);
+  const enabled = Boolean(req.body && req.body.enabled);
+  const updated = await wazzupChannels.setPhoneRestriction(accountId, Number(req.params.cid), enabled);
+  if (!updated) return res.status(404).json({ error: 'Channel not found for this account.' });
+  res.json({ ok: true, enabled });
+});
+
+// The account's allowed sender phones (on its own channel, or the shared trial
+// channel for trial accounts).
+router.get('/accounts/:id/phones', async (req, res) => {
+  const accountId = Number(req.params.id);
+  const phones = await channelPhones.listByAccount(accountId);
+  res.json({ phones: phones.map((p) => ({ id: p.id, phone: p.phone, label: p.label })) });
+});
+router.post('/accounts/:id/phones', async (req, res) => {
+  const accountId = Number(req.params.id);
+  const account = await accounts.getById(accountId);
+  if (!account) return res.status(404).json({ error: 'Account not found.' });
+  const { phone, label } = req.body || {};
+  if (!phone || !channelPhones.normalizePhone(phone)) {
+    return res.status(400).json({ error: 'A valid phone number is required (digits only).' });
+  }
+  const channelDbId = await trialChannel.targetChannelForAccount(account);
+  if (!channelDbId) {
+    return res.status(409).json({
+      error: account.plan === 'trial'
+        ? 'No trial channel configured. Set the trial default channel first.'
+        : 'This account has no channel yet. Add a channel before adding allowed phones.'
+    });
+  }
+  try {
+    const id = await channelPhones.add({ channelDbId, accountId, phone, label: label || null });
+    res.json({ ok: true, id });
+  } catch (err) {
+    const dup = /Duplicate/.test(err.message);
+    res.status(dup ? 409 : 500).json({ error: dup ? 'That number is already on the list.' : err.message });
+  }
+});
+router.delete('/accounts/:id/phones/:pid', async (req, res) => {
+  const removed = await channelPhones.remove(Number(req.params.id), Number(req.params.pid));
+  res.json({ ok: true, removed });
 });
 
 // ── Support tickets (error tracking) ──────────────────────────────────────
