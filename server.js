@@ -3334,8 +3334,18 @@ app.post('/api/whatsapp/chat', async (req, res) => {
       });
     }
 
-    // 3) General AI chat (provider per loadAiSettings — Gemini by default)
-    const reply = await callAiChat(message);
+    // 3) General AI chat (provider per loadAiSettings — Gemini by default).
+    // A casual chat message failing (e.g. transient Gemini 503) is NOT a real
+    // pipeline error — the user just sent text, not a document. Degrade to a
+    // friendly fallback instead of minting an error ticket. Tickets are
+    // reserved for document parsing / Xero failures (handled by the outer catch).
+    let reply;
+    try {
+      reply = await callAiChat(message);
+    } catch (chatErr) {
+      console.error('[runChat] AI chat unavailable, sending friendly fallback:', chatErr.message);
+      reply = '👋 Hi! How can I help you?\n\nSend me an image or PDF of an invoice, receipt or document and I\'ll extract it for you — or just ask me a question.';
+    }
     return res.json({ ok: true, kind: 'chat', reply });
     };
     return await (chatAccountId
