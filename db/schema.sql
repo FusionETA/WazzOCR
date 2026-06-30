@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   -- Wazzup channel and are routed by sender phone). 'paid' accounts use their own
   -- channel(s). The migration backfills all pre-existing accounts to 'paid'.
   plan              ENUM('trial','paid') NOT NULL DEFAULT 'trial',
+  -- 0 = the owner still needs to complete onboarding (org name + phone) via the
+  -- forced modal after first login. Self-service signups start at 0; admin-created
+  -- accounts (named on creation) default to 1.
+  setup_complete    TINYINT(1) NOT NULL DEFAULT 1,
   created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

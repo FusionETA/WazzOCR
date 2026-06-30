@@ -55,6 +55,44 @@
       // restore the tab the user was on before a refresh
       const initialTab = (location.hash||'').replace(/^#/,'');
       if (['bills','unmatched','settings'].includes(initialTab)) switchTab(initialTab);
+      maybeShowOnboarding(data);
+    }
+
+    // ── Forced onboarding (org name + phone) ──
+    // Shown until the account's setup_complete is 1. Cannot be dismissed; it
+    // reappears on every visit until completed.
+    function maybeShowOnboarding(data){
+      if (!data.account || data.account.setupComplete) return;
+      if (document.getElementById('onbOverlay')) return;
+      const ov = document.createElement('div');
+      ov.id = 'onbOverlay';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(15,45,74,.55);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:1rem;';
+      ov.innerHTML = `
+        <div class="card" style="max-width:420px;width:100%;margin:0;">
+          <h2 style="margin-bottom:.3rem;">Finish setting up</h2>
+          <p class="muted" style="margin-bottom:1rem;">Tell us your organisation name and the WhatsApp number you'll send bills from — this is needed before you can start.</p>
+          <div class="field"><label>Organisation name</label><input id="onbOrg" autocomplete="organization" placeholder="Your company"></div>
+          <div class="field" style="margin-top:.6rem;"><label>WhatsApp number</label><input id="onbPhone" inputmode="tel" autocomplete="tel" placeholder="60123456789"></div>
+          <p class="muted" style="font-size:.78rem;margin:.4rem 0 0;">Digits only, international format (e.g. 60123456789).</p>
+          <button class="btn btn-primary" id="onbBtn" style="width:100%;margin-top:1.1rem;">Save & continue</button>
+          <div class="msg" id="onbMsg"></div>
+        </div>`;
+      document.body.appendChild(ov);
+      document.getElementById('onbBtn').onclick = submitOnboarding;
+      document.getElementById('onbOrg').focus();
+    }
+    async function submitOnboarding(){
+      const m = document.getElementById('onbMsg');
+      const orgName = document.getElementById('onbOrg').value.trim();
+      const phone = document.getElementById('onbPhone').value.trim();
+      if (!orgName){ m.className='msg err'; m.textContent='Enter your organisation name.'; return; }
+      if (phone.replace(/\D/g,'').length < 7){ m.className='msg err'; m.textContent='Enter a valid WhatsApp number (digits only).'; return; }
+      const btn = document.getElementById('onbBtn'); btn.disabled = true;
+      try {
+        const r = await fetch('/api/me/onboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orgName,phone})});
+        const d = await r.json(); if(!r.ok) throw new Error(d.error||'Could not save.');
+        location.reload();
+      } catch(e){ m.className='msg err'; m.textContent=e.message; btn.disabled=false; }
     }
     // ── Table filtering (search by supplier/invoice/org + date range) ──
     function filterBar(key){

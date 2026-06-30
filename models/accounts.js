@@ -1,11 +1,11 @@
 // Account (customer workspace) data access.
 const db = require('../db');
 
-async function create({ name, status = 'active', plan = 'trial', aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', autoCreateBills = false } = {}) {
+async function create({ name, status = 'active', plan = 'trial', setupComplete = true, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', autoCreateBills = false } = {}) {
   if (!name) throw new Error('Account name is required.');
   return db.insert(
-    'INSERT INTO accounts (name, status, plan, ai_provider, ai_model, auto_create_bills) VALUES (?, ?, ?, ?, ?, ?)',
-    [name, status, plan === 'paid' ? 'paid' : 'trial', aiProvider, aiModel, autoCreateBills ? 1 : 0]
+    'INSERT INTO accounts (name, status, plan, setup_complete, ai_provider, ai_model, auto_create_bills) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [name, status, plan === 'paid' ? 'paid' : 'trial', setupComplete ? 1 : 0, aiProvider, aiModel, autoCreateBills ? 1 : 0]
   );
 }
 
@@ -23,6 +23,7 @@ async function update(id, fields = {}) {
     name: 'name',
     status: 'status',
     plan: 'plan',
+    setupComplete: 'setup_complete',
     aiProvider: 'ai_provider',
     aiModel: 'ai_model',
     aiPromptAddon: 'ai_prompt_addon',
@@ -33,7 +34,7 @@ async function update(id, fields = {}) {
   for (const [key, col] of Object.entries(allowed)) {
     if (key in fields) {
       sets.push(`${col} = ?`);
-      if (key === 'autoCreateBills') params.push(fields[key] ? 1 : 0);
+      if (key === 'autoCreateBills' || key === 'setupComplete') params.push(fields[key] ? 1 : 0);
       else if (key === 'plan') params.push(fields[key] === 'paid' ? 'paid' : 'trial');
       else params.push(fields[key]);
     }

@@ -4,6 +4,8 @@ const express = require('express');
 const router = express.Router();
 
 const db = require('../db');
+const accounts = require('../models/accounts');
+const users = require('../models/users');
 const coa = require('../models/coa');
 const bills = require('../models/bills');
 const wazzupChannels = require('../models/wazzupChannels');
@@ -41,10 +43,38 @@ router.get('/summary', async (req, res) => {
   );
   res.json({
     user: { id: u.id, email: u.email, name: u.name, isSuperAdmin: false },
-    account: req.account ? { id: req.account.id, name: req.account.name, plan: req.account.plan || 'paid' } : null,
+    account: req.account ? { id: req.account.id, name: req.account.name, plan: req.account.plan || 'paid', setupComplete: req.account.setup_complete == null ? true : Boolean(req.account.setup_complete) } : null,
     successCount: row ? Number(row.total) : 0,
     successThisMonth: row ? Number(row.this_month || 0) : 0
   });
+});
+
+// Complete onboarding: set the organisation name + WhatsApp phone. Called by the
+// forced modal that shows until setup_complete is 1. Whitelists the phone on the
+// trial channel (its routing key) and marks the account complete.
+router.post('/onboard', async (req, res) => {
+  const accountId = needAccount(req, res); if (!accountId) return;
+  const { orgName, phone } = req.body || {};
+  const cleanPhone = channelPhones.normalizePhone(phone);
+  if (!orgName || !String(orgName).trim()) return res.status(400).json({ error: 'Organisation name is required.' });
+  if (!cleanPhone || cleanPhone.length < 7) return res.status(400).json({ error: 'A valid WhatsApp number is required (digits only).' });
+
+  // Phone must be unique on the trial channel so routing stays unambiguous.
+  const channelDbId = await trialChannel.trialChannelDbId();
+  if (channelDbId) {
+    const taken = await channelPhones.resolveAccount(channelDbId, cleanPhone);
+    if (taken && Number(taken.account_id) !== Number(accountId)) {
+      return res.status(409).json({ error: 'That phone number is already registered to another account.' });
+    }
+  }
+
+  await accounts.update(accountId, { name: String(orgName).trim(), setupComplete: true });
+  await users.setPhone(req.user.id, cleanPhone);
+  if (channelDbId) {
+    try { await channelPhones.add({ channelDbId, accountId, phone: cleanPhone, label: 'Registered' }); }
+    catch (err) { if (!/Duplicate/i.test(err.message)) throw err; } // already there from a retry — fine
+  }
+  res.json({ ok: true });
 });
 
 // Chart of accounts (read + CSV upload).

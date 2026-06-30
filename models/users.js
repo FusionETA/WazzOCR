@@ -63,11 +63,16 @@ async function markLogin(userId) {
   await db.execute('UPDATE users SET last_login_at = NOW() WHERE id = ?', [userId]);
 }
 
+// Set the user's phone number (collected during onboarding).
+async function setPhone(userId, phone) {
+  await db.execute('UPDATE users SET phone_number = ? WHERE id = ?', [phone, userId]);
+}
+
 function listByAccount(accountId) {
   return db.query('SELECT * FROM users WHERE account_id = ? ORDER BY created_at', [accountId]);
 }
 
 module.exports = {
   getById, getByEmail, getByGoogleSub,
-  createInvited, createOwner, attachGoogle, setPasswordHash, markLogin, listByAccount
+  createInvited, createOwner, attachGoogle, setPasswordHash, setPhone, markLogin, listByAccount
 };

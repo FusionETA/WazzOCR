@@ -10,8 +10,6 @@ const router = express.Router();
 
 const users = require('../models/users');
 const accounts = require('../models/accounts');
-const channelPhones = require('../models/channelPhones');
-const trialChannel = require('../lib/trialChannel');
 const sessions = require('./sessions');
 const invites = require('./invites');
 const google = require('./google');
@@ -40,80 +38,29 @@ function publicUser(u) {
 }
 
 // ── Self-service registration ────────────────────────────────────────────────
-// A new signup always creates a TRIAL account and whitelists the registrant's
-// phone on the shared trial channel (so their WhatsApp routes to them once the
-// channel's restriction is on). Two paths: email+password (here) and Google.
+// Signup is intentionally minimal: just email+password (here) or Google. A new
+// signup creates an INCOMPLETE trial account; the owner is then forced (by a
+// modal after login) to provide the organisation name + WhatsApp phone, which is
+// when the phone is whitelisted on the trial channel. See /api/me/onboard.
 
-// Is this phone already registered on the trial channel? Prevents ambiguous
-// routing (two accounts can't share one number on the same channel).
-async function trialPhoneTaken(phone) {
-  const channelDbId = await trialChannel.trialChannelDbId();
-  if (!channelDbId) return false; // trial channel not configured — nothing to clash with
-  const hit = await channelPhones.resolveAccount(channelDbId, phone);
-  return Boolean(hit);
-}
-
-// Add the registrant's phone to the trial channel's allow-list / routing map.
-async function whitelistTrialPhone(accountId, phone) {
-  const channelDbId = await trialChannel.trialChannelDbId();
-  if (!channelDbId) return; // not configured yet — skip silently
-  try { await channelPhones.add({ channelDbId, accountId, phone, label: 'Registered' }); }
-  catch (err) { if (!/Duplicate/i.test(err.message)) throw err; }
-}
+// Placeholder account name shown until onboarding sets the real org name.
+function placeholderName(email) { return String(email || 'New account'); }
 
 router.post('/register', async (req, res) => {
-  const { orgName, email, phone, password } = req.body || {};
-  const cleanPhone = channelPhones.normalizePhone(phone);
-  if (!orgName || !String(orgName).trim()) return res.status(400).json({ error: 'Organisation name is required.' });
+  const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
-  if (!cleanPhone) return res.status(400).json({ error: 'A valid phone number is required.' });
   if (rateLimited('register:' + req.ip)) return res.status(429).json({ error: 'Too many attempts. Please try again later.' });
-
   if (await users.getByEmail(email)) return res.status(409).json({ error: 'An account with that email already exists.' });
-  if (await trialPhoneTaken(cleanPhone)) return res.status(409).json({ error: 'That phone number is already registered.' });
 
-  const accountId = await accounts.create({ name: String(orgName).trim(), plan: 'trial' });
-  const userId = await users.createOwner({
-    accountId, email, phone: cleanPhone,
-    name: String(orgName).trim(),
-    passwordHash: await hashPassword(password)
-  });
-  await whitelistTrialPhone(accountId, cleanPhone);
+  const accountId = await accounts.create({ name: placeholderName(email), plan: 'trial', setupComplete: false });
+  const userId = await users.createOwner({ accountId, email, passwordHash: await hashPassword(password) });
 
   const raw = await sessions.create(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
   setSessionCookie(req, res, raw);
   await users.markLogin(userId);
   res.json({ ok: true, user: publicUser(await users.getById(userId)) });
 });
-
-// Start a Google signup: stash org name + phone in a short-lived cookie, then the
-// page sends the user through the normal /auth/google flow. The callback reads
-// this cookie to create the account for a brand-new Google user.
-router.post('/register/google-init', async (req, res) => {
-  const { orgName, phone } = req.body || {};
-  const cleanPhone = channelPhones.normalizePhone(phone);
-  if (!orgName || !String(orgName).trim()) return res.status(400).json({ error: 'Organisation name is required.' });
-  if (!cleanPhone) return res.status(400).json({ error: 'A valid phone number is required.' });
-  if (await trialPhoneTaken(cleanPhone)) return res.status(409).json({ error: 'That phone number is already registered.' });
-
-  const payload = Buffer.from(JSON.stringify({ orgName: String(orgName).trim(), phone: cleanPhone })).toString('base64');
-  res.cookie('g_register', payload, {
-    httpOnly: true, secure: req.secure || process.env.NODE_ENV === 'production',
-    sameSite: 'lax', maxAge: 10 * 60 * 1000, path: '/auth'
-  });
-  res.json({ ok: true });
-});
-
-function readRegisterCookie(req) {
-  const raw = parseCookies(req.headers.cookie).g_register;
-  if (!raw) return null;
-  try {
-    const d = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
-    if (d && d.orgName && d.phone) return d;
-  } catch { /* ignore */ }
-  return null;
-}
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
@@ -166,23 +113,17 @@ router.get('/google/callback', async (req, res) => {
         user = await users.getById(byEmail.id);
       }
     }
-    // Self-service Google signup: a brand-new Google user carrying a pending
-    // registration cookie gets a fresh trial account + whitelisted phone.
+    // Self-service Google signup: a brand-new Google user gets a fresh INCOMPLETE
+    // trial account. They'll be forced to set org name + phone via the onboarding
+    // modal after login (which is when the phone gets whitelisted).
     if (!user) {
-      const pending = readRegisterCookie(req);
-      if (pending) {
-        res.clearCookie('g_register', { path: '/auth' });
-        if (await trialPhoneTaken(pending.phone)) return res.redirect('/login.html?error=phone_taken');
-        const accountId = await accounts.create({ name: pending.orgName, plan: 'trial' });
-        const userId = await users.createOwner({
-          accountId, email, name: claims.name || pending.orgName,
-          googleSub: claims.sub, avatarUrl: claims.picture, phone: pending.phone
-        });
-        await whitelistTrialPhone(accountId, pending.phone);
-        user = await users.getById(userId);
-      }
+      const accountId = await accounts.create({ name: email, plan: 'trial', setupComplete: false });
+      const userId = await users.createOwner({
+        accountId, email, name: claims.name || email,
+        googleSub: claims.sub, avatarUrl: claims.picture
+      });
+      user = await users.getById(userId);
     }
-    if (!user) return res.redirect('/login.html?error=notinvited'); // reject unless invited/registered
     if (user.status === 'disabled') return res.redirect('/login.html?error=disabled');
 
     const raw = await sessions.create(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
