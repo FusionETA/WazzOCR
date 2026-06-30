@@ -202,12 +202,13 @@
             <div class="msg" id="chanMsg"></div>
           </div>`}
           <div class="card"><h2>Allowed phone numbers</h2>
-            <p class="muted">${(data.account&&data.account.plan==='trial')
-              ? 'These numbers can send bills to our WhatsApp for your account. Messages from any other number are ignored.'
-              : 'When a channel above has phone restriction ON, only these numbers may use it.'}</p>
+            <div id="phoneToggleWrap" style="margin-bottom:.5rem;"></div>
+            <p class="muted" id="phoneCardHint" style="margin:.2rem 0 .6rem;"></p>
             <div id="phonesBox" style="margin:.6rem 0;">…</div>
-            <div class="grid2"><div class="field"><label>Phone number</label><input id="phoneNum" placeholder="60123456789"></div><div class="field"><label>Label (optional)</label><input id="phoneLabel"></div></div>
-            <button class="btn btn-primary" id="phoneAddBtn">Add number</button>
+            <div id="phoneAddWrap">
+              <div class="grid2"><div class="field"><label>Phone number</label><input id="phoneNum" placeholder="60123456789"></div><div class="field"><label>Label (optional)</label><input id="phoneLabel"></div></div>
+              <button class="btn btn-primary" id="phoneAddBtn">Add number</button>
+            </div>
             <div class="msg" id="phoneMsg"></div>
           </div>
           <div class="card"><h2>Chart of accounts</h2>
@@ -329,19 +330,15 @@
     function renderChannels(channels){
       const box=document.getElementById('channelsBox'); if(!box) return;
       CHAN_BY_ID = {}; channels.forEach(c=>{ CHAN_BY_ID[c.id]=c; });
+      window.PRIMARY_CHANNEL = channels[0] || null; // the channel the toggle + phone list act on
       box.innerHTML = channels.length ? `<table class="table"><tbody>${channels.map(c=>`<tr>
         <td><strong>${esc(c.label||'(no label)')}</strong> ${c.webhookRegistered?'<span class="badge success">Webhook registered</span>':'<span class="badge skipped">Not registered</span>'}</td>
         <td style="text-align:right;white-space:nowrap;">
           <button class="linkbtn" onclick="openChannelModal(${c.id})">View</button>
-          &nbsp; <a href="#" onclick="toggleRestrict(event,${c.id},${c.phoneRestrictionEnabled?1:0})" title="Limit this channel to your allowed phone numbers">${c.phoneRestrictionEnabled?'🔒 Restricted':'🔓 Open'}</a>
           &nbsp; <a href="#" onclick="regChannel(event,${c.id})">Register webhook</a>
           &nbsp; <a href="#" style="color:var(--bad)" onclick="removeChannel(event,${c.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">No channels yet.</div>';
     }
-    window.toggleRestrict = async (e,id,cur)=>{ e.preventDefault();
-      try{ const r=await fetch('/api/me/channels/'+id+'/phone-restriction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!cur})});
-        const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.'); wireSettings(); }
-      catch(err){ alert(err.message); } };
     async function loadPhones(){
       const box=document.getElementById('phonesBox'); if(!box) return;
       try {
@@ -352,7 +349,40 @@
           <td style="text-align:right;"><a href="#" style="color:var(--bad)" onclick="delPhone(event,${p.id})">Remove</a></td></tr>`).join('')}</tbody></table>`
           : '<div class="empty">No numbers yet.</div>';
       } catch { box.innerHTML='<div class="empty">Could not load.</div>'; }
+      renderPhonesCard();
     }
+    // Show the restriction toggle (paid only) inside the phone-numbers card, and
+    // only reveal the add form when restriction is ON.
+    function renderPhonesCard(){
+      const plan=(data.account&&data.account.plan)||'paid';
+      const tw=document.getElementById('phoneToggleWrap'), hint=document.getElementById('phoneCardHint');
+      const addWrap=document.getElementById('phoneAddWrap'), box=document.getElementById('phonesBox');
+      if(!hint) return;
+      const showAdd=(on)=>{ if(addWrap) addWrap.style.display=on?'':'none'; if(box) box.style.display=on?'':'none'; };
+      if(plan==='trial'){
+        if(tw) tw.innerHTML='';
+        hint.textContent='These numbers can send bills to our WhatsApp for your account. Messages from any other number are ignored.';
+        showAdd(true); return;
+      }
+      const ch=window.PRIMARY_CHANNEL;
+      if(!ch){ if(tw) tw.innerHTML=''; hint.textContent='Add a WhatsApp channel above first, then turn on restriction to limit who can send.'; showAdd(false); return; }
+      const on=!!ch.phoneRestrictionEnabled;
+      if(tw) tw.innerHTML=`<label style="display:inline-flex;align-items:center;gap:.55rem;cursor:pointer;font-weight:600;">
+        <input type="checkbox" ${on?'checked':''} onchange="togglePhoneRestrict(${ch.id},this.checked)" style="width:18px;height:18px;cursor:pointer;">
+        Restrict “${esc(ch.label||'this channel')}” to allowed numbers</label>`;
+      hint.textContent = on
+        ? 'Restriction is ON — only the numbers below can send bills to your channel.'
+        : 'Restriction is OFF — anyone can send. Turn it on to limit to specific numbers.';
+      showAdd(on);
+    }
+    window.togglePhoneRestrict = async (cid,enabled)=>{
+      const m=document.getElementById('phoneMsg');
+      try{ const r=await fetch('/api/me/channels/'+cid+'/phone-restriction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+        const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
+        if(window.PRIMARY_CHANNEL) window.PRIMARY_CHANNEL.phoneRestrictionEnabled=enabled;
+        if(CHAN_BY_ID[cid]) CHAN_BY_ID[cid].phoneRestrictionEnabled=enabled;
+        renderPhonesCard(); }
+      catch(e){ if(m){ m.className='msg err'; m.textContent=e.message; } } };
     window.delPhone = async (e,id)=>{ e.preventDefault(); try{ await fetch('/api/me/phones/'+id,{method:'DELETE'}); loadPhones(); }catch(err){ alert(err.message); } };
     window.switchTab = switchTab;
     window.regChannel = async (e,id)=>{ e.preventDefault(); const m=document.getElementById('chanMsg'); showM(m,'Registering…',true);
