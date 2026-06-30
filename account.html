@@ -16,6 +16,7 @@
   <div class="container" id="content"><div class="card">Loading…</div></div>
   <script>
     let CONNECTIONS = [];
+    let CURRENT_ACCOUNT = null;
     function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
     function badge(s, reason){ const k=['success','failed','pending','skipped'].includes(s)?s:'skipped'; return `<span class="badge ${k}" title="${esc(reason||'')}">${esc(s)}</span>`; }
     function money(b){ return b.total!=null ? esc(b.currency||'')+' '+Number(b.total).toFixed(2) : '-'; }
@@ -27,6 +28,7 @@
       try { const r = await fetch('/api/me/summary'); if (r.status===401){location.href='/login.html';return;} data = await r.json(); }
       catch { document.getElementById('content').innerHTML='<div class="card">Could not load. Please refresh.</div>'; return; }
       document.getElementById('whoLabel').textContent = data.user.name || data.user.email;
+      CURRENT_ACCOUNT = data.account || null;
       const c = document.getElementById('content');
       if (data.user.isSuperAdmin) {
         c.innerHTML = `<div class="page-head"><h1>Account</h1></div>
@@ -392,7 +394,7 @@
     // Render the phone-numbers card. Trial: restriction always on, just show the list.
     // Paid: show a toggle + always show the list/form so numbers can be managed freely.
     function renderPhonesCard(){
-      const plan=(data.account&&data.account.plan)||'paid';
+      const plan=(CURRENT_ACCOUNT&&CURRENT_ACCOUNT.plan)||'paid';
       const tw=document.getElementById('phoneToggleWrap'), hint=document.getElementById('phoneCardHint');
       const addWrap=document.getElementById('phoneAddWrap'), box=document.getElementById('phonesBox');
       if(!hint) return;
@@ -408,14 +410,14 @@
         if(addWrap) addWrap.style.display='none'; if(box) box.style.display='none'; return;
       }
       const on=!!ch.phoneRestrictionEnabled;
-      if(tw) tw.innerHTML=`<label style=”display:inline-flex;align-items:center;gap:.6rem;cursor:pointer;font-size:.97rem;”>
-        <span style=”position:relative;display:inline-block;width:42px;height:24px;”>
-          <input type=”checkbox” ${on?'checked':''} onchange=”togglePhoneRestrict(${ch.id},this.checked)” style=”opacity:0;width:0;height:0;position:absolute;”>
-          <span style=”position:absolute;inset:0;border-radius:24px;background:${on?'#2563eb':'#cbd5e1'};transition:background .2s;”></span>
-          <span style=”position:absolute;top:3px;left:${on?'21':'3'}px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.25);”></span>
+      if(tw) tw.innerHTML=`<label class="switch-row">
+        <span class="switch ${on?'is-on':''}">
+          <input type="checkbox" ${on?'checked':''} onchange="togglePhoneRestrict(${ch.id},this.checked)">
+          <span class="switch-track"></span>
+          <span class="switch-thumb"></span>
         </span>
-        <span style=”font-weight:600;”>Restrict to allowed numbers only</span>
-        <span style=”font-size:.85rem;color:${on?'#16a34a':'#64748b'};font-weight:500;”>${on?'ON':'OFF'}</span>
+        <span class="switch-label">Restrict to allowed numbers only</span>
+        <span class="switch-state ${on?'is-on':''}">${on?'ON':'OFF'}</span>
       </label>`;
       hint.textContent = on
         ? 'Restriction is ON — only the numbers below can send to your channel.'

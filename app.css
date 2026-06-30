@@ -113,6 +113,18 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .tabs button.active { background:var(--grad); color:#fff; }
 .panel { display:none; } .panel.active { display:block; }
 
+/* ── Phone restriction switch ───────────────────────────────── */
+.switch-row { display:inline-flex; align-items:center; gap:.6rem; cursor:pointer; font-size:.95rem; flex-wrap:wrap; }
+.switch { position:relative; display:inline-block; width:42px; height:24px; flex:0 0 auto; }
+.switch input { position:absolute; inset:0; opacity:0; cursor:pointer; z-index:2; }
+.switch-track { position:absolute; inset:0; border-radius:999px; background:#CBD5E1; transition:background .2s; }
+.switch-thumb { position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .2s; box-shadow:0 1px 3px rgba(0,0,0,.25); }
+.switch.is-on .switch-track { background:var(--blue); }
+.switch.is-on .switch-thumb { left:21px; }
+.switch-label { font-weight:700; color:var(--ink); }
+.switch-state { font-size:.8rem; color:var(--muted); font-weight:800; letter-spacing:.04em; }
+.switch-state.is-on { color:var(--ok); }
+
 /* ── Settings two-column layout (one card left, two stacked right) ── */
 .settings-grid { display:grid; grid-template-columns:minmax(0,0.85fr) minmax(0,1.3fr); gap:1.25rem; align-items:stretch; }
 .settings-grid .col-left, .settings-grid .col-right { display:flex; flex-direction:column; gap:1.25rem; }
