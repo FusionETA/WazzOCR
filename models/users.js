@@ -39,6 +39,18 @@ async function attachGoogle(userId, { googleSub, name = null, avatarUrl = null }
   );
 }
 
+// Create an ACTIVE owner user for a self-service registration. Either passwordHash
+// (email/password signup) or googleSub (Google signup) identifies them.
+async function createOwner({ accountId, email, phone = null, name = null, passwordHash = null, googleSub = null, avatarUrl = null }) {
+  if (!accountId) throw new Error('accountId is required.');
+  if (!email) throw new Error('Email is required.');
+  return db.insert(
+    `INSERT INTO users (account_id, email, phone_number, name, role, is_super_admin, status, password_hash, google_sub, avatar_url)
+     VALUES (?, ?, ?, ?, 'owner', 0, 'active', ?, ?, ?)`,
+    [accountId, norm(email), phone, name, passwordHash, googleSub, avatarUrl]
+  );
+}
+
 // Set/replace the password hash. Activates if invited.
 async function setPasswordHash(userId, passwordHash) {
   await db.execute(
@@ -57,5 +69,5 @@ function listByAccount(accountId) {
 
 module.exports = {
   getById, getByEmail, getByGoogleSub,
-  createInvited, attachGoogle, setPasswordHash, markLogin, listByAccount
+  createInvited, createOwner, attachGoogle, setPasswordHash, markLogin, listByAccount
 };
