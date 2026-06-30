@@ -37,6 +37,17 @@ async function setPhoneRestriction(accountId, id, enabled) {
   return r.affectedRows;
 }
 
+// Force-enable restriction on a channel by its Wazzup channel_id string.
+// Used by admin when designating a channel as the shared trial channel —
+// restriction must always be on for the trial routing to work correctly.
+async function enableRestrictionByChannelId(channelId) {
+  const r = await db.execute(
+    'UPDATE wazzup_channels SET phone_restriction_enabled = 1 WHERE channel_id = ?',
+    [channelId]
+  );
+  return r.affectedRows;
+}
+
 // Mark a channel's webhook as registered (called after a successful registerWebhook).
 async function markWebhookRegistered(accountId, id) {
   const r = await db.execute(
@@ -82,4 +93,4 @@ async function remove(accountId, id) {
   return r.affectedRows;
 }
 
-module.exports = { listByAccount, resolveAccountId, getByChannelId, getDecryptedApiKey, add, remove, markWebhookRegistered, setPhoneRestriction };
+module.exports = { listByAccount, resolveAccountId, getByChannelId, getDecryptedApiKey, add, remove, markWebhookRegistered, setPhoneRestriction, enableRestrictionByChannelId };

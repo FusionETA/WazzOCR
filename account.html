@@ -389,29 +389,38 @@
       } catch { box.innerHTML='<div class="empty">Could not load.</div>'; }
       renderPhonesCard();
     }
-    // Show the restriction toggle (paid only) inside the phone-numbers card, and
-    // only reveal the add form when restriction is ON.
+    // Render the phone-numbers card. Trial: restriction always on, just show the list.
+    // Paid: show a toggle + always show the list/form so numbers can be managed freely.
     function renderPhonesCard(){
       const plan=(data.account&&data.account.plan)||'paid';
       const tw=document.getElementById('phoneToggleWrap'), hint=document.getElementById('phoneCardHint');
       const addWrap=document.getElementById('phoneAddWrap'), box=document.getElementById('phonesBox');
       if(!hint) return;
-      const showAdd=(on)=>{ if(addWrap) addWrap.style.display=on?'':'none'; if(box) box.style.display=on?'':'none'; };
       if(plan==='trial'){
         if(tw) tw.innerHTML='';
         hint.textContent='These numbers can send bills to our WhatsApp for your account. Messages from any other number are ignored.';
-        showAdd(true); return;
+        if(addWrap) addWrap.style.display=''; if(box) box.style.display=''; return;
       }
       const ch=window.PRIMARY_CHANNEL;
-      if(!ch){ if(tw) tw.innerHTML=''; hint.textContent='Add a WhatsApp channel above first, then turn on restriction to limit who can send.'; showAdd(false); return; }
+      if(!ch){
+        if(tw) tw.innerHTML='';
+        hint.textContent='Add a WhatsApp channel above first.';
+        if(addWrap) addWrap.style.display='none'; if(box) box.style.display='none'; return;
+      }
       const on=!!ch.phoneRestrictionEnabled;
-      if(tw) tw.innerHTML=`<label style="display:inline-flex;align-items:center;gap:.55rem;cursor:pointer;font-weight:600;">
-        <input type="checkbox" ${on?'checked':''} onchange="togglePhoneRestrict(${ch.id},this.checked)" style="width:18px;height:18px;cursor:pointer;">
-        Restrict “${esc(ch.label||'this channel')}” to allowed numbers</label>`;
+      if(tw) tw.innerHTML=`<label style=”display:inline-flex;align-items:center;gap:.6rem;cursor:pointer;font-size:.97rem;”>
+        <span style=”position:relative;display:inline-block;width:42px;height:24px;”>
+          <input type=”checkbox” ${on?'checked':''} onchange=”togglePhoneRestrict(${ch.id},this.checked)” style=”opacity:0;width:0;height:0;position:absolute;”>
+          <span style=”position:absolute;inset:0;border-radius:24px;background:${on?'#2563eb':'#cbd5e1'};transition:background .2s;”></span>
+          <span style=”position:absolute;top:3px;left:${on?'21':'3'}px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.25);”></span>
+        </span>
+        <span style=”font-weight:600;”>Restrict to allowed numbers only</span>
+        <span style=”font-size:.85rem;color:${on?'#16a34a':'#64748b'};font-weight:500;”>${on?'ON':'OFF'}</span>
+      </label>`;
       hint.textContent = on
-        ? 'Restriction is ON — only the numbers below can send bills to your channel.'
-        : 'Restriction is OFF — anyone can send. Turn it on to limit to specific numbers.';
-      showAdd(on);
+        ? 'Restriction is ON — only the numbers below can send to your channel.'
+        : 'Restriction is OFF — anyone can send. Add numbers below and turn ON to restrict.';
+      if(addWrap) addWrap.style.display=''; if(box) box.style.display='';
     }
     window.togglePhoneRestrict = async (cid,enabled)=>{
       const m=document.getElementById('phoneMsg');

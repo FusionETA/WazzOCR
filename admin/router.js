@@ -283,7 +283,11 @@ router.get('/settings/trial-channel', async (req, res) => {
   res.json({ channelId: await trialChannel.getTrialChannelId() });
 });
 router.put('/settings/trial-channel', async (req, res) => {
-  await trialChannel.setTrialChannelId((req.body && req.body.channelId) || '');
+  const channelId = ((req.body && req.body.channelId) || '').trim();
+  await trialChannel.setTrialChannelId(channelId);
+  // The trial channel MUST have restriction on — without it every sender is
+  // accepted regardless of whether they're registered to a trial account.
+  if (channelId) await wazzupChannels.enableRestrictionByChannelId(channelId);
   res.json({ ok: true });
 });
 
