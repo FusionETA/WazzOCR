@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS users (
   account_id     BIGINT UNSIGNED NULL,
   email          VARCHAR(255) NOT NULL UNIQUE,
   google_sub     VARCHAR(255) NULL UNIQUE,
+  xero_sub       VARCHAR(255) NULL UNIQUE,
   password_hash  VARBINARY(255) NULL,
   phone_number   VARCHAR(32) NULL,
   name           VARCHAR(255),

@@ -3540,6 +3540,40 @@ app.get('/api/xero/connect', async (req, res) => {
   }
 });
 
+// ── Xero sign-up / sign-in (OpenID Connect, no existing session required) ──
+// State format: "xeroauth.<24-hex>.<32-hex-hmac>" — 3 dot-separated parts.
+function buildXeroAuthState() {
+  const data = `xeroauth.${crypto.randomBytes(12).toString('hex')}`;
+  const hmac = crypto.createHmac('sha256', process.env.APP_ENCRYPTION_KEY || XERO_CLIENT_SECRET).update(data).digest('hex').slice(0, 32);
+  return `${data}.${hmac}`;
+}
+function parseXeroAuthState(state) {
+  if (!state || !String(state).startsWith('xeroauth.')) return false;
+  const parts = String(state).split('.');
+  if (parts.length !== 3) return false;
+  const data = parts.slice(0, 2).join('.');
+  const expected = crypto.createHmac('sha256', process.env.APP_ENCRYPTION_KEY || XERO_CLIENT_SECRET).update(data).digest('hex').slice(0, 32);
+  return parts[2] === expected;
+}
+function decodeXeroIdToken(idToken) {
+  if (!idToken) return null;
+  try { return JSON.parse(Buffer.from(String(idToken).split('.')[1], 'base64url').toString('utf8')); }
+  catch { return null; }
+}
+
+app.get('/api/auth/xero', (req, res) => {
+  try {
+    ensureConfig();
+    const authUrl = new URL(`${XERO_IDENTITY_BASE}/authorize`);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('client_id', XERO_CLIENT_ID);
+    authUrl.searchParams.set('redirect_uri', getOAuthRedirectUri(req));
+    authUrl.searchParams.set('scope', XERO_SCOPES);
+    authUrl.searchParams.set('state', buildXeroAuthState());
+    res.redirect(authUrl.toString());
+  } catch (err) { res.status(500).send(err.message); }
+});
+
 // ── Per-account Xero connect (stateless signed state, stores tokens in DB) ──
 const _xeroAuthMw = require('./auth/middleware');
 // State carries the account id plus the origin of the connect ('admin' when an
@@ -3630,6 +3664,54 @@ app.get('/api/xero/callback', async (req, res) => {
     if (error) {
       if (acctState) return res.redirect(acctDest('error', errorDescription || error || 'cancelled'));
       return res.redirect('/?xero=error&reason=' + encodeURIComponent(errorDescription || error || 'cancelled'));
+    }
+
+    // Xero sign-up / sign-in flow → create or log in a WazzOCR user.
+    if (parseXeroAuthState(state)) {
+      try {
+        const tokens = await exchangeCodeForTokens(code, getOAuthRedirectUri(req));
+        const claims = decodeXeroIdToken(tokens.idToken);
+        const email = String(claims?.email || '').toLowerCase();
+        const xeroSub = String(claims?.sub || '');
+        const name = [claims?.given_name, claims?.family_name].filter(Boolean).join(' ') || claims?.preferred_username || email;
+        if (!email || !xeroSub) throw new Error('Could not get identity from Xero.');
+
+        const _users = require('./models/users');
+        const _accounts = require('./models/accounts');
+        const _sessions = require('./auth/sessions');
+        const { setSessionCookie: _setSession } = require('./auth/middleware');
+
+        let user = await _users.getByXeroSub(xeroSub);
+        if (!user) {
+          const byEmail = await _users.getByEmail(email);
+          if (byEmail) { await _users.attachXero(byEmail.id, { xeroSub, name }); user = await _users.getById(byEmail.id); }
+        }
+        if (!user) {
+          const accountId = await _accounts.create({ name: name || email, plan: 'trial', setupComplete: false });
+          const userId = await _users.createOwner({ accountId, email, name, xeroSub });
+          user = await _users.getById(userId);
+        }
+        if (user.status === 'disabled') return res.redirect('/login.html?error=disabled');
+
+        // Also connect their Xero orgs to the WazzOCR account in the same flow.
+        const xc = require('./models/xeroConnections');
+        const connections = await fetchConnections(tokens.accessToken);
+        const grantId = await xc.saveGrant(user.account_id, tokens.refreshToken, tokens.scope || null);
+        for (const c of (connections || [])) {
+          if (!c.tenantId) continue;
+          const owner = await xc.findAccountByTenant(c.tenantId);
+          if (owner && Number(owner) !== Number(user.account_id)) continue;
+          await xc.upsertConnection(user.account_id, grantId, c.tenantId, c.tenantName || null);
+        }
+
+        const raw = await _sessions.create(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
+        _setSession(req, res, raw);
+        await _users.markLogin(user.id);
+        return res.redirect(user.is_super_admin ? '/admin.html' : '/account.html?xero=connected');
+      } catch (e) {
+        console.error('[xero-auth] sign-in failed:', e.message);
+        return res.redirect('/login.html?error=xero');
+      }
     }
 
     // Per-account connect (stateless signed state) → store tokens in the DB.
