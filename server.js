@@ -1025,7 +1025,7 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
 // Per-tenant caches for tax rates + expense accounts. These live in a shared
 // module so the dashboards' "Refresh" action can clear them when a tax rate /
 // account is added in Xero (otherwise they'd persist for the whole process).
-const { taxRateCache: _taxRateCache, expenseAccountsCache: _expenseAccountsCache } = require('./lib/xeroCaches');
+const { taxRateCache: _taxRateCache, expenseAccountsCache: _expenseAccountsCache, currencyCache: _currencyCache } = require('./lib/xeroCaches');
 
 async function getTenantTaxRates(tenantId) {
   if (_taxRateCache.has(tenantId)) return _taxRateCache.get(tenantId);
@@ -1347,6 +1347,45 @@ function deriveLineItems(bill, defaults) {
   return normalized;
 }
 
+// Ensure a currency is enabled in the Xero org. Fetches enabled currencies once
+// per tenant (cached), and attempts to register the currency if it's missing.
+// Returns the currency code to use: the requested one if available, or the
+// org's base currency if the org doesn't support multicurrency at all.
+async function ensureCurrency(requestedCode, tenantId) {
+  const code = String(requestedCode || '').toUpperCase().trim();
+  if (!code) return XERO_DEFAULT_CURRENCY;
+
+  if (!_currencyCache.has(tenantId)) {
+    try {
+      const data = await xeroApi('/Currencies', {}, tenantId);
+      const enabled = new Set((data.Currencies || []).map((c) => String(c.Code).toUpperCase()));
+      _currencyCache.set(tenantId, enabled);
+    } catch {
+      return code; // can't fetch — try anyway, Xero will reject if truly invalid
+    }
+  }
+
+  const enabled = _currencyCache.get(tenantId);
+  if (enabled.has(code)) return code;
+
+  // Currency not yet enabled — try to register it.
+  try {
+    await xeroApi('/Currencies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Code: code })
+    }, tenantId);
+    enabled.add(code);
+    return code;
+  } catch (err) {
+    // Org may be on a Xero plan without multicurrency support.
+    // Fall back to the org's base currency (first in the enabled set) so the
+    // bill still gets created rather than failing entirely.
+    console.warn(`[xero] could not enable currency ${code} for tenant ${tenantId}: ${err.message} — falling back to base currency`);
+    return enabled.size > 0 ? [...enabled][0] : XERO_DEFAULT_CURRENCY;
+  }
+}
+
 async function createDraftBill({ bill, sourceFile, tenantId }) {
   if (!tenantId) {
     throw new Error('tenantId is required.');
@@ -1433,6 +1472,8 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     }
   }
 
+  const currencyCode = await ensureCurrency(bill.currency || XERO_DEFAULT_CURRENCY, tenantId);
+
   const invoicePayload = {
     Invoices: [
       {
@@ -1442,7 +1483,7 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
         DateString: normalizeDateString(bill.date),
         // Due date intentionally not set — leave it to Xero / org defaults.
         InvoiceNumber: bill.invoiceNo || undefined,
-        CurrencyCode: bill.currency || XERO_DEFAULT_CURRENCY,
+        CurrencyCode: currencyCode,
         Reference: bill.notes || undefined,
         LineAmountTypes: 'Exclusive',
         LineItems: lineItems
