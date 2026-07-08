@@ -285,14 +285,15 @@
           </div>
           <a class="btn btn-primary" href="/api/me/xero/connect">Reconnect Xero</a>`;
         } else {
-          let html = `<div id="xeroOrgList" style="display:flex;flex-direction:column;gap:.3rem;margin-bottom:.4rem;">`;
+          let html = `<table style="width:100%;border-collapse:collapse;margin-bottom:.3rem;">`;
           for (const c of CONNECTIONS) {
-            html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;">
-              <span style="font-size:.93rem;">${esc(c.tenant_name||c.xero_tenant_id)}</span>
-              <button class="linkbtn danger" type="button" data-connid="${c.id}" data-name="${esc(c.tenant_name||c.xero_tenant_id)}" onclick="disconnectOrgById(this)">Disconnect</button>
-            </div>`;
+            const name = esc(c.tenant_name||c.xero_tenant_id);
+            html += `<tr>
+              <td style="padding:.35rem 0;font-size:.93rem;">${name}</td>
+              <td style="text-align:right;white-space:nowrap;"><a href="#" style="color:var(--bad)" onclick="event.preventDefault();disconnectOrgById('${c.id}','${name}')">Disconnect</a></td>
+            </tr>`;
           }
-          html += `</div><div class="msg" id="xeroDiscMsg"></div>`;
+          html += `</table><div class="msg" id="xeroDiscMsg"></div>`;
           if (expired.length) {
             html += `<div class="msg err" style="margin-top:.5rem;">
               ⚠️ ${expired.map(e=>esc(e.tenant_name||e.xero_tenant_id)).join(', ')}: connection expired. <a href="/api/me/xero/connect">Reconnect Xero</a> to restore.
@@ -353,19 +354,16 @@
       finally { if(btn) btn.disabled=false; }
     };
     // Disconnect a specific org by its connection id (called from per-row Disconnect button).
-    window.disconnectOrgById = async (btn) => {
-      const connId = btn.dataset.connid;
-      const name = btn.dataset.name;
+    window.disconnectOrgById = async (connId, name) => {
       const m = document.getElementById('xeroDiscMsg');
       if (!confirm('Disconnect "'+name+'" from Xero?\n\nThis revokes WazzOCR\'s access to that organisation at Xero, then removes it here.')) return;
-      btn.disabled = true;
       showM(m,'Disconnecting…',true);
       try {
         const r=await fetch('/api/me/connections/'+connId,{method:'DELETE'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
         CONNECTIONS = CONNECTIONS.filter(c=>String(c.id)!==String(connId));
         showM(m,'Disconnected '+name+(d.revoked?'':' (removed here; could not reach Xero to revoke)'),true);
         wireSettings();
-      } catch(e){ showM(m,e.message,false); btn.disabled=false; }
+      } catch(e){ showM(m,e.message,false); }
     };
     // Reusable styled file picker (click or drag-drop), shows the chosen filename.
     function wireFileDrop(dropId, inputId, textId, placeholder){
