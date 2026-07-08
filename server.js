@@ -2998,7 +2998,22 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
           attachment = null;
         }
       } catch (xeroError) {
-        // Park as pending so the user can retry from the UI
+        // Duplicate invoice — already in Xero, nothing to fix. Don't park as pending.
+        if (xeroError.statusCode === 409 && xeroError.payload?.duplicate) {
+          res.json({
+            ok: true,
+            bill,
+            matchedTenant: { tenantId: matchedTenant.tenantId, tenantName: matchedTenant.tenantName },
+            xero: null,
+            pending: null,
+            duplicate: true,
+            duplicateDetail: xeroError.payload,
+            candidates: candidatesList
+          });
+          if (attachment) await deleteUploadedFile(attachment.filename);
+          return;
+        }
+        // All other Xero errors → park as pending so the user can retry from the UI
         pending = await appendPendingBill({
           id: crypto.randomUUID(),
           bill,

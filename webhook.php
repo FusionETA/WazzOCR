@@ -481,6 +481,9 @@ function format_bridge_outcome(array $result): string
                 $orgName = $xero['tenantName'] ?? 'Xero';
                 $lines[] = "✅ Created in " . $orgName;
                 $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
+            } elseif (!empty($outcome['duplicate'])) {
+                $invoiceNo = $bill['invoiceNo'] ?? 'this invoice';
+                $lines[] = "⚠️ Already exists in Xero (" . $invoiceNo . ") — no action needed.";
             } elseif ($status === 'pending' && is_array($pending)) {
                 $lines[] = "⚠️ Pending: " . ($pending['reason'] ?? 'Organisation assignment needed.');
             } elseif ($status === 'xero-error') {
@@ -552,6 +555,11 @@ function format_bridge_outcome(array $result): string
         }
         $lines[] = "Status: " . ($xero['status'] ?? 'DRAFT');
         $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
+    } elseif (!empty($result['duplicate'])) {
+        $invoiceNo = $bill['invoiceNo'] ?? 'This invoice';
+        $lines[] = "";
+        $lines[] = "⚠️ *Already exists in Xero*";
+        $lines[] = $invoiceNo . " is already in Xero — no action needed.";
     } elseif ($status === 'pending' && is_array($pending)) {
         $lines[] = "";
         $lines[] = "⚠️ *Action needed: pick the organisation*";
