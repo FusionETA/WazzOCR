@@ -98,8 +98,12 @@
     }
     // ── Table filtering (search by supplier/invoice/org + date range) ──
     function filterBar(key){
-      return `<div class="filterbar">
+      const orgOpts = key === 'bills' && CONNECTIONS.length > 1
+        ? `<div class="fb-field"><label>Xero org</label><select id="f-org-${key}"><option value="">All orgs</option>${CONNECTIONS.map(c=>`<option value="${esc(c.tenant_name||c.xero_tenant_id)}">${esc(c.tenant_name||c.xero_tenant_id)}</option>`).join('')}</select></div>`
+        : '';
+      return `<div class="filterbar" id="filterbar-${key}">
         <div class="fb-field fb-grow"><label>Search</label><input type="search" id="f-search-${key}" placeholder="Supplier, invoice${key==='bills'?' or Xero org':''}…"></div>
+        ${orgOpts}
         <div class="fb-field"><label>From</label><input type="date" id="f-from-${key}"></div>
         <div class="fb-field"><label>To</label><input type="date" id="f-to-${key}"></div>
         <button class="btn btn-ghost btn-sm" type="button" id="f-clear-${key}">Clear</button></div>`;
@@ -108,17 +112,18 @@
       let arr = cfg.items;
       const s = (cfg.search||'').toLowerCase().trim();
       if (s) arr = arr.filter(b => [b.supplier,b.invoice_no,b.xero_tenant_name].some(x=>String(x||'').toLowerCase().includes(s)));
+      if (cfg.org) arr = arr.filter(b => (b.xero_tenant_name||'') === cfg.org);
       if (cfg.from){ const f=new Date(cfg.from+'T00:00:00'); arr = arr.filter(b=> new Date(b.created_at) >= f); }
       if (cfg.to){ const t=new Date(cfg.to+'T23:59:59'); arr = arr.filter(b=> new Date(b.created_at) <= t); }
       return arr;
     }
     function wireFilters(key){
       const cfg=PG[key];
-      const s=document.getElementById('f-search-'+key), fr=document.getElementById('f-from-'+key), to=document.getElementById('f-to-'+key), cl=document.getElementById('f-clear-'+key);
+      const s=document.getElementById('f-search-'+key), fr=document.getElementById('f-from-'+key), to=document.getElementById('f-to-'+key), cl=document.getElementById('f-clear-'+key), org=document.getElementById('f-org-'+key);
       if(!s) return;
-      const apply=()=>{ cfg.search=s.value; cfg.from=fr.value; cfg.to=to.value; cfg.page=1; renderTab(key); };
-      s.oninput=apply; fr.onchange=apply; to.onchange=apply;
-      cl.onclick=()=>{ s.value='';fr.value='';to.value=''; cfg.search='';cfg.from='';cfg.to=''; cfg.page=1; renderTab(key); };
+      const apply=()=>{ cfg.search=s.value; cfg.from=fr.value; cfg.to=to.value; if(org) cfg.org=org.value; cfg.page=1; renderTab(key); };
+      s.oninput=apply; fr.onchange=apply; to.onchange=apply; if(org) org.onchange=apply;
+      cl.onclick=()=>{ s.value='';fr.value='';to.value=''; if(org) org.value=''; cfg.search='';cfg.from='';cfg.to='';cfg.org=''; cfg.page=1; renderTab(key); };
     }
     function switchTab(name){
       document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
@@ -134,8 +139,8 @@
     }
     const PAGE_SIZE = 15;
     const PG = {
-      bills:   { items: [], page: 1, withXero: true,  container: 'billsList',   empty: 'No created bills yet.', search:'', from:'', to:'' },
-      pending: { items: [], page: 1, withXero: false, container: 'pendingList', empty: 'Nothing pending 🎉', search:'', from:'', to:'' }
+      bills:   { items: [], page: 1, withXero: true,  container: 'billsList',   empty: 'No created bills yet.', search:'', from:'', to:'', org:'' },
+      pending: { items: [], page: 1, withXero: false, container: 'pendingList', empty: 'Nothing pending 🎉', search:'', from:'', to:'', org:'' }
     };
     async function loadBills(){ await loadTab('bills', 'success'); }
     async function loadPending(){ await loadTab('pending', 'pending'); }
@@ -276,6 +281,9 @@
         ]);
         const conns = conn.connections||[];
         CONNECTIONS = conns.filter(c => c.status === 'active');
+        // Re-inject the bills filterbar now that CONNECTIONS is known (org dropdown needs it)
+        const fb = document.getElementById('filterbar-bills');
+        if (fb) { fb.outerHTML = filterBar('bills'); wireFilters('bills'); }
         const expired = conns.filter(c => c.status === 'expired' || c.needs_reconnect);
         const cl = document.getElementById('connList');
         if (!conns.length) cl.textContent = 'None connected';
