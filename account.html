@@ -293,21 +293,29 @@
           </div>
           <a class="btn btn-primary" href="/api/me/xero/connect">Reconnect Xero</a>`;
         } else {
-          let html = `<table style="width:100%;border-collapse:collapse;margin-bottom:.3rem;">`;
-          for (const c of CONNECTIONS) {
-            const name = esc(c.tenant_name||c.xero_tenant_id);
-            html += `<tr>
-              <td style="padding:.35rem 0;font-size:.93rem;">${name}</td>
-              <td style="text-align:right;white-space:nowrap;"><a href="#" style="color:var(--bad)" onclick="event.preventDefault();disconnectOrgById('${c.id}','${name}')">Disconnect</a></td>
-            </tr>`;
-          }
-          html += `</table><div class="msg" id="xeroDiscMsg"></div>`;
+          let html = `<div id="xeroDrop" style="max-width:340px;"></div>
+            <div id="xeroDiscRow" style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.45rem;">
+              <span class="muted">${CONNECTIONS.length} connected</span>
+            </div>
+            <div class="msg" id="xeroDiscMsg"></div>`;
           if (expired.length) {
             html += `<div class="msg err" style="margin-top:.5rem;">
               ⚠️ ${expired.map(e=>esc(e.tenant_name||e.xero_tenant_id)).join(', ')}: connection expired. <a href="/api/me/xero/connect">Reconnect Xero</a> to restore.
             </div>`;
           }
           cl.innerHTML = html;
+          window.__searchDropdown('xeroDrop', CONNECTIONS.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
+          // When user selects an org, show its name + a Disconnect link
+          const dropEl = document.getElementById('xeroDrop');
+          const discRow = document.getElementById('xeroDiscRow');
+          dropEl.addEventListener('change', () => {
+            const tid = dropEl.value ? dropEl.value() : '';
+            const conn = CONNECTIONS.find(c=>c.xero_tenant_id===tid);
+            if (!conn) { discRow.innerHTML = `<span class="muted">${CONNECTIONS.length} connected</span>`; return; }
+            const name = esc(conn.tenant_name||conn.xero_tenant_id);
+            discRow.innerHTML = `<span class="muted">${CONNECTIONS.length} connected</span>
+              <a href="#" style="color:var(--bad);font-size:.88rem;" onclick="event.preventDefault();disconnectOrgById('${conn.id}','${name}')">Disconnect ${name}</a>`;
+          });
         }
         renderChannels(chan.channels||[]);
         document.getElementById('coaCount').textContent = '— ' + (coa.accounts||[]).length + ' codes loaded';
