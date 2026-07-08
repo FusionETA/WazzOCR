@@ -275,16 +275,28 @@
           fetch('/api/me/coa').then(r=>r.json())
         ]);
         const conns = conn.connections||[];
-        CONNECTIONS = conns;
+        CONNECTIONS = conns.filter(c => c.status === 'active');
+        const expired = conns.filter(c => c.status === 'expired' || c.needs_reconnect);
         const cl = document.getElementById('connList');
         if (!conns.length) cl.textContent = 'None connected';
-        else {
-          cl.innerHTML = `<div id="xeroDrop" style="max-width:340px;"></div>
+        else if (expired.length && !CONNECTIONS.length) {
+          cl.innerHTML = `<div class="msg err" style="margin-bottom:.6rem;">
+            ⚠️ Your Xero connection has expired or been revoked. Please reconnect to continue creating bills automatically.
+          </div>
+          <a class="btn btn-primary" href="/api/me/xero/connect">Reconnect Xero</a>`;
+        } else {
+          let html = `<div id="xeroDrop" style="max-width:340px;"></div>
             <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.45rem;">
-              <span class="muted">${conns.length} connected</span>
+              <span class="muted">${CONNECTIONS.length} connected</span>
               <button class="linkbtn danger" type="button" id="xeroDiscBtn">Disconnect selected</button></div>
             <div class="msg" id="xeroDiscMsg"></div>`;
-          window.__searchDropdown('xeroDrop', conns.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
+          if (expired.length) {
+            html += `<div class="msg err" style="margin-top:.5rem;">
+              ⚠️ ${expired.map(e=>e.tenant_name||e.xero_tenant_id).join(', ')}: connection expired. <a href="/api/me/xero/connect">Reconnect Xero</a> to restore.
+            </div>`;
+          }
+          cl.innerHTML = html;
+          window.__searchDropdown('xeroDrop', CONNECTIONS.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
           document.getElementById('xeroDiscBtn').onclick = () => disconnectSelectedXero();
         }
         renderChannels(chan.channels||[]);
