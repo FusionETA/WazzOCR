@@ -2629,6 +2629,20 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
         candidates: candidatesList
       };
     } catch (xeroError) {
+      // Duplicate invoice — already in Xero, nothing to fix. Don't park as
+      // pending; the org was matched correctly and the bill already exists.
+      if (xeroError.statusCode === 409 && xeroError.payload?.duplicate) {
+        if (attachment) await deleteUploadedFile(attachment.filename);
+        if (chatId) await clearChatState(chatId, 'awaitingPicker');
+        return {
+          status: 'duplicate',
+          bill,
+          matchedTenant: { tenantId: matchedTenant.tenantId, tenantName: matchedTenant.tenantName },
+          duplicate: true,
+          duplicateDetail: xeroError.payload,
+          candidates: candidatesList
+        };
+      }
       // AI matched the org confidently — Xero rejected the bill DATA, not
       // the org choice. Don't ask the user to pick (picking a different org
       // won't help). Park as pending so they can fix it from the dashboard.
@@ -3089,6 +3103,9 @@ async function logBillOutcomes({ accountId, channelDbId, chatId, source, outcome
       } else if (o.status === 'pending') {
         status = 'pending';
         failureReason = (o.pending && o.pending.reason) ? String(o.pending.reason).slice(0, 500) : null;
+      } else if (o.status === 'duplicate') {
+        // Already in Xero — a prior successful record exists; don't log a dup row.
+        continue;
       } else if (o.status === 'empty') {
         continue;
       }
