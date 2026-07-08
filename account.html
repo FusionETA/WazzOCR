@@ -304,17 +304,16 @@
             </div>`;
           }
           cl.innerHTML = html;
-          window.__searchDropdown('xeroDrop', CONNECTIONS.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
-          // When user selects an org, show its name + a Disconnect link
-          const dropEl = document.getElementById('xeroDrop');
-          const discRow = document.getElementById('xeroDiscRow');
-          dropEl.addEventListener('change', () => {
-            const tid = dropEl.value ? dropEl.value() : '';
-            const conn = CONNECTIONS.find(c=>c.xero_tenant_id===tid);
-            if (!conn) { discRow.innerHTML = `<span class="muted">${CONNECTIONS.length} connected</span>`; return; }
-            const name = esc(conn.tenant_name||conn.xero_tenant_id);
-            discRow.innerHTML = `<span class="muted">${CONNECTIONS.length} connected</span>
-              <a href="#" style="color:var(--bad);font-size:.88rem;" onclick="event.preventDefault();disconnectOrgById('${conn.id}','${name}')">Disconnect ${name}</a>`;
+          window.__searchDropdown('xeroDrop', CONNECTIONS.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), {
+            placeholder:'Browse organisations',
+            onSelect(tid) {
+              const conn = CONNECTIONS.find(c=>c.xero_tenant_id===tid);
+              const discRow = document.getElementById('xeroDiscRow');
+              if (!conn) { discRow.innerHTML = `<span class="muted">${CONNECTIONS.length} connected</span>`; return; }
+              const name = esc(conn.tenant_name||conn.xero_tenant_id);
+              discRow.innerHTML = `<span class="muted">${CONNECTIONS.length} connected</span>
+                <a href="#" style="color:var(--bad);font-size:.88rem;" onclick="event.preventDefault();disconnectOrgById('${conn.id}','${name}')">Disconnect ${name}</a>`;
+            }
           });
         }
         renderChannels(chan.channels||[]);
