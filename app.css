@@ -147,8 +147,8 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .google-btn { display:flex; align-items:center; justify-content:center; gap:.6rem; width:100%; padding:.72rem;
   border:1px solid var(--line); border-radius:var(--r-sm); background:#fff; color:var(--ink); font-weight:600; font-size:.9rem; cursor:pointer; }
 .google-btn:hover { background:#F8FAFD; text-decoration:none; }
-.xero-btn { display:flex; align-items:center; justify-content:center; gap:.6rem; width:100%; padding:.72rem;
-  border:none; border-radius:var(--r-sm); background:#13B5EA; color:#fff; font-weight:600; font-size:.9rem; cursor:pointer; margin-bottom:.6rem; }
+.xero-btn { display:flex; align-items:center; justify-content:center; gap:.75rem; width:100%; padding:.85rem;
+  border:none; border-radius:var(--r-sm); background:#13B5EA; color:#fff; font-weight:600; font-size:1rem; cursor:pointer; margin-bottom:.6rem; }
 .xero-btn:hover { background:#0fa3d4; text-decoration:none; color:#fff; }
 .divider { display:flex; align-items:center; gap:.7rem; margin:1.1rem 0 .25rem; color:var(--muted); font-size:.76rem; }
 .divider::before, .divider::after { content:''; flex:1; height:1px; background:var(--line); }
