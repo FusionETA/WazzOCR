@@ -1880,25 +1880,42 @@ function repairJson(raw) {
   if (start < 0) throw new Error('No JSON object/array found.');
   s = s.slice(start);
 
-  let inStr = false, esc = false;
+  let inStr = false, esc = false, afterColon = false;
   const stack = [];
   let out = '';
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
-    out += c;
     if (inStr) {
+      out += c;
       if (esc) esc = false;
       else if (c === '\\') esc = true;
       else if (c === '"') inStr = false;
       continue;
     }
-    if (c === '"') inStr = true;
-    else if (c === '{') stack.push('}');
-    else if (c === '[') stack.push(']');
-    else if (c === '}' || c === ']') {
-      stack.pop();
-      if (stack.length === 0) break; // top-level value closed; ignore trailing junk
+    if (/\s/.test(c)) { out += c; continue; } // whitespace: keep, don't touch state
+    if (c === '"') { out += c; inStr = true; afterColon = false; continue; }
+    if (c === '{') {
+      // Inside an object, a '{' is only valid immediately after a ':' (a nested
+      // object value). Anywhere else it means Gemini dropped the '}' that should
+      // have closed the previous array element — a recurring defect (tickets
+      // WZ-DAACYS, and the 2026-06-25/26 diag entries). Insert the missing '},':
+      // if the previous array element separator comma is already present, splice
+      // the '}' in before it; otherwise add both.
+      if (stack.length && stack[stack.length - 1] === '}' && !afterColon) {
+        const trimmed = out.replace(/\s+$/, '');
+        out = trimmed.endsWith(',') ? trimmed.slice(0, -1) + '},' : trimmed + '},';
+        stack.pop(); // the unclosed object is now closed
+      }
+      out += c; stack.push('}'); afterColon = false; continue;
     }
+    if (c === '[') { out += c; stack.push(']'); afterColon = false; continue; }
+    if (c === '}' || c === ']') {
+      out += c; stack.pop(); afterColon = false;
+      if (stack.length === 0) break; // top-level value closed; ignore trailing junk
+      continue;
+    }
+    out += c;
+    afterColon = c === ':'; // next value may legitimately be a nested object
   }
   if (inStr) out += '"';            // close a truncated string
   while (stack.length) out += stack.pop(); // close truncated objects/arrays
