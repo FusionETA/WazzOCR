@@ -141,7 +141,7 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 /* ── Auth pages ──────────────────────────────────────────── */
 .auth-bg { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1.5rem;
   background:radial-gradient(1100px 560px at 50% -10%, rgba(255,107,53,.18), transparent), var(--grad); }
-.auth-card { background:#fff; border-radius:18px; padding:2.25rem; width:100%; max-width:392px; box-shadow:var(--shadow-lg); }
+.auth-card { background:#fff; border-radius:18px; padding:2.25rem; width:100%; max-width:460px; box-shadow:var(--shadow-lg); }
 .auth-card h1 { margin:.75rem 0 .25rem; font-size:1.45rem; text-align:center; }
 .auth-card .sub { margin:0 0 1.5rem; color:var(--muted); font-size:.9rem; text-align:center; }
 .google-btn { display:flex; align-items:center; justify-content:center; gap:.6rem; width:100%; padding:.72rem;
