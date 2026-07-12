@@ -231,6 +231,10 @@
               <button class="btn btn-ghost" type="button" onclick="refreshXeroCache(this)" title="Reload tax rates & accounts from Xero (after adding a new tax rate)">↻ Refresh tax rates</button>
             </div>
             <div class="msg" id="xeroCacheMsg"></div>
+            <div id="taxRatesList" style="display:none;margin-top:.75rem;">
+              <p class="muted" style="font-size:.8rem;margin-bottom:.4rem;">Tax rates fetched from Xero:</p>
+              <table style="width:100%;font-size:.8rem;border-collapse:collapse;" id="taxRatesTable"></table>
+            </div>
           </div>
         </div>
         <div class="col-right">
@@ -363,8 +367,33 @@
     window.refreshXeroCache = async (btn) => {
       const m=document.getElementById('xeroCacheMsg'); showM(m,'Refreshing…',true);
       if(btn) btn.disabled=true;
-      try { const r=await fetch('/api/me/xero/refresh-cache',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
-        showM(m,'Tax rates & accounts refreshed for '+d.refreshed+' org(s). Re-send the bill to apply.',true); }
+      try {
+        const r=await fetch('/api/me/xero/refresh-cache',{method:'POST'}); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Failed.');
+        showM(m,'Tax rates & accounts refreshed for '+d.refreshed+' org(s).',true);
+        // Fetch and display tax rates for each connected org
+        const ratesList = document.getElementById('taxRatesList');
+        const ratesTable = document.getElementById('taxRatesTable');
+        if(CONNECTIONS.length && ratesList && ratesTable) {
+          ratesList.style.display='block';
+          let rows = `<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:4px 6px;color:var(--muted);font-weight:500;">Name</th><th style="text-align:left;padding:4px 6px;color:var(--muted);font-weight:500;">Tax Type (ID)</th><th style="text-align:right;padding:4px 6px;color:var(--muted);font-weight:500;">Rate</th></tr>`;
+          for(const conn of CONNECTIONS) {
+            try {
+              const tr=await fetch('/api/xero/tax-rates?tenantId='+encodeURIComponent(conn.xero_tenant_id)); const td=await tr.json();
+              if(td.taxRates && td.taxRates.length) {
+                rows += `<tr><td colspan="3" style="padding:6px 6px 2px;font-weight:600;font-size:.75rem;color:var(--muted)">${esc(conn.tenant_name||conn.xero_tenant_id)}</td></tr>`;
+                for(const rate of td.taxRates) {
+                  rows += `<tr style="border-bottom:1px solid var(--border-light,#eee);">
+                    <td style="padding:4px 6px;">${esc(rate.name)}</td>
+                    <td style="padding:4px 6px;font-family:monospace;color:var(--muted)">${esc(rate.taxType)}</td>
+                    <td style="padding:4px 6px;text-align:right;">${rate.displayTaxRate != null ? rate.displayTaxRate+'%' : '—'}</td>
+                  </tr>`;
+                }
+              }
+            } catch(_){}
+          }
+          ratesTable.innerHTML = rows;
+        }
+      }
       catch(err){ showM(m,err.message,false); }
       finally { if(btn) btn.disabled=false; }
     };
