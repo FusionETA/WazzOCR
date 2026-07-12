@@ -181,7 +181,7 @@
       if (!CONNECTIONS.length) { alert('No Xero organisations connected. Connect Xero under Settings first.'); return; }
       const row = document.getElementById('row-'+id); if (!row) return;
       const items = CONNECTIONS.map(c=>({ value:c.xero_tenant_id||c.tenantId, label:c.tenant_name||c.tenantName||c.xero_tenant_id }));
-      row.innerHTML = `<td colspan="6"><div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+      row.innerHTML = `<td colspan="6" style="overflow:visible;white-space:normal;"><div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <span class="muted">Create draft in:</span>
         <div id="rdrop-${id}" style="min-width:260px;"></div>
         <button class="btn btn-primary btn-sm" id="rbtn-${id}" onclick="doResolve(${id})">Create draft</button>
