@@ -1541,7 +1541,8 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     currency: invoice.CurrencyCode || bill.currency || XERO_DEFAULT_CURRENCY,
     dueDate: invoice.DueDateString || normalizeDateString(bill.dueDate) || null,
     url: invoice.Url || `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${invoice.InvoiceID}`,
-    attachment
+    attachment,
+    xeroPayload: invoicePayload
   };
 }
 
@@ -3742,7 +3743,9 @@ app.post('/api/me/bills/:id/resolve', _xeroAuthMw.attachUser, _xeroAuthMw.requir
     await billsModel.markResolved(row.id, accountId, {
       xeroInvoiceId: result.invoiceId, xeroUrl: result.url, xeroConnectionId: conn.id, xeroTenantName: conn.tenant_name
     });
-    res.json({ ok: true, invoiceId: result.invoiceId, url: result.url });
+    // Include the xeroPayload in the response so the browser network tab shows
+    // the AccountCode, TaxType, and LineAmount values sent to Xero.
+    res.json({ ok: true, invoiceId: result.invoiceId, url: result.url, xeroPayload: result.xeroPayload || null });
   } catch (err) {
     console.error('[resolve] failed:', err.message);
     res.status(err.statusCode || 500).json({ error: err.message });
