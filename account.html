@@ -51,7 +51,6 @@
         <div class="panel active" id="panel-bills"><div class="card"><h2>Created bills <span class="title-count" id="count-bills"></span></h2>${filterBar('bills')}<div id="billsList">Loading…</div></div></div>
         <div class="panel" id="panel-unmatched"><div class="card"><h2>Unmatched / pending <span class="title-count" id="count-pending"></span></h2>${filterBar('pending')}<div id="pendingList">Loading…</div></div></div>
         <div class="panel" id="panel-settings">${settingsHtml(data)}</div>`;
-      fetch('/api/me/connections').then(r=>r.json()).then(d=>{ CONNECTIONS = d.connections||[]; }).catch(()=>{});
       wireFilters('bills'); wireFilters('pending');
       loadBills(); loadPending(); wireSettings();
       // restore the tab the user was on before a refresh
