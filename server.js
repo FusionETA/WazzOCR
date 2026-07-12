@@ -1880,25 +1880,42 @@ function repairJson(raw) {
   if (start < 0) throw new Error('No JSON object/array found.');
   s = s.slice(start);
 
-  let inStr = false, esc = false;
+  let inStr = false, esc = false, afterColon = false;
   const stack = [];
   let out = '';
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
-    out += c;
     if (inStr) {
+      out += c;
       if (esc) esc = false;
       else if (c === '\\') esc = true;
       else if (c === '"') inStr = false;
       continue;
     }
-    if (c === '"') inStr = true;
-    else if (c === '{') stack.push('}');
-    else if (c === '[') stack.push(']');
-    else if (c === '}' || c === ']') {
-      stack.pop();
-      if (stack.length === 0) break; // top-level value closed; ignore trailing junk
+    if (/\s/.test(c)) { out += c; continue; } // whitespace: keep, don't touch state
+    if (c === '"') { out += c; inStr = true; afterColon = false; continue; }
+    if (c === '{') {
+      // Inside an object, a '{' is only valid immediately after a ':' (a nested
+      // object value). Anywhere else it means Gemini dropped the '}' that should
+      // have closed the previous array element — a recurring defect (tickets
+      // WZ-DAACYS, and the 2026-06-25/26 diag entries). Insert the missing '},':
+      // if the previous array element separator comma is already present, splice
+      // the '}' in before it; otherwise add both.
+      if (stack.length && stack[stack.length - 1] === '}' && !afterColon) {
+        const trimmed = out.replace(/\s+$/, '');
+        out = trimmed.endsWith(',') ? trimmed.slice(0, -1) + '},' : trimmed + '},';
+        stack.pop(); // the unclosed object is now closed
+      }
+      out += c; stack.push('}'); afterColon = false; continue;
     }
+    if (c === '[') { out += c; stack.push(']'); afterColon = false; continue; }
+    if (c === '}' || c === ']') {
+      out += c; stack.pop(); afterColon = false;
+      if (stack.length === 0) break; // top-level value closed; ignore trailing junk
+      continue;
+    }
+    out += c;
+    afterColon = c === ':'; // next value may legitimately be a nested object
   }
   if (inStr) out += '"';            // close a truncated string
   while (stack.length) out += stack.pop(); // close truncated objects/arrays
@@ -2132,6 +2149,20 @@ async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
   return callGeminiJson([{ text: buildBillPrompt(ocrText, knownOrgs, prompts) }], model);
 }
 
+// Resolve the real file type from the leading magic bytes, falling back to the
+// declared mime. Senders (and Wazzup) routinely mislabel a screenshot as
+// application/pdf; trusting the declared mime then routes a PNG down the PDF
+// path and Gemini rejects it with "The document has no pages." (ticket WZ-4GFSFP).
+// The bytes never lie, so they win.
+function sniffMime(buffer, declaredMime) {
+  if (buffer && buffer.length >= 4) {
+    if (buffer.slice(0, 4).toString('latin1') === '%PDF') return 'application/pdf';
+    if (buffer.slice(0, 4).toString('latin1') === '\x89PNG') return 'image/png';
+    if (buffer.slice(0, 2).toString('latin1') === '\xFF\xD8') return 'image/jpeg';
+  }
+  return declaredMime || 'application/octet-stream';
+}
+
 // Vision path: send the raw image/PDF bytes straight to Gemini so it does the
 // reading + extraction in one shot — no Tesseract. Gemini sees the actual
 // layout (columns, table rows, wrapped cents, handwriting) that flattened OCR
@@ -2140,9 +2171,9 @@ async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = []) {
   if (!buffer || !buffer.length) {
     throw new Error('Empty file: nothing to analyze.');
   }
-  const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
-    || buffer.slice(0, 4).toString() === '%PDF';
-  const mimeType = isPdf ? 'application/pdf' : (mime || 'image/jpeg');
+  const sniffed = sniffMime(buffer, mime);
+  const isPdf = sniffed === 'application/pdf';
+  const mimeType = isPdf ? 'application/pdf' : (sniffed && sniffed.startsWith('image/') ? sniffed : 'image/jpeg');
   const prompts = await resolveAiPrompts();
   const parts = [
     { text: buildBillPrompt('', knownOrgs, { vision: true, ...prompts }) },
@@ -2397,8 +2428,9 @@ async function analyzeFileToBills({ buffer, mime, knownOrgs = [] }) {
   if (!buffer || !buffer.length) {
     throw new Error('Empty file: nothing to analyze.');
   }
-  const isPdf = String(mime || '').toLowerCase() === 'application/pdf'
-    || buffer.slice(0, 4).toString() === '%PDF';
+  // Trust the actual bytes over the declared mime (see sniffMime): a mislabeled
+  // image tagged application/pdf must not take the PDF-text branch.
+  const isPdf = sniffMime(buffer, mime) === 'application/pdf';
 
   if (isPdf) {
     const embedded = await extractPdfEmbeddedText(buffer);
