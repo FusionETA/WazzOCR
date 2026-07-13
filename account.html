@@ -226,7 +226,7 @@
             <div class="kv"><div class="k">Signed in as</div><div>${esc(data.user.name||data.user.email)}</div></div>
             <div class="kv"><div class="k">Xero organisations</div><div id="connList">…</div></div>
             <div style="margin-top:.9rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-              <a href="/api/me/xero/connect" style="display:inline-block;background:#13B5EA;border-radius:6px;padding:2px 6px;line-height:0;"><img src="/assets/connect-white.svg" alt="Connect to Xero" style="height:36px;display:block;"></a>
+              <a href="/api/me/xero/connect" style="display:inline-block;line-height:0;"><img src="/assets/connect-blue.svg" alt="Connect to Xero" style="height:32px;display:block;"></a>
               <button class="btn btn-ghost" type="button" onclick="refreshXeroCache(this)" title="Reload tax rates & accounts from Xero (after adding a new tax rate)">↻ Refresh tax rates</button>
             </div>
             <div class="msg" id="xeroCacheMsg"></div>
@@ -294,7 +294,7 @@
           cl.innerHTML = `<div class="msg err" style="margin-bottom:.6rem;">
             ⚠️ Your Xero connection has expired or been revoked. Please reconnect to continue creating bills automatically.
           </div>
-          <a href="/api/me/xero/connect" style="display:inline-block;background:#13B5EA;border-radius:6px;padding:2px 6px;line-height:0;"><img src="/assets/connect-white.svg" alt="Connect to Xero" style="height:36px;display:block;"></a>`;
+          <a href="/api/me/xero/connect" style="display:inline-block;line-height:0;"><img src="/assets/connect-blue.svg" alt="Connect to Xero" style="height:32px;display:block;"></a>`;
         } else {
           let html = `<div id="xeroDrop" style="max-width:340px;"></div>
             <div id="xeroDiscRow" style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.45rem;">
