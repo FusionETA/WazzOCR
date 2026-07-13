@@ -149,7 +149,7 @@ textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8
 .google-btn:hover { background:#F8FAFD; text-decoration:none; }
 .xero-btn { display:flex; align-items:center; justify-content:center; width:100%; padding:0;
   border:none; border-radius:var(--r-sm); background:transparent; cursor:pointer; margin-bottom:.6rem; overflow:hidden; }
-.xero-btn img { width:100%; height:auto; display:block; }
+.xero-btn img { height:44px; width:auto; display:block; }
 .xero-btn:hover { opacity:.9; text-decoration:none; }
 .divider { display:flex; align-items:center; gap:.7rem; margin:1.1rem 0 .25rem; color:var(--muted); font-size:.76rem; }
 .divider::before, .divider::after { content:''; flex:1; height:1px; background:var(--line); }
