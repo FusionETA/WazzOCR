@@ -3878,6 +3878,27 @@ app.get('/api/xero/callback', async (req, res) => {
   }
 });
 
+app.get('/api/xero/accounts', async (req, res) => {
+  try {
+    const tenantId = req.query.tenantId;
+    if (!tenantId) return res.status(400).json({ error: 'Missing tenantId.' });
+    const payload = await xeroApi('/Accounts', {}, tenantId);
+    const accounts = (payload.Accounts || [])
+      .filter((a) => a.Status !== 'ARCHIVED')
+      .map((a) => ({
+        accountID: a.AccountID,
+        code: a.Code,
+        name: a.Name,
+        type: a.Type,
+        taxType: a.TaxType,
+        description: a.Description || ''
+      }));
+    res.json({ accounts });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
 app.get('/api/xero/tax-rates', async (req, res) => {
   try {
     const tenantId = req.query.tenantId;
