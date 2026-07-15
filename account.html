@@ -412,8 +412,9 @@
             try {
               const ar=await fetch('/api/xero/accounts?tenantId='+encodeURIComponent(conn.xero_tenant_id)); const ad=await ar.json();
               if(ad.accounts && ad.accounts.length) {
-                aRows += `<tr><td colspan="4" style="padding:6px 6px 2px;font-weight:600;font-size:.75rem;color:var(--muted)">${esc(conn.tenant_name||conn.xero_tenant_id)}</td></tr>`;
-                for(const acc of ad.accounts) {
+                const total = ad.accounts.length;
+                aRows += `<tr><td colspan="4" style="padding:6px 6px 2px;font-weight:600;font-size:.75rem;color:var(--muted)">${esc(conn.tenant_name||conn.xero_tenant_id)} — ${total} accounts</td></tr>`;
+                for(const acc of ad.accounts.slice(0,5)) {
                   aRows += `<tr style="border-bottom:1px solid var(--border-light,#eee);">
                     <td style="padding:4px 6px;font-family:monospace;">${esc(acc.code||'—')}</td>
                     <td style="padding:4px 6px;">${esc(acc.name)}</td>
@@ -421,6 +422,7 @@
                     <td style="padding:4px 6px;color:var(--muted)">${esc(acc.taxType||'—')}</td>
                   </tr>`;
                 }
+                if(total > 5) aRows += `<tr><td colspan="4" style="padding:4px 6px;color:var(--muted);font-style:italic;font-size:.78rem;">… and ${total-5} more accounts available in Xero</td></tr>`;
               }
             } catch(_){}
           }
