@@ -3722,15 +3722,20 @@ app.get('/api/me/xero/connect', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth,
 app.post('/api/me/xero/sync-org-names', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth, async (req, res) => {
   try {
     const xc = require('./models/xeroConnections');
-    const { grants } = await loadXeroState(req.user.account_id);
+    const connections = await xc.listByAccount(req.user.account_id);
+    const seen = new Set();
     let updated = 0;
-    for (const grant of grants) {
+    for (const conn of connections) {
+      if (!conn.grant_id || seen.has(conn.grant_id)) continue;
+      seen.add(conn.grant_id);
       try {
-        const fresh = isTokenExpiringSoon(grant) ? await refreshTokens(grant) : grant;
-        const connections = await fetchConnections(fresh.accessToken);
-        for (const c of (connections || [])) {
+        const grant = await xc.getGrantForTenant(req.user.account_id, conn.xero_tenant_id);
+        if (!grant) continue;
+        const tokens = await refreshTokens({ id: grant.grantId, refreshToken: grant.refreshToken });
+        const liveConns = await fetchConnections(tokens.accessToken);
+        for (const c of (liveConns || [])) {
           if (!c.tenantId || !c.tenantName) continue;
-          await xc.upsertConnection(req.user.account_id, grant.id, c.tenantId, c.tenantName);
+          await xc.upsertConnection(req.user.account_id, grant.grantId, c.tenantId, c.tenantName);
           updated++;
         }
       } catch (e) { console.error('sync-org-names grant error:', e.message); }
