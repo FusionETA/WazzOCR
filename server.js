@@ -3718,6 +3718,28 @@ app.get('/api/me/xero/connect', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth,
   if (!req.user.account_id) return res.status(400).send('Your login has no account.');
   redirectToAccountXero(req, res, req.user.account_id, 'me');
 });
+
+app.post('/api/me/xero/sync-org-names', _xeroAuthMw.attachUser, _xeroAuthMw.requireAuth, async (req, res) => {
+  try {
+    const xc = require('./models/xeroConnections');
+    const { grants } = await loadXeroState(req.user.account_id);
+    let updated = 0;
+    for (const grant of grants) {
+      try {
+        const fresh = isTokenExpiringSoon(grant) ? await refreshTokens(grant) : grant;
+        const connections = await fetchConnections(fresh.accessToken);
+        for (const c of (connections || [])) {
+          if (!c.tenantId || !c.tenantName) continue;
+          await xc.upsertConnection(req.user.account_id, grant.id, c.tenantId, c.tenantName);
+          updated++;
+        }
+      } catch (e) { console.error('sync-org-names grant error:', e.message); }
+    }
+    res.json({ ok: true, updated });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // NOTE: the admin "/admin/accounts/:id/xero/connect" route is registered EARLIER
 // (just before the static-source blocker), because that blocker 404s any
 // unhandled /admin/* path. See the registration above app.use('/admin', ...).
