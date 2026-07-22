@@ -1191,15 +1191,52 @@ async function findDuplicateBill(invoiceNumber, tenantId) {
   return (payload.Invoices || []).find(isBlockingDuplicateBill) || null;
 }
 
+// Extensions Xero will accept on an attachment. Anything outside this list gets
+// rejected with "isn't a supported file type", so a filename must never be the
+// thing that decides the file type — see sanitizeAttachmentName below.
+const XERO_ATTACHMENT_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'webp', 'heic',
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt', 'rtf', 'zip'
+]);
+
+const MIME_TO_EXTENSION = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/bmp': 'bmp',
+  'image/tiff': 'tif',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'application/pdf': 'pdf'
+};
+
+function extensionForMime(mime) {
+  const key = String(mime || '').split(';')[0].trim().toLowerCase();
+  return MIME_TO_EXTENSION[key] || null;
+}
+
 // Build a Xero-safe attachment filename from a possibly messy original name
 // (spaces, parens, dots, very long). Keeps only URL-safe chars, collapses runs,
 // trims leading/trailing separators, caps length, and guarantees an extension —
 // so the attachment URL can never be rejected as "Invalid URL".
-function sanitizeAttachmentName(name) {
+//
+// Safety net for the file TYPE: we only trust an extension parsed off the name
+// if it's one Xero actually supports. Otherwise we take the extension from the
+// real MIME type. Without this, a name carrying a stray dot (a WhatsApp caption
+// ending "Acc.No :551285082855" produced ".No551") got uploaded as that bogus
+// type and Xero refused the file, silently leaving the bill with no image.
+function sanitizeAttachmentName(name, mime) {
   const raw = String(name || '').trim();
   const dot = raw.lastIndexOf('.');
   let base = dot > 0 ? raw.slice(0, dot) : raw;
-  let ext = (dot > 0 ? raw.slice(dot + 1) : '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 5);
+  let ext = (dot > 0 ? raw.slice(dot + 1) : '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase().slice(0, 5);
+  if (!XERO_ATTACHMENT_EXTENSIONS.has(ext)) {
+    // Not a real extension — it was just part of the name. Keep the whole thing
+    // as the base and let the actual file type supply the extension.
+    base = raw;
+    ext = extensionForMime(mime) || 'pdf';
+  }
   base = base
     .replace(/[^a-zA-Z0-9._-]/g, '-')
     .replace(/[-.]{2,}/g, '-')
@@ -1513,7 +1550,7 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
 
   let attachment = null;
   if (sourceFile?.buffer?.length) {
-    const safeName = sanitizeAttachmentName(sourceFile.originalname);
+    const safeName = sanitizeAttachmentName(sourceFile.originalname, sourceFile.mimetype);
     try {
       await xeroApi(`/Invoices/${encodeURIComponent(invoice.InvoiceID)}/Attachments/${encodeURIComponent(safeName)}?IncludeOnline=true`, {
         method: 'POST',

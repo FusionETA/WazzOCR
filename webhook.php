@@ -279,10 +279,41 @@ function forward_text_to_bridge(string $chatId, string $text): ?string
 
 // ─── FILE HANDLER (IMAGE / PDF) ───────────────────────────────────────────────
 
+// Work out the REAL filename of an inbound file.
+//
+// Wazzup does not send a fileName field on WhatsApp media — the only reliable
+// source is the ?filename= query param on contentUri. We must NEVER fall back
+// to $msg['text']: that is the WhatsApp *caption*. Using the caption as the
+// filename meant Xero read whatever followed the caption's last dot as the file
+// extension (a caption ending "Acc.No :551285082855" became ".No551"), and Xero
+// rejected the upload with "isn't a supported file type" — so the bill was
+// created but the image was silently never attached. 11 bills hit this.
+function inbound_file_name(array $msg, string $fileUrl, string $type): string
+{
+    $qPos = strpos($fileUrl, '?');
+    if ($qPos !== false) {
+        parse_str(substr($fileUrl, $qPos + 1), $params);
+        $fromUrl = trim((string) ($params['filename'] ?? ''));
+        if ($fromUrl !== '') {
+            return $fromUrl;
+        }
+    }
+
+    foreach ([$msg['fileName'] ?? '', $msg['media']['filename'] ?? ''] as $candidate) {
+        $candidate = trim((string) $candidate);
+        if ($candidate !== '') {
+            return $candidate;
+        }
+    }
+
+    // Nothing usable — generate a name rather than borrowing the caption.
+    return 'receipt-' . date('Ymd-His') . (($type === 'document') ? '.pdf' : '.jpg');
+}
+
 function handle_file(string $chatId, string $chatType, array $msg, string $type): void
 {
     $fileUrl  = $msg['contentUri'] ?? ($msg['media']['url'] ?? '') ?? '';
-    $filename = $msg['text'] ?? $msg['fileName'] ?? $msg['media']['filename'] ?? '';
+    $filename = inbound_file_name($msg, $fileUrl, $type);
     $channelId = $msg['channelId'] ?? '';
 
     wlog("WAZZOCR FILE: url=$fileUrl filename=$filename");
