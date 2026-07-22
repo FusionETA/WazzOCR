@@ -1852,13 +1852,6 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
 
   // 5. JSON output contract (kept in code — must stay in lockstep with the parser).
   const schemaBlock = '\n\n'
-    + 'DEDUPLICATION RULE — IMPORTANT:\n'
-    + 'If the document contains BOTH a Quotation/Quote AND an Invoice/Bill from the same supplier\n'
-    + 'to the same company with the same or similar total amount, extract ONLY the Invoice/Bill.\n'
-    + 'Ignore the Quotation/Quote entirely — do NOT include it as a separate entry in "bills".\n'
-    + 'A Quotation is identified by labels such as "QUOTATION", "QUOTE", "PROPOSAL", "Quotation No",\n'
-    + '"Quote No". An Invoice is identified by "INVOICE", "TAX INVOICE", "BILL", "Invoice No".\n'
-    + 'When both are present in the same PDF for the same transaction, always prefer the Invoice.\n\n'
     + (vision
         ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:'
         : 'Given the raw OCR text below, extract and return ONLY a valid JSON object:')
