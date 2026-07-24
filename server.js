@@ -1886,6 +1886,43 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
   return base + orgListBlock + addonBlock + coaBlock + schemaBlock + ocrBlock;
 }
 
+// Applies `fn` only to the stretches of a JSON-ish text that sit OUTSIDE string
+// literals. The comma/number repairs below are safe on structural text but not
+// on content: run over the whole blob they silently rewrite legitimate values,
+// e.g. a line item described as "Cable 1,234mm" loses its comma and parses
+// clean — a wrong bill is worse than a failed one.
+function outsideStrings(text, fn) {
+  const s = String(text || '');
+  let out = '', buf = '', inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      out += c;
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { out += fn(buf) + c; buf = ''; inStr = true; continue; }
+    buf += c;
+  }
+  return out + fn(buf);
+}
+
+// Numbers carrying more than one decimal point, e.g. "amount": 15.0.0 — Gemini
+// emits these occasionally (ticket WZ-YSWEN9) and JSON.parse stops dead at the
+// second '.'. If every group after the first dot is exactly 3 digits the dots
+// are European thousands separators (1.234.567 -> 1234567); otherwise the first
+// dot is the real decimal point and the rest is noise (15.0.0 -> 15.0).
+function repairNumberLiterals(chunk) {
+  return chunk.replace(/-?\d+(?:\.\d+){2,}/g, (num) => {
+    const [head, ...rest] = num.split('.');
+    return rest.every((group) => group.length === 3)
+      ? head + rest.join('')
+      : head + '.' + rest[0];
+  });
+}
+
 function extractJsonText(raw) {
   const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
   const objectStart = cleaned.indexOf('{');
@@ -1900,10 +1937,9 @@ function extractJsonText(raw) {
   //     rejects with "Expected ',' or '}' after property value". Strip a comma
   //     sitting between a digit and a 3-digit group (a thousands separator).
   //  2. A trailing comma before a closing } or ] (never valid JSON).
-  return cleaned
-    .slice(start, end + 1)
+  return outsideStrings(cleaned.slice(start, end + 1), (chunk) => chunk
     .replace(/(?<=\d),(?=\d{3}(?:\D|$))/g, '')
-    .replace(/,(\s*[}\]])/g, '$1');
+    .replace(/,(\s*[}\]])/g, '$1'));
 }
 
 // Best-effort recovery for almost-valid LLM JSON, used ONLY as a fallback when
@@ -1958,11 +1994,13 @@ function repairJson(raw) {
   if (inStr) out += '"';            // close a truncated string
   while (stack.length) out += stack.pop(); // close truncated objects/arrays
 
-  return out
+  // Structural-only repairs — never applied inside string literals, so a
+  // description keeps whatever punctuation the invoice actually printed.
+  return outsideStrings(out, (chunk) => repairNumberLiterals(chunk
     .replace(/(?<=\d),(?=\d{3}(?:\D|$))/g, '') // thousands separators in numbers
     .replace(/,\s*,/g, ',')                    // doubled commas
     .replace(/([{[])\s*,/g, '$1')              // comma right after { or [
-    .replace(/,(\s*[}\]])/g, '$1');            // trailing comma before } or ]
+    .replace(/,(\s*[}\]])/g, '$1')));          // trailing comma before } or ]
 }
 
 function normalizeBillPayload(bill) {
