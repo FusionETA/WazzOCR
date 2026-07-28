@@ -1830,6 +1830,12 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
       + '"SOLD TO", or similar top-of-document sections). Do NOT use company names, site\n'
       + 'names, or location references found inside line item descriptions (e.g. "SITE: XYZ"\n'
       + 'or "deliver to ABC" in a description column). The header field always wins.\n\n'
+      + 'IMPORTANT — Match ALL meaningful words: when matching the invoice Bill To name to\n'
+      + 'this list, every significant word must match — not just the first word or abbreviation.\n'
+      + 'Example: "EMJ RENOVATION SDN BHD" must match "EMJ Renovation Sdn Bhd", NOT\n'
+      + '"EM J Design & Build Sdn Bhd" — because "RENOVATION" vs "Design & Build" are\n'
+      + 'completely different words. Only pick an entry if the core business name words align.\n'
+      + 'If no entry is a confident full match, return null for billedTo.\n\n'
       + knownOrgs.map((name, i) => (i + 1) + '. ' + name).join('\n')
     : '';
 
