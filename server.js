@@ -1825,6 +1825,11 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
       + 'from this list (same spelling, spacing, capitalisation, punctuation, "Sdn Bhd",\n'
       + 'parentheses — everything). Do not paraphrase, do not strip "fka" suffixes, do\n'
       + 'not lowercase.\n\n'
+      + 'IMPORTANT — BILL TO header only: identify billedTo ONLY from the dedicated header\n'
+      + 'field on the invoice (labelled "BILL TO", "BILL ON", "BILLED TO", "INVOICE TO",\n'
+      + '"SOLD TO", or similar top-of-document sections). Do NOT use company names, site\n'
+      + 'names, or location references found inside line item descriptions (e.g. "SITE: XYZ"\n'
+      + 'or "deliver to ABC" in a description column). The header field always wins.\n\n'
       + knownOrgs.map((name, i) => (i + 1) + '. ' + name).join('\n')
     : '';
 
