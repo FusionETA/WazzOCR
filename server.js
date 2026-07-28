@@ -2699,6 +2699,28 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       console.log(`[match] fuzzy fallback hit → ${matchedTenant.tenantName}`);
     }
   }
+  // Cross-check: the AI picks from the org list by name recognition, but may
+  // confuse orgs sharing a prefix (e.g. "EM J Design & Build" vs "EMJ Renovation").
+  // The verbatim invoice text is more reliable — re-score both candidates
+  // against it and override if verbatim clearly points elsewhere.
+  if (bill.billedToVerbatim && connections.length) {
+    const verbatimMatch = matchTenantByName(bill.billedToVerbatim, connections);
+    if (verbatimMatch) {
+      if (!matchedTenant) {
+        matchedTenant = verbatimMatch;
+        bill.billedTo = verbatimMatch.tenantName;
+        console.log(`[match] verbatim-only hit → ${verbatimMatch.tenantName}`);
+      } else if (verbatimMatch.tenantId !== matchedTenant.tenantId) {
+        const aiScore = scoreMatch(bill.billedToVerbatim, matchedTenant.tenantName).score;
+        const verbScore = scoreMatch(bill.billedToVerbatim, verbatimMatch.tenantName).score;
+        if (verbScore > aiScore + 10) {
+          console.log(`[match] verbatim override: ${matchedTenant.tenantName} (${aiScore}) → ${verbatimMatch.tenantName} (${verbScore})`);
+          matchedTenant = verbatimMatch;
+          bill.billedTo = verbatimMatch.tenantName;
+        }
+      }
+    }
+  }
   const candidatesList = connections.map((c) => ({
     tenantId: c.tenantId,
     tenantName: c.tenantName
@@ -3081,6 +3103,22 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
     }
     if (!matchedTenant) {
       matchedTenant = matchTenantByName(bill.billedTo, connections);
+    }
+    if (bill.billedToVerbatim && connections.length) {
+      const verbatimMatch = matchTenantByName(bill.billedToVerbatim, connections);
+      if (verbatimMatch) {
+        if (!matchedTenant) {
+          matchedTenant = verbatimMatch;
+          bill.billedTo = verbatimMatch.tenantName;
+        } else if (verbatimMatch.tenantId !== matchedTenant.tenantId) {
+          const aiScore = scoreMatch(bill.billedToVerbatim, matchedTenant.tenantName).score;
+          const verbScore = scoreMatch(bill.billedToVerbatim, verbatimMatch.tenantName).score;
+          if (verbScore > aiScore + 10) {
+            matchedTenant = verbatimMatch;
+            bill.billedTo = verbatimMatch.tenantName;
+          }
+        }
+      }
     }
     const candidatesList = connections.map((c) => ({
       tenantId: c.tenantId,
