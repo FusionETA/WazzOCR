@@ -1962,6 +1962,10 @@ function repairJson(raw) {
   let inStr = false, esc = false, afterColon = false;
   const stack = [];
   let out = '';
+  // Last point the document was structurally complete (right after a `}`, `]`
+  // or `,`), plus the bracket stack as it stood there — the rewind target if
+  // the text turns out to be truncated. See the `closed` check after the walk.
+  let safeLen = 0, safeStack = [], closed = false;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (inStr) {
@@ -1990,13 +1994,26 @@ function repairJson(raw) {
     if (c === '[') { out += c; stack.push(']'); afterColon = false; continue; }
     if (c === '}' || c === ']') {
       out += c; stack.pop(); afterColon = false;
-      if (stack.length === 0) break; // top-level value closed; ignore trailing junk
+      if (stack.length === 0) { closed = true; break; } // top-level value closed; ignore trailing junk
+      safeLen = out.length; safeStack = stack.slice();
       continue;
     }
+    if (c === ',') { out += c; safeLen = out.length; safeStack = stack.slice(); afterColon = false; continue; }
     out += c;
     afterColon = c === ':'; // next value may legitimately be a nested object
   }
-  if (inStr) out += '"';            // close a truncated string
+  // Never reached a top-level close, so the text is truncated (MAX_TOKENS, a
+  // dropped connection) and ends mid-token: a half-written key, a bare
+  // `"qty":` with no value, or `12.` with no digits after it. Appending
+  // closers there just yields `"qty":}` and the parse fails all the same
+  // (ticket WZ-7GN7NQ), or invents an empty {} line item out of a stray `{`.
+  // Rewind to the last complete point and close from there — dropping the
+  // partial trailing element rather than inventing a malformed one.
+  if (!closed) {
+    out = out.slice(0, safeLen);
+    stack.length = 0;
+    stack.push(...safeStack);
+  }
   while (stack.length) out += stack.pop(); // close truncated objects/arrays
 
   // Structural-only repairs — never applied inside string literals, so a
@@ -2146,6 +2163,27 @@ async function callGroqBill(ocrText, model, knownOrgs = []) {
   return callGroqBills(ocrText, model, knownOrgs).then((bills) => bills[0] || normalizeBillPayload({}));
 }
 
+// Per-model output ceilings — generateContent rejects a maxOutputTokens above
+// the model's own limit, so this can't be one flat number. The 2.5 series
+// allows 65536; 2.0-flash still stops at 8192. Unknown/future models fall back
+// to the conservative 8192 that every Gemini model accepts.
+const GEMINI_OUTPUT_LIMITS = {
+  'gemini-2.5-flash': 65536,
+  'gemini-2.5-flash-lite': 65536,
+  'gemini-2.5-pro': 65536,
+  'gemini-2.0-flash': 8192
+};
+function geminiOutputLimit(model) {
+  return GEMINI_OUTPUT_LIMITS[model] || 8192;
+}
+
+// Diagnostics for malformed/truncated model output, kept on disk so a ticket
+// code quoted over WhatsApp can be traced back to the bytes that broke it.
+function logGeminiDiag(diag) {
+  console.error(diag);
+  try { require('fs').appendFileSync(__dirname + '/gemini-diag.log', new Date().toISOString() + ' ' + diag + '\n'); } catch {}
+}
+
 // Shared Gemini generateContent call → parsed JSON. `parts` is the array of
 // content parts: text and/or inlineData (base64 image/PDF) for the vision path.
 async function callGeminiJson(parts, model, purpose = 'extraction') {
@@ -2164,9 +2202,13 @@ async function callGeminiJson(parts, model, purpose = 'extraction') {
       contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0.1,
-        // 8192 leaves headroom for big bills; thinking is disabled below so
-        // this budget is for actual output only.
-        maxOutputTokens: 8192,
+        // Ask for the model's full ceiling rather than a flat 8192: a 700-line
+        // invoice ran past that old cap and came back truncated mid-array, and
+        // a truncated bill can't be repaired back into a correct one (ticket
+        // WZ-7GN7NQ). Billing is per token actually generated, so a high
+        // ceiling costs nothing on the short bills that are the norm. Thinking
+        // is disabled below, so the whole budget goes to the answer.
+        maxOutputTokens: geminiOutputLimit(useModel),
         responseMimeType: 'application/json',
         // 2.5-series models spend "thinking" tokens that count against
         // maxOutputTokens. For deterministic JSON extraction we don't need
@@ -2200,6 +2242,21 @@ async function callGeminiJson(parts, model, purpose = 'extraction') {
     const safety = candidate?.safetyRatings ? ` safetyRatings=${JSON.stringify(candidate.safetyRatings)}` : '';
     throw new Error(`Gemini returned empty response (finishReason=${reason}).${safety}`);
   }
+  // MAX_TOKENS means the answer stops mid-value: the line items after the cut
+  // simply aren't there. Salvaging that yields a bill whose items and total
+  // silently disagree with the paper — worse, for bookkeeping, than no bill at
+  // all. Refuse it and name the remedy instead of parsing a stump (WZ-7GN7NQ).
+  if (candidate?.finishReason === 'MAX_TOKENS') {
+    const cap = geminiOutputLimit(useModel);
+    logGeminiDiag(`[gemini-diag] TRUNCATED finishReason=MAX_TOKENS model=${useModel} cap=${cap} purpose=${purpose} rawLen=${text.length}`);
+    throw new Error(
+      `This document is too long for ${useModel} — the extraction was cut off at its ${cap}-token output limit, `
+      + `so some line items are missing. `
+      + (cap < 65536
+        ? `Switch this account's AI model to gemini-2.5-flash (8x the output budget) in Settings, or send the invoice in smaller parts.`
+        : `Please send the invoice in smaller parts.`)
+    );
+  }
   try {
     return JSON.parse(extractJsonText(text));
   } catch (err) {
@@ -2211,8 +2268,7 @@ async function callGeminiJson(parts, model, purpose = 'extraction') {
         ? `[gemini-diag] window@${pos}: ${JSON.stringify(extracted.slice(Math.max(0, pos - 50), pos + 20))}`
         : `[gemini-diag] tail: ${JSON.stringify(extracted.slice(-80))}`
     ].join('\n');
-    console.error(diag);
-    try { require('fs').appendFileSync(__dirname + '/gemini-diag.log', new Date().toISOString() + ' ' + diag + '\n'); } catch {}
+    logGeminiDiag(diag);
     // Fallback: aggressively repair (truncation, double/trailing commas, etc.)
     // and retry once. Only reached when the strict parse already failed, so this
     // can only recover bills that would otherwise be lost — never breaks a good one.
