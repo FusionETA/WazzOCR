@@ -2999,6 +2999,34 @@ app.use('/auth', require('./auth/router'));
   app.get('/admin/accounts/:id/xero/connect', mw.attachUser, mw.requireAuth, mw.requireSuperAdmin, (req, res) => {
     redirectToAccountXero(req, res, Number(req.params.id), 'admin');
   });
+
+  app.post('/admin/accounts/:id/xero/sync-org-names', mw.attachUser, mw.requireAuth, mw.requireSuperAdmin, async (req, res) => {
+    try {
+      const accountId = Number(req.params.id);
+      const xc = require('./models/xeroConnections');
+      const connections = await xc.listByAccount(accountId);
+      const seen = new Set();
+      let updated = 0;
+      for (const conn of connections) {
+        if (!conn.grant_id || seen.has(conn.grant_id)) continue;
+        seen.add(conn.grant_id);
+        try {
+          const grant = await xc.getGrantForTenant(accountId, conn.xero_tenant_id);
+          if (!grant) continue;
+          const tokens = await refreshTokens({ id: grant.grantId, refreshToken: grant.refreshToken });
+          const liveConns = await fetchConnections(tokens.accessToken);
+          for (const c of (liveConns || [])) {
+            if (!c.tenantId || !c.tenantName) continue;
+            await xc.upsertConnection(accountId, grant.grantId, c.tenantId, c.tenantName);
+            updated++;
+          }
+        } catch (e) { console.error('admin sync-org-names grant error:', e.message); }
+      }
+      res.json({ ok: true, updated });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 }
 
 app.use('/admin', require('./admin/router'));
