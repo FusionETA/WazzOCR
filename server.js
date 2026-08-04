@@ -1886,7 +1886,9 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
     + '}\n'
     + 'Return ONLY valid JSON. All amounts as numbers. null for missing strings, 0 for missing numbers.';
 
-  const ocrBlock = vision ? '' : ('\n\nOCR Text:\n' + ocrText);
+  const ocrBlock = vision
+    ? (ocrText ? '\n\nThe embedded text from the PDF is provided below as a reference for accurate numbers and names. Use the visual (image/PDF) to identify supplier logos and any details not captured in the text.\n\nEmbedded PDF Text:\n' + ocrText : '')
+    : ('\n\nOCR Text:\n' + ocrText);
 
   return base + orgListBlock + addonBlock + coaBlock + schemaBlock + ocrBlock;
 }
@@ -2304,7 +2306,7 @@ function sniffMime(buffer, declaredMime) {
 // reading + extraction in one shot — no Tesseract. Gemini sees the actual
 // layout (columns, table rows, wrapped cents, handwriting) that flattened OCR
 // text throws away.
-async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = []) {
+async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = [], extractedText = '') {
   if (!buffer || !buffer.length) {
     throw new Error('Empty file: nothing to analyze.');
   }
@@ -2313,7 +2315,7 @@ async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = []) {
   const mimeType = isPdf ? 'application/pdf' : (sniffed && sniffed.startsWith('image/') ? sniffed : 'image/jpeg');
   const prompts = await resolveAiPrompts();
   const parts = [
-    { text: buildBillPrompt('', knownOrgs, { vision: true, ...prompts }) },
+    { text: buildBillPrompt(extractedText, knownOrgs, { vision: true, ...prompts }) },
     { inlineData: { mimeType, data: buffer.toString('base64') } }
   ];
   return normalizeBillPayloads(await callGeminiJson(parts, model));
@@ -2571,15 +2573,18 @@ async function analyzeFileToBills({ buffer, mime, knownOrgs = [] }) {
 
   if (isPdf) {
     const embedded = await extractPdfEmbeddedText(buffer);
-    // Threshold: >~50 useful chars means a digital PDF — use its embedded text.
-    // Scanned PDFs yield 0 or a few stray glyphs, well below this, and fall
-    // through to Gemini vision.
-    if (embedded && embedded.replace(/\s+/g, ' ').length >= 50) {
-      console.log(`[extract] PDF embedded text used (${embedded.length} chars) — text→AI path.`);
-      const bills = await analyzeBillsText({ text: embedded, knownOrgs });
-      return { bills, method: 'pdf-text', ocrText: embedded };
+    // Always use Gemini vision for PDFs so supplier logos and other image-only
+    // content are visible. When the PDF has embedded text, pass it alongside
+    // the PDF bytes so Gemini can use it as an accurate reference for numbers
+    // while reading logos/images visually.
+    const hasText = embedded && embedded.replace(/\s+/g, ' ').length >= 50;
+    if (hasText) {
+      console.log(`[extract] PDF has embedded text (${embedded.length} chars) — sending to Gemini vision with text hint for logo detection.`);
+    } else {
+      console.log('[extract] PDF has no usable embedded text — sending PDF to Gemini vision.');
     }
-    console.log('[extract] PDF has no usable embedded text — sending PDF to Gemini vision.');
+    const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs, hasText ? embedded : '');
+    return { bills, method: hasText ? 'pdf-vision-hybrid' : 'gemini-vision', ocrText: embedded || '' };
   } else {
     console.log('[extract] image upload — sending to Gemini vision.');
   }
