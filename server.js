@@ -116,6 +116,35 @@ async function ensureUploadDir() {
   await fsp.mkdir(UPLOAD_DIR, { recursive: true });
 }
 
+// ── JSON file store: atomic writes + per-file serialisation ────────────────
+// The JSON stores under data/ are read-modify-written by concurrent requests
+// (a WhatsApp batch drops a dozen SOAs at once, each its own /process-file)
+// and by the in-process bill-status cron. Doing that with a plain
+// readFile/writeFile pair produced two distinct bugs:
+//
+//  1. Torn reads (ticket WZ-H2YP2Y). fsp.writeFile truncates the file to zero
+//     and streams the new bytes back in chunks. A read that lands mid-write
+//     gets a prefix, and JSON.parse dies with "Unterminated string in JSON at
+//     position N" — N being however far the writer had got. On a 592 KB
+//     pending-bills.json that surfaced to the customer as a support ticket.
+//  2. Lost updates. read → mutate → write spans awaits, so two concurrent
+//     appends both start from the same list and the second write silently
+//     discards the first one's record.
+//
+// Fixed here by writing to a temp file and rename()ing it over the target —
+// rename is atomic, so a reader always sees a whole file, old or new — and by
+// giving callers withJsonLock() to serialise a whole read-modify-write cycle.
+// Every mutation of a shared store below runs inside that lock.
+const jsonFileLocks = new Map();
+function withJsonLock(filePath, fn) {
+  const prev = jsonFileLocks.get(filePath) || Promise.resolve();
+  // The queue is chained on a swallowed copy so one failed mutation can't
+  // reject every operation waiting behind it.
+  const next = prev.then(fn, fn);
+  jsonFileLocks.set(filePath, next.then(() => {}, () => {}));
+  return next;
+}
+
 async function readJson(filePath, fallback = null) {
   try {
     const raw = await fsp.readFile(filePath, 'utf8');
@@ -128,7 +157,14 @@ async function readJson(filePath, fallback = null) {
 
 async function writeJson(filePath, data) {
   await ensureDataDir();
-  await fsp.writeFile(filePath, JSON.stringify(data, null, 2));
+  const tmpPath = `${filePath}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  try {
+    await fsp.writeFile(tmpPath, JSON.stringify(data, null, 2));
+    await fsp.rename(tmpPath, filePath);
+  } catch (error) {
+    await fsp.unlink(tmpPath).catch(() => {});
+    throw error;
+  }
 }
 
 function basicAuthHeader(clientId, clientSecret) {
@@ -451,14 +487,19 @@ async function loadBills() {
 }
 
 async function saveBillRecord(record) {
-  const list = await loadBills();
-  list.unshift(record);
-  await writeJson(BILLS_FILE, list);
-  return record;
+  return withJsonLock(BILLS_FILE, async () => {
+    const list = await loadBills();
+    list.unshift(record);
+    await writeJson(BILLS_FILE, list);
+    return record;
+  });
 }
 
+// Blind whole-list overwrite. Safe only when the caller read the list moments
+// ago; anything that holds a list across slow work (Xero round-trips) must
+// merge inside withJsonLock instead — see refreshStoredBillStatuses.
 async function saveBills(list) {
-  await writeJson(BILLS_FILE, list);
+  return withJsonLock(BILLS_FILE, () => writeJson(BILLS_FILE, list));
 }
 
 async function logBillStatusCron(entry) {
@@ -476,19 +517,23 @@ async function getPendingBill(id) {
 }
 
 async function appendPendingBill(record) {
-  const list = await loadPendingBills();
-  list.unshift(record);
-  await writeJson(PENDING_FILE, list);
-  return record;
+  return withJsonLock(PENDING_FILE, async () => {
+    const list = await loadPendingBills();
+    list.unshift(record);
+    await writeJson(PENDING_FILE, list);
+    return record;
+  });
 }
 
 async function removePendingBill(id) {
-  const list = await loadPendingBills();
-  const idx = list.findIndex((item) => item.id === id);
-  if (idx === -1) return null;
-  const [removed] = list.splice(idx, 1);
-  await writeJson(PENDING_FILE, list);
-  return removed;
+  return withJsonLock(PENDING_FILE, async () => {
+    const list = await loadPendingBills();
+    const idx = list.findIndex((item) => item.id === id);
+    if (idx === -1) return null;
+    const [removed] = list.splice(idx, 1);
+    await writeJson(PENDING_FILE, list);
+    return removed;
+  });
 }
 
 async function loadAiSettings() {
@@ -1755,7 +1800,15 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
   }
 
   if (updated || errors.length) {
-    await saveBills(nextBills);
+    // This scan takes minutes (one Xero round-trip per bill), and WhatsApp
+    // keeps creating bills throughout. Writing `nextBills` wholesale would
+    // erase every record added since loadBills() above. Re-read under the lock
+    // and patch only the records this pass actually touched.
+    await withJsonLock(BILLS_FILE, async () => {
+      const current = await loadBills();
+      const patched = new Map(nextBills.map((bill) => [bill.id, bill]));
+      await writeJson(BILLS_FILE, current.map((bill) => patched.get(bill.id) || bill));
+    });
   }
 
   return {
@@ -2609,23 +2662,27 @@ async function getChatState(chatId) {
 }
 
 async function setChatState(chatId, patch) {
-  const all = await loadWhatsappState();
-  const current = all[chatId] || {};
-  all[chatId] = { ...current, ...patch, updatedAt: isoNow() };
-  await saveWhatsappState(all);
-  return all[chatId];
+  return withJsonLock(WHATSAPP_STATE_FILE, async () => {
+    const all = await loadWhatsappState();
+    const current = all[chatId] || {};
+    all[chatId] = { ...current, ...patch, updatedAt: isoNow() };
+    await saveWhatsappState(all);
+    return all[chatId];
+  });
 }
 
 async function clearChatState(chatId, key = null) {
-  const all = await loadWhatsappState();
-  if (!all[chatId]) return;
-  if (key) {
-    delete all[chatId][key];
-    all[chatId].updatedAt = isoNow();
-  } else {
-    delete all[chatId];
-  }
-  await saveWhatsappState(all);
+  return withJsonLock(WHATSAPP_STATE_FILE, async () => {
+    const all = await loadWhatsappState();
+    if (!all[chatId]) return;
+    if (key) {
+      delete all[chatId][key];
+      all[chatId].updatedAt = isoNow();
+    } else {
+      delete all[chatId];
+    }
+    await saveWhatsappState(all);
+  });
 }
 
 // ── General chat for non-bill WhatsApp messages ────────────────────────────
@@ -4238,8 +4295,11 @@ app.delete('/api/bills/:id', async (req, res) => {
       return res.status(409).json({ error: 'Only voided or archived bill history records can be removed.' });
     }
 
-    const [removed] = bills.splice(idx, 1);
-    await saveBills(bills);
+    const removed = record;
+    await withJsonLock(BILLS_FILE, async () => {
+      const current = await loadBills();
+      await writeJson(BILLS_FILE, current.filter((bill) => bill.id !== removed.id));
+    });
     res.json({ ok: true, removed: { id: removed.id, invoiceNumber: removed.invoiceNumber || removed.invoiceNo || null } });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });
@@ -4365,10 +4425,17 @@ app.post('/api/bills/:id/reassign', async (req, res) => {
       replacedBy: { id: newRecord.id, tenantId: targetTenant.tenantId, tenantName: targetTenant.tenantName, invoiceId: newRecord.invoiceId }
     };
 
-    const nextBills = bills.slice();
-    nextBills[idx] = archivedOld;
-    nextBills.push(newRecord);
-    await saveBills(nextBills);
+    // `bills` was read before the Xero create/delete round-trips above, so it
+    // is stale by now — re-read and splice, rather than overwriting the file
+    // with a list that predates anything WhatsApp added meanwhile.
+    await withJsonLock(BILLS_FILE, async () => {
+      const current = await loadBills();
+      const at = current.findIndex((bill) => bill.id === record.id);
+      if (at === -1) current.push(archivedOld);
+      else current[at] = archivedOld;
+      current.push(newRecord);
+      await writeJson(BILLS_FILE, current);
+    });
 
     res.json({
       ok: true,
