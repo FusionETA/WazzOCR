@@ -3463,12 +3463,126 @@ async function ticketReply({ stage, error, logCtx = null, channelId = null, chat
   return { ticketCode: code, message: clientMessage };
 }
 
+// ── Late delivery, for when webhook.php has stopped listening ───────────────
+//
+// webhook.php waits a fixed number of seconds for /process-file (CURLOPT_TIMEOUT)
+// and then gives up. Giving up kills the socket but NOT this request — extraction
+// keeps running and can still create the bill in Xero. Ticket WZ-BGWYAW was
+// exactly that: PHP bailed at 180s, we finished 32s later and created the bill
+// (INV2026080428083793, MYR 263.95), and the customer was told it had failed —
+// which invites a resend and a duplicate bill.
+//
+// So when the socket is gone we deliver the outcome over WhatsApp ourselves.
+// This is deliberately NOT solved with a timeout on the Gemini calls: the run
+// that produced WZ-BGWYAW *succeeded*, and any cap tight enough to fit inside
+// PHP's wait would have turned a correct bill into a failed one.
+
+// The channel's own (decrypted) Wazzup key, falling back to the env key.
+async function resolveChannelApiKey(channelId) {
+  try {
+    const ch = await require('./models/wazzupChannels').getByChannelId(channelId);
+    if (ch && ch.api_key) return ch.api_key;
+  } catch (err) { console.error('[wa-send] channel lookup failed:', err.message); }
+  return process.env.WAZZUP_API_KEY || '';
+}
+
+async function sendChatText({ channelId, chatId, text, chatType = 'whatsapp' }) {
+  if (!channelId || !chatId || !text) return false;
+  const apiKey = await resolveChannelApiKey(channelId);
+  return require('./lib/wazzup').sendMessage({ channelId, apiKey, chatId, text, chatType });
+}
+
+// Mirrors format_money_value() in webhook.php: 1234.5 → "1,234.50".
+function formatMoney(value) {
+  const n = Number(value) || 0;
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Compact equivalent of format_bridge_outcome() in webhook.php. Only used on the
+// late path, so it opens by explaining why this arrives after the "taking longer
+// than usual" notice rather than repeating the full analysis block.
+function formatLateOutcome(payload, typeLabel = 'file') {
+  const bill = payload.bill || {};
+  const xero = payload.xero || null;
+  const matched = payload.matchedTenant || null;
+  // Lead icon tracks the outcome — a ✅ above a "Xero rejected this bill" block
+  // reads as success at a glance, which is the same mistake WZ-BGWYAW made.
+  const good = payload.status === 'created' || payload.duplicate;
+  const lines = [`${good ? '✅' : '📄'} *Finished reading your ${typeLabel}* (it took longer than usual)`, ''];
+
+  lines.push(`Supplier: ${bill.supplier || 'Unknown'}`);
+  lines.push(`Invoice No: ${bill.invoiceNo || '-'}`);
+  lines.push(`Currency: ${bill.currency || 'MYR'}`);
+  lines.push(`*Total: ${formatMoney(bill.total)}*`);
+
+  if (payload.status === 'created' && xero && xero.invoiceId) {
+    lines.push('', '✅ *Xero draft bill created*');
+    lines.push(`Organisation: ${xero.tenantName || (matched && matched.tenantName) || 'Xero'}`);
+    lines.push(`Invoice: ${xero.invoiceNumber || xero.invoiceId}`);
+    lines.push(`Status: ${xero.status || 'DRAFT'}`);
+    lines.push(`View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${xero.invoiceId}`);
+    lines.push('', '_No need to send this one again._');
+  } else if (payload.duplicate) {
+    lines.push('', '⚠️ *Already exists in Xero*');
+    lines.push(`${bill.invoiceNo || 'This invoice'} is already in Xero — no action needed.`);
+  } else if (payload.status === 'pending' && payload.pending) {
+    lines.push('', '⚠️ *Action needed: pick the organisation*');
+    lines.push(payload.pending.reason || 'Could not match this bill to any connected Xero organisation.');
+  } else if (payload.status === 'xero-error') {
+    lines.push('', '❌ *Xero rejected this bill*');
+    lines.push(`Matched org: ${(matched && matched.tenantName) || 'the matched organisation'}`);
+    if (payload.xeroError) lines.push(`Reason: ${payload.xeroError}`);
+    lines.push('', '_The bill is in *Pending* — fix it from the dashboard._');
+  } else if (payload.status === 'no-xero') {
+    lines.push('', '⚠️ Xero is not connected yet. Open the dashboard to connect.');
+  } else if (payload.status === 'empty') {
+    return `📄 I couldn't find any text in this ${typeLabel}.`;
+  }
+
+  return lines.join('\n');
+}
+
+// Mirrors send_org_picker() in webhook.php. The picker state already lives in the
+// bridge, so a picker sent from here resolves through the normal reply path.
+function formatOrgPicker(candidates, billedTo = '') {
+  const lines = ['👉 *Which Xero organisation should this go to?*'];
+  if (billedTo) lines.push(`Bill says: _${billedTo}_`);
+  lines.push('');
+  candidates.forEach((c, i) => lines.push(`${i + 1}. ${c.tenantName || '(unnamed)'}`));
+  lines.push('', '_Reply with the number (e.g. *1*), or type *cancel* to skip._');
+  return lines.join('\n');
+}
+
 app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) => {
+  // webhook.php stopped waiting — see "Late delivery" above. Anything we would
+  // have written to the socket goes to WhatsApp instead. Declared out here so the
+  // outer catch can reach it too.
+  let clientGone = false;
+  res.on('close', () => { if (!res.writableEnded) clientGone = true; });
+  const startedAt = Date.now();
+
   try {
     const body = req.body || {};
     const chatId = (body.chatId || '').toString().trim();
     const channelId = (body.channelId || '').toString().trim();
     const fileName = body.fileName || body.filename || (req.file?.originalname) || '';
+    const rawMime = body.mime || body.imageMime || req.file?.mimetype || '';
+    const typeLabel = (/pdf/i.test(rawMime) || /\.pdf$/i.test(fileName)) ? 'PDF' : 'image';
+
+    // Answers the caller, or the chat directly if the caller has gone. Returns
+    // nothing useful — callers should `return respond(...)` and stop.
+    const respond = async (payload, lateText) => {
+      if (!clientGone) return res.json(payload);
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      console.error(`[late] process-file finished after ${secs}s but webhook.php had gone; delivering to chat ${chatId} over WhatsApp.`);
+      const ok = await sendChatText({ channelId, chatId, text: lateText || formatLateOutcome(payload, typeLabel) });
+      // Logged because a false here is the one way the customer still ends up
+      // never hearing the outcome — the exact failure this path exists to prevent.
+      console.error(`[late] delivered=${ok} status=${(payload && payload.status) || 'error'} chat=${chatId}`);
+      if (payload && payload.status === 'pending' && Array.isArray(payload.candidates) && payload.candidates.length) {
+        await sendChatText({ channelId, chatId, text: formatOrgPicker(payload.candidates, (payload.bill || {}).billedTo || '') });
+      }
+    };
 
     // Multi-tenant (best-effort, non-breaking): if this Wazzup channel is
     // registered to an account in the DB, we'll log bill outcomes against it.
@@ -3532,20 +3646,26 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
     try {
       // Run extraction inside the account's context so resolveAiPrompts() can
       // pick up this account's AI prompt add-on (and the general base prompt).
+      const extractFrom = Date.now();
       const out = await runWithCtx(() => analyzeFileToBills({ buffer, mime, knownOrgs }));
       bills = out.bills;
       ocrText = out.ocrText;
       extractionMethod = out.method;
+      // Timed because a slow extraction is what makes webhook.php give up
+      // (WZ-BGWYAW). Keep this — it is the only place the split between
+      // extraction and Xero posting is visible after the fact.
+      console.error(`[timing] extraction ${Math.round((Date.now() - extractFrom) / 1000)}s via ${extractionMethod} — ${typeLabel} ${fileName || '(unnamed)'}, ${bills ? bills.length : 0} bill(s)`);
     } catch (analysisErr) {
       console.error('File analysis failed:', analysisErr.message);
       await deleteUploadedFile(filename);
       const t = await ticketReply({ stage: 'extraction', error: analysisErr, logCtx, chatId, fileName, mime, ocrText });
+      if (clientGone) return respond(null, t.message);
       return res.status(200).json({ error: t.message, ticketCode: t.ticketCode });
     }
 
     if (!bills || !bills.length) {
       await deleteUploadedFile(filename);
-      return res.json({ ok: true, status: 'empty', ocrText, extractionMethod });
+      return respond({ ok: true, status: 'empty', ocrText, extractionMethod });
     }
 
     const outcomes = [];
@@ -3587,8 +3707,10 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       catch (err) { console.error('[bills] logging failed:', err.message); }
     }
 
+    console.error(`[timing] process-file total ${Math.round((Date.now() - startedAt) / 1000)}s — ${typeLabel} ${fileName || '(unnamed)'}, ${outcomes.length} outcome(s)`);
+
     const primary = outcomes[0] || { status: 'empty', bill: bills[0] || normalizeBillPayload({}) };
-    res.json({
+    return respond({
       ok: true,
       ocrText,
       extractionMethod,
@@ -3599,18 +3721,26 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
     });
   } catch (error) {
     const b = req.body || {};
+    const lateChatId = (b.chatId || '').toString().trim();
+    const lateChannelId = (b.channelId || '').toString().trim();
     const needsReconnect = Boolean(error.statusCode === 401 || String(error.message || '').toLowerCase().includes('reconnect xero'));
     // Reconnect is an actionable business state (the account owner reconnects Xero),
     // not a bug — keep its specific message, no ticket.
     if (needsReconnect) {
+      if (clientGone) return void sendChatText({ channelId: lateChannelId, chatId: lateChatId, text: error.message });
       return res.status(error.statusCode || 500).json({ error: error.message, needsReconnect: true });
     }
     const t = await ticketReply({
       stage: 'process-file', error,
-      channelId: (b.channelId || '').toString().trim(),
-      chatId: (b.chatId || '').toString().trim(),
+      channelId: lateChannelId,
+      chatId: lateChatId,
       fileName: b.fileName || b.filename || ''
     });
+    if (clientGone) {
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      console.error(`[late] process-file failed after ${secs}s with webhook.php already gone; delivering ticket ${t.ticketCode} to chat ${lateChatId}.`);
+      return void sendChatText({ channelId: lateChannelId, chatId: lateChatId, text: t.message });
+    }
     res.status(200).json({ error: t.message, ticketCode: t.ticketCode });
   }
 });
@@ -3802,12 +3932,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
   if (!channelId || !chatId || !text) {
     return res.status(400).json({ error: 'channelId, chatId and text are required.' });
   }
-  let apiKey = null;
-  try {
-    const ch = await require('./models/wazzupChannels').getByChannelId(channelId);
-    if (ch && ch.api_key) apiKey = ch.api_key; // channel's own (decrypted) key
-  } catch (err) { console.error('[wa-send] channel lookup failed:', err.message); }
-  if (!apiKey) apiKey = process.env.WAZZUP_API_KEY || '';
+  const apiKey = await resolveChannelApiKey(channelId);
   const ok = await require('./lib/wazzup').sendMessage({ channelId, apiKey, chatId, text, chatType });
   if (!ok) return res.status(502).json({ error: 'Wazzup send failed.' });
   res.json({ ok: true });

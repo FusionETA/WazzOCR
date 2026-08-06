@@ -1,5 +1,6 @@
 env.js
 .env
+.env.*
 data/
 node_modules/
 webhook.log

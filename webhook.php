@@ -359,6 +359,25 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
         return;
     }
 
+    if (!empty($result['timedOut'])) {
+        // We stopped waiting; the bridge did not stop working. It keeps going and
+        // will send the real outcome to this chat itself once it finishes (the
+        // "Late delivery" path in server.js), so promise that follow-up and do NOT
+        // invite a resend — a resend is what turns one slow bill into two (or into
+        // a confusing "already exists"). Ticket is still minted so the slow run
+        // gets investigated even when it ends up succeeding.
+        $t = mint_ticket('bridge-timeout',
+            "Bridge did not answer within 300s while reading $typeLabel (still running server-side; "
+            . "it will deliver the outcome to the chat directly): " . (string)$result['error'],
+            $chatId, $channelId);
+        $ref = $t['code'] ? "\n\nYour reference: *{$t['code']}*" : '';
+        wazzup_send($chatId, $chatType,
+            "⏳ This {$typeLabel} is taking longer than usual to read.\n\n" .
+            "I'm still working on it and will send you the result here as soon as it's done — " .
+            "please don't send it again in the meantime, so you don't end up with a duplicate bill." . $ref);
+        return;
+    }
+
     if (!empty($result['error'])) {
         // server.js already minted a ticket → its `error` is a friendly, client-safe
         // message (with the code). Send it verbatim. If somehow no ticketCode came
@@ -419,7 +438,9 @@ function is_authorized(string $channelId, string $chatId): bool
 // If the bridge can't be reached (e.g. it's the thing that's down), fall back to a
 // code-less generic message so the customer still gets a friendly reply — never a
 // raw error.
-function client_error_message(string $stage, string $rawError, string $chatId, string $channelId): string
+// Returns ['code' => ?string, 'message' => string]. The code is null when the
+// bridge couldn't be reached to mint one.
+function mint_ticket(string $stage, string $rawError, string $chatId, string $channelId): array
 {
     $payload = ['stage' => $stage, 'error' => $rawError, 'chatId' => $chatId, 'channelId' => $channelId];
     $ch = curl_init(XERO_BRIDGE_BASE . '/api/whatsapp/ticket');
@@ -437,12 +458,18 @@ function client_error_message(string $stage, string $rawError, string $chatId, s
     if ($httpCode >= 200 && $httpCode < 300) {
         $data = json_decode((string)$response, true);
         if (is_array($data) && !empty($data['clientMessage'])) {
-            return $data['clientMessage'];
+            return ['code' => $data['ticketCode'] ?? null, 'message' => $data['clientMessage']];
         }
     }
     wlog("WAZZOCR TICKET MINT FAILED: stage=$stage http=$httpCode");
-    return "⚠️ Sorry — something went wrong while processing your message. " .
-           "Please try again shortly, or contact us if it keeps happening.";
+    return ['code' => null, 'message' =>
+        "⚠️ Sorry — something went wrong while processing your message. " .
+        "Please try again shortly, or contact us if it keeps happening."];
+}
+
+function client_error_message(string $stage, string $rawError, string $chatId, string $channelId): string
+{
+    return mint_ticket($stage, $rawError, $chatId, $channelId)['message'];
 }
 
 // POSTs the binary file to server.js as JSON (base64) along with chatId,
@@ -463,15 +490,32 @@ function process_file_via_bridge(string $chatId, array $file, string $filename =
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
         CURLOPT_POSTFIELDS     => json_encode($payload),
-        CURLOPT_TIMEOUT        => 180, // vision/multi-page PDFs can be slow
+        // Vision + multi-page PDFs are slow: the run behind WZ-BGWYAW took 212s
+        // and succeeded. 180s cut it off mid-flight, so this is 300s.
+        //
+        // The bridge's total runtime is NOT capped, so no value here is provably
+        // enough — and giving up does NOT stop the bridge, which keeps working and
+        // can still post the bill to Xero. That case is handled on the bridge side:
+        // it watches for this socket closing and delivers the outcome over WhatsApp
+        // itself (see "Late delivery" in server.js). This timeout only decides how
+        // long we hold the connection before handing over to that path.
+        CURLOPT_TIMEOUT        => 300,
     ]);
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curlErr  = curl_error($ch);
+    $curlNo   = curl_errno($ch);
     curl_close($ch);
 
     if ($curlErr) {
-        wlog("WAZZOCR BRIDGE PROCESS CURL ERROR: $curlErr");
+        wlog("WAZZOCR BRIDGE PROCESS CURL ERROR ($curlNo): $curlErr");
+        // A read timeout is NOT the bridge being down — the request was accepted
+        // and is probably still running. Report it as its own case so the client
+        // isn't told to retry (which duplicates work) and so the ticket doesn't
+        // send whoever reads it hunting for a dead server.
+        if ($curlNo === CURLE_OPERATION_TIMEOUTED) {
+            return ['timedOut' => true, 'error' => $curlErr];
+        }
         return null;
     }
     if ($httpCode < 200 || $httpCode >= 300) {
