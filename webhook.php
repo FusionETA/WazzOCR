@@ -959,11 +959,17 @@ function normalize_download_url(string $url): string
 {
     $url = trim($url);
 
-    // Wazzup sometimes sends contentUri filename query values with raw spaces.
+    // Wazzup sometimes sends contentUri filename query values with raw spaces
+    // and non-ASCII filenames (e.g. "AYU账单 2026.08.05 .pdf" — ticket WZ-RKGREH).
     // Curl rejects those before it can make the request, so encode only unsafe
     // URL characters while leaving existing reserved characters and % escapes.
+    //
+    // The safe set MUST be spelled out in ASCII: `\w` under the /u modifier also
+    // turns on PCRE_UCP, so it matches CJK/Cyrillic/accented letters too. Those
+    // then passed through unencoded and curl put raw UTF-8 bytes in the request
+    // line, which the Wazzup CDN answers with a bare HTTP 400 on every retry.
     return preg_replace_callback(
-        '/[^\w\-\.~:\/?#\[\]@!$&\'()*+,;=%]/u',
+        '/[^A-Za-z0-9_\-\.~:\/?#\[\]@!$&\'()*+,;=%]/u',
         fn(array $match): string => rawurlencode($match[0]),
         $url
     ) ?? $url;
