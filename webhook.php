@@ -558,7 +558,11 @@ function format_bridge_outcome(array $result): string
                 $lines[] = "View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=" . $xero['invoiceId'];
             } elseif (!empty($outcome['duplicate'])) {
                 $invoiceNo = $bill['invoiceNo'] ?? 'this invoice';
-                $lines[] = "⚠️ Already exists in Xero (" . $invoiceNo . ") — no action needed.";
+                if (!empty($outcome['duplicateDetail']['voided'])) {
+                    $lines[] = "❌ Invoice number " . $invoiceNo . " was voided in Xero and cannot be reused.";
+                } else {
+                    $lines[] = "⚠️ Already exists in Xero (" . $invoiceNo . ") — no action needed.";
+                }
             } elseif ($status === 'pending' && is_array($pending)) {
                 $lines[] = "⚠️ Pending: " . ($pending['reason'] ?? 'Organisation assignment needed.');
             } elseif ($status === 'xero-error') {
@@ -633,8 +637,18 @@ function format_bridge_outcome(array $result): string
     } elseif (!empty($result['duplicate'])) {
         $invoiceNo = $bill['invoiceNo'] ?? 'This invoice';
         $lines[] = "";
-        $lines[] = "⚠️ *Already exists in Xero*";
-        $lines[] = $invoiceNo . " is already in Xero — no action needed.";
+        if (!empty($result['duplicateDetail']['voided'])) {
+            // Xero keeps a voided invoice's number reserved forever, so this is
+            // not a harmless "already there" — nothing was created and the user
+            // has to renumber the bill or restore the voided one.
+            $lines[] = "❌ *Invoice number was voided in Xero*";
+            $lines[] = $invoiceNo . " belongs to a voided bill, so Xero will not let it be reused.";
+            $lines[] = "";
+            $lines[] = "_Send this bill again with a new invoice number, or restore the voided one in Xero._";
+        } else {
+            $lines[] = "⚠️ *Already exists in Xero*";
+            $lines[] = $invoiceNo . " is already in Xero — no action needed.";
+        }
     } elseif ($status === 'pending' && is_array($pending)) {
         $lines[] = "";
         $lines[] = "⚠️ *Action needed: pick the organisation*";

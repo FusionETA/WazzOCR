@@ -380,13 +380,22 @@ function getFirstItem(payload, key) {
   return Array.isArray(list) && list.length ? list[0] : null;
 }
 
-const NON_BLOCKING_BILL_STATUSES = new Set(['DELETED', 'VOIDED']);
+// Only DELETED frees the invoice number for reuse. VOIDED keeps it reserved
+// forever, and a POST /Invoices carrying that number gets matched to the voided
+// invoice and rejected with "Invoice not of valid status for modification" —
+// so VOIDED has to block the create just like an active bill does. (Archiving
+// still treats both as gone, hence the separate set below.)
+const NON_BLOCKING_BILL_STATUSES = new Set(['DELETED']);
 const ARCHIVED_BILL_STATUSES = new Set(['DELETED', 'VOIDED', 'MISSING', 'NOT_FOUND']);
 
 function isBlockingDuplicateBill(invoice) {
   if (!invoice?.InvoiceID) return false;
   const status = String(invoice.Status || '').toUpperCase();
   return !NON_BLOCKING_BILL_STATUSES.has(status);
+}
+
+function isVoidedBillStatus(status) {
+  return String(status || '').toUpperCase() === 'VOIDED';
 }
 
 function isArchivedBillStatus(status) {
@@ -1229,8 +1238,7 @@ async function findDuplicateBill(invoiceNumber, tenantId) {
   const where = buildWhereClause([
     'Type=="ACCPAY"',
     `InvoiceNumber=="${escapeXeroString(invoiceNumber)}"`,
-    'Status!="DELETED"',
-    'Status!="VOIDED"'
+    'Status!="DELETED"'
   ]);
   const payload = await xeroApi(`/Invoices?where=${encodeURIComponent(where)}`, {}, tenantId);
   return (payload.Invoices || []).find(isBlockingDuplicateBill) || null;
@@ -1476,10 +1484,14 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
   const contact = await findOrCreateContact(bill, tenantId);
   const duplicate = await findDuplicateBill(bill.invoiceNo, tenantId);
   if (duplicate?.InvoiceID) {
-    const error = new Error(`An active bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
+    const voided = isVoidedBillStatus(duplicate.Status);
+    const error = new Error(voided
+      ? `Invoice number "${bill.invoiceNo}" belongs to a voided bill in Xero and cannot be reused.`
+      : `An active bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
     error.statusCode = 409;
     error.payload = {
       duplicate: true,
+      voided,
       invoiceId: duplicate.InvoiceID,
       invoiceNumber: duplicate.InvoiceNumber,
       status: duplicate.Status,
@@ -3507,7 +3519,10 @@ function formatLateOutcome(payload, typeLabel = 'file') {
   const matched = payload.matchedTenant || null;
   // Lead icon tracks the outcome — a ✅ above a "Xero rejected this bill" block
   // reads as success at a glance, which is the same mistake WZ-BGWYAW made.
-  const good = payload.status === 'created' || payload.duplicate;
+  // A voided-number collision is a duplicate but NOT a success — nothing landed
+  // in Xero and the user has to act, so it must not lead with ✅.
+  const voidedDuplicate = Boolean(payload.duplicate && payload.duplicateDetail?.voided);
+  const good = payload.status === 'created' || (payload.duplicate && !voidedDuplicate);
   const lines = [`${good ? '✅' : '📄'} *Finished reading your ${typeLabel}* (it took longer than usual)`, ''];
 
   lines.push(`Supplier: ${bill.supplier || 'Unknown'}`);
@@ -3522,6 +3537,10 @@ function formatLateOutcome(payload, typeLabel = 'file') {
     lines.push(`Status: ${xero.status || 'DRAFT'}`);
     lines.push(`View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${xero.invoiceId}`);
     lines.push('', '_No need to send this one again._');
+  } else if (voidedDuplicate) {
+    lines.push('', '❌ *Invoice number was voided in Xero*');
+    lines.push(`${bill.invoiceNo || 'This invoice'} belongs to a voided bill, so Xero will not let it be reused.`);
+    lines.push('', '_Send this bill again with a new invoice number, or restore the voided one in Xero._');
   } else if (payload.duplicate) {
     lines.push('', '⚠️ *Already exists in Xero*');
     lines.push(`${bill.invoiceNo || 'This invoice'} is already in Xero — no action needed.`);
