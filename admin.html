@@ -265,12 +265,6 @@
             <div class="field"><label>AI model</label><div id="setModelDrop"></div></div>
           </div>
           <p class="muted" style="margin:.2rem 0 .8rem;">Trial accounts share the default trial channel and are routed by sender phone — add their numbers under <strong>Connections → Allowed phone numbers</strong>.</p>
-          <div class="field" style="margin:.6rem 0;">
-            <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
-              <input type="checkbox" id="enableItemCode" ${d.account.enable_item_code ? 'checked' : ''}>
-              Enable item code matching — AI will assign Xero item codes to line items
-            </label>
-          </div>
           <button class="btn btn-primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
 
         <div class="card">
@@ -335,6 +329,15 @@
                 <button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button>
                 <a class="btn btn-ghost" href="/admin/accounts/${id}/coa.csv">⬇ Download CSV (template + current)</a>
               </div><div class="msg" id="coaMsg"></div></div>
+
+            <div class="card"><h2>Item code matching</h2>
+              <p class="muted">When enabled, a second AI pass matches each line item to a Xero item code from this org's Items list.</p>
+              <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;margin:.4rem 0 .8rem;">
+                <input type="checkbox" id="enableItemCode" ${d.account.enable_item_code ? 'checked' : ''}>
+                Enable item code matching
+              </label>
+              <button class="btn btn-primary" onclick="saveItemCode(${id})">Save</button>
+              <div class="msg" id="itemCodeMsg"></div></div>
           </div>
         </div>
       </div>`;
@@ -480,6 +483,8 @@
   window.delChannel = async (id,cid) => { try { await api('DELETE','/admin/accounts/'+id+'/channels/'+cid); openAccount(id); } catch(e){ alert(e.message); } };
   window.refreshXeroCache = async (id,btn) => { const m=document.getElementById('xeroCacheMsg'); m.className='msg'; m.style.display='block'; m.textContent='Refreshing…'; if(btn) btn.disabled=true;
     try { const d=await api('POST','/admin/accounts/'+id+'/xero/refresh-cache'); m.className='msg ok'; m.textContent='Tax rates & accounts refreshed for '+d.refreshed+' org(s). Re-send the bill to apply.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
+  window.saveItemCode = async (id) => { const m=document.getElementById('itemCodeMsg'); m.className='msg'; m.style.display='block'; m.textContent='Saving…';
+    try { await api('PUT','/admin/accounts/'+id, { enableItemCode: document.getElementById('enableItemCode').checked }); m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.syncOrgNames = async (id,btn) => { const m=document.getElementById('xeroCacheMsg'); m.className='msg'; m.style.display='block'; m.textContent='Syncing org names…'; if(btn) btn.disabled=true;
     try { const d=await api('POST','/admin/accounts/'+id+'/xero/sync-org-names'); m.className='msg ok'; m.textContent='Org names updated: '+d.updated+' change(s).'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
   window.registerWebhook = async (id,cid) => { const m=document.getElementById('regMsg'); m.className='msg'; m.style.display='block'; m.textContent='Registering…';
