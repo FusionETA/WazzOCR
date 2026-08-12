@@ -1079,7 +1079,7 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
 // Per-tenant caches for tax rates + expense accounts. These live in a shared
 // module so the dashboards' "Refresh" action can clear them when a tax rate /
 // account is added in Xero (otherwise they'd persist for the whole process).
-const { taxRateCache: _taxRateCache, expenseAccountsCache: _expenseAccountsCache, currencyCache: _currencyCache } = require('./lib/xeroCaches');
+const { taxRateCache: _taxRateCache, expenseAccountsCache: _expenseAccountsCache, currencyCache: _currencyCache, itemsCache: _itemsCache } = require('./lib/xeroCaches');
 
 async function getTenantTaxRates(tenantId) {
   if (_taxRateCache.has(tenantId)) return _taxRateCache.get(tenantId);
@@ -1119,6 +1119,27 @@ async function getTenantExpenseAccounts(tenantId) {
     return accounts;
   } catch (err) {
     console.error(`[coa] could not fetch accounts for tenant ${tenantId}:`, err.message);
+    return [];
+  }
+}
+
+// Fetch purchasable items from this tenant's Xero Items list.
+// Returns [{ code, name, description }].
+async function getTenantItems(tenantId) {
+  if (_itemsCache.has(tenantId)) return _itemsCache.get(tenantId);
+  try {
+    const payload = await xeroApi('/Items?where=IsPurchased%3D%3Dtrue', {}, tenantId);
+    const items = (payload.Items || [])
+      .filter((i) => i.Code)
+      .map((i) => ({
+        code: String(i.Code).trim(),
+        name: String(i.Name || '').trim(),
+        description: String(i.PurchaseDetails?.Description || i.Description || '').trim()
+      }));
+    _itemsCache.set(tenantId, items);
+    return items;
+  } catch (err) {
+    console.error(`[items] could not fetch items for tenant ${tenantId}:`, err.message);
     return [];
   }
 }
@@ -1368,6 +1389,7 @@ function deriveLineItems(bill, defaults) {
     };
     if (resolvedAccount) lineItem.AccountCode = resolvedAccount;
     if (resolvedTax) lineItem.TaxType = resolvedTax;
+    if (item.itemCode) lineItem.ItemCode = item.itemCode;
     // Intentionally NOT sending LineAmount — let Xero compute it from
     // Quantity × UnitAmount. Sending it ourselves only creates a way to
     // disagree with Xero's own computation (and there's no upside).
@@ -1476,7 +1498,7 @@ async function ensureCurrency(requestedCode, tenantId) {
   }
 }
 
-async function createDraftBill({ bill, sourceFile, tenantId }) {
+async function createDraftBill({ bill, sourceFile, tenantId, accountId = null }) {
   if (!tenantId) {
     throw new Error('tenantId is required.');
   }
@@ -1526,6 +1548,18 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
     await resolveLineAccountCodes(bill, tenantId);
   } catch (err) {
     console.error('[coa] account-code resolution failed (continuing):', err.message);
+  }
+
+  // Assign Xero item codes if the account has enable_item_code turned on.
+  if (accountId) {
+    try {
+      const acct = await require('./models/accounts').getById(accountId);
+      if (acct && acct.enable_item_code) {
+        await resolveLineItemCodes(bill, tenantId);
+      }
+    } catch (err) {
+      console.error('[items] item-code resolution failed (continuing):', err.message);
+    }
   }
 
   const billForLines = await resolveBillTaxTypes(bill, tenantId, resolvedTaxType);
@@ -1877,9 +1911,10 @@ async function resolveAiPrompts() {
 //   3. the per-account add-on rules (DB → accounts.ai_prompt_addon),
 //   4. the dynamic master chart of accounts,
 //   5. the JSON output schema (kept in code — the parser depends on its shape).
-function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPrompt = '', accountAddon = '' } = {}) {
+function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPrompt = '', accountAddon = '', xeroItems = [] } = {}) {
   const hasOrgList = Array.isArray(knownOrgs) && knownOrgs.length > 0;
   const hasCoa = Array.isArray(MASTER_EXPENSE_ACCOUNTS) && MASTER_EXPENSE_ACCOUNTS.length > 0;
+  const hasItems = Array.isArray(xeroItems) && xeroItems.length > 0;
 
   // 1. Base instructions — DB value wins; fall back to the shipped default so
   //    extraction never runs prompt-less if the DB hasn't been seeded.
@@ -1922,7 +1957,16 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
       + MASTER_EXPENSE_ACCOUNTS.map((a) => a.code + '  ' + a.name).join('\n')
     : '';
 
-  // 5. JSON output contract (kept in code — must stay in lockstep with the parser).
+  // 5. Xero Items list (optional — only when enable_item_code is on for the account).
+  const itemsBlock = hasItems
+    ? '\n\n─── XERO ITEMS (Item Codes) ───\n'
+      + 'For each line item, set "itemCode" to the code of the best-matching Xero item\n'
+      + 'below, based on what the line item is for. Copy the code VERBATIM.\n'
+      + 'If no item is a sensible match, set "itemCode" to null — do not force a poor match.\n\n'
+      + xeroItems.map((i) => `${i.code}  ${i.name}${i.description ? ' — ' + i.description : ''}`).join('\n')
+    : '';
+
+  // 6. JSON output contract (kept in code — must stay in lockstep with the parser).
   const schemaBlock = '\n\n'
     + (vision
         ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:'
@@ -1939,7 +1983,7 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
     + '      "date": "Date string or null",\n'
     + '      "dueDate": "Due date string or null",\n'
     + '      "currency": "MYR/USD/SGD etc, default MYR",\n'
-    + '      "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00, "accountCode": ' + (hasCoa ? '"best-matching expense/cost account code from the list, or null"' : 'null') + ', "taxCode": "SV-8/SST-8/etc or null", "taxRate": 0.00, "taxAmount": 0.00 }],\n'
+    + '      "lineItems": [{ "description": "string", "qty": 1, "unitPrice": 0.00, "amount": 0.00, "accountCode": ' + (hasCoa ? '"best-matching expense/cost account code from the list, or null"' : 'null') + ', ' + (hasItems ? '"itemCode": "best-matching item code from the XERO ITEMS list, or null", ' : '') + '"taxCode": "SV-8/SST-8/etc or null", "taxRate": 0.00, "taxAmount": 0.00 }],\n'
     + '      "subtotal": 0.00,\n'
     + '      "tax": 0.00,\n'
     + '      "taxRate": 0.00,\n'
@@ -1957,7 +2001,7 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
     ? (ocrText ? '\n\nThe embedded text from the PDF is provided below as a reference for accurate numbers and names. Use the visual (image/PDF) to identify supplier logos and any details not captured in the text.\n\nEmbedded PDF Text:\n' + ocrText : '')
     : ('\n\nOCR Text:\n' + ocrText);
 
-  return base + orgListBlock + addonBlock + coaBlock + schemaBlock + ocrBlock;
+  return base + orgListBlock + addonBlock + coaBlock + itemsBlock + schemaBlock + ocrBlock;
 }
 
 // Applies `fn` only to the stretches of a JSON-ish text that sit OUTSIDE string
@@ -2110,6 +2154,7 @@ function normalizeBillPayload(bill) {
         // against the actual Xero chart.
         const rawAccount = String(firstPresent(item.accountCode, item.AccountCode, item.account) || '').trim();
         const accountCode = MASTER_EXPENSE_CODES.has(rawAccount) ? rawAccount : null;
+        const itemCode = String(firstPresent(item.itemCode, item.ItemCode) || '').trim() || null;
         return {
           ...item,
           description: firstPresent(item.description, item.Description, item.name) || '',
@@ -2117,6 +2162,7 @@ function normalizeBillPayload(bill) {
           unitPrice,
           amount,
           accountCode,
+          itemCode,
           taxCode: firstPresent(item.taxCode, item.TaxCode, item.taxLabel) || null,
           taxType: firstPresent(item.taxType, item.TaxType) || null,
           taxRate: normalizeNumber(taxRateRaw, 0),
@@ -2420,6 +2466,56 @@ Return ONLY valid JSON: { "assignments": [ { "index": <number>, "accountCode": "
   } catch (err) {
     console.error('[coa] second-pass account match failed:', err.message);
     return {};
+  }
+}
+
+// Second-pass item code matcher. Given line item descriptions and the tenant's
+// Xero Items list, ask Gemini to assign the best item code per line (or null).
+async function callGeminiAssignItems(lines, items, model) {
+  if (!GEMINI_API_KEY || !lines.length || !items.length) return {};
+  const itemList = items.map((i) => `${i.code}  ${i.name}${i.description ? ' — ' + i.description : ''}`).join('\n');
+  const lineList = lines.map((l) => `${l.index}: ${l.description}`).join('\n');
+  const prompt = `You are matching bill line items to Xero item codes.
+For each line item below, choose the SINGLE best-matching item from the ITEMS list.
+Only use codes from the ITEMS list. If no item is a sensible match, use null — do not force a poor match.
+
+ITEMS:
+${itemList}
+
+LINE ITEMS (index: description):
+${lineList}
+
+Return ONLY valid JSON: { "assignments": [ { "index": <number>, "itemCode": "<code from list or null>" } ] }`;
+  try {
+    const parsed = await callGeminiJson([{ text: prompt }], model, 'items');
+    const map = {};
+    const valid = new Set(items.map((i) => i.code));
+    for (const a of (parsed?.assignments || [])) {
+      const code = String(a?.itemCode || '').trim();
+      if (Number.isInteger(a?.index) && valid.has(code)) map[a.index] = code;
+    }
+    return map;
+  } catch (err) {
+    console.error('[items] second-pass item match failed:', err.message);
+    return {};
+  }
+}
+
+// Resolve item codes for all line items against the tenant's Xero Items list.
+// Only runs when enable_item_code is on for this account. Mutates bill.lineItems.
+async function resolveLineItemCodes(bill, tenantId) {
+  const items = Array.isArray(bill?.lineItems) ? bill.lineItems : [];
+  if (!items.length || !tenantId) return;
+  const tenantItems = await getTenantItems(tenantId);
+  if (!tenantItems.length) return;
+  const lines = items
+    .map((item, index) => ({ index, description: String(item.description || '').trim() }))
+    .filter((l) => l.description);
+  if (!lines.length) return;
+  const assignments = await callGeminiAssignItems(lines, tenantItems);
+  for (const [idx, code] of Object.entries(assignments)) {
+    const i = Number(idx);
+    if (items[i]) items[i].itemCode = code;
   }
 }
 
@@ -2875,7 +2971,8 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       const result = await createDraftBill({
         bill,
         sourceFile,
-        tenantId: matchedTenant.tenantId
+        tenantId: matchedTenant.tenantId,
+        accountId: xeroAccountCtx.getStore()?.accountId || null
       });
       await saveBillRecord(buildBillRecord({
         bill,
@@ -3025,7 +3122,8 @@ async function resolvePickerForChat(chatId, choice) {
     result = await createDraftBill({
       bill: pending.bill,
       sourceFile,
-      tenantId
+      tenantId,
+      accountId: xeroAccountCtx.getStore()?.accountId || null
     });
   } catch (xeroErr) {
     // Common case: Xero validation error (e.g. line totals don't match).
@@ -3305,7 +3403,8 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
         const result = await createDraftBill({
           bill,
           sourceFile,
-          tenantId: matchedTenant.tenantId
+          tenantId: matchedTenant.tenantId,
+          accountId: xeroAccountCtx.getStore()?.accountId || null
         });
         xero = {
           ...result,

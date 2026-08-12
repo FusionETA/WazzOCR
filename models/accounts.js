@@ -27,14 +27,15 @@ async function update(id, fields = {}) {
     aiProvider: 'ai_provider',
     aiModel: 'ai_model',
     aiPromptAddon: 'ai_prompt_addon',
-    autoCreateBills: 'auto_create_bills'
+    autoCreateBills: 'auto_create_bills',
+    enableItemCode: 'enable_item_code'
   };
   const sets = [];
   const params = [];
   for (const [key, col] of Object.entries(allowed)) {
     if (key in fields) {
       sets.push(`${col} = ?`);
-      if (key === 'autoCreateBills' || key === 'setupComplete') params.push(fields[key] ? 1 : 0);
+      if (key === 'autoCreateBills' || key === 'setupComplete' || key === 'enableItemCode') params.push(fields[key] ? 1 : 0);
       else if (key === 'plan') params.push(fields[key] === 'paid' ? 'paid' : 'trial');
       else params.push(fields[key]);
     }

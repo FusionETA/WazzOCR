@@ -265,6 +265,12 @@
             <div class="field"><label>AI model</label><div id="setModelDrop"></div></div>
           </div>
           <p class="muted" style="margin:.2rem 0 .8rem;">Trial accounts share the default trial channel and are routed by sender phone — add their numbers under <strong>Connections → Allowed phone numbers</strong>.</p>
+          <div class="field" style="margin:.6rem 0;">
+            <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+              <input type="checkbox" id="enableItemCode" ${d.account.enable_item_code ? 'checked' : ''}>
+              Enable item code matching — AI will assign Xero item codes to line items
+            </label>
+          </div>
           <button class="btn btn-primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
 
         <div class="card">
@@ -444,7 +450,7 @@
     show();
   }
   window.saveSettings = async (id) => { const m=document.getElementById('setMsg');
-    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatusDrop').value(), plan:document.getElementById('setPlanDrop').value(), aiModel:document.getElementById('setModelDrop').value() });
+    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatusDrop').value(), plan:document.getElementById('setPlanDrop').value(), aiModel:document.getElementById('setModelDrop').value(), enableItemCode:document.getElementById('enableItemCode').checked });
       m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   // Per-channel phone restriction toggle + allowed-phone management.
   window.toggleChannelRestrict = async (id,cid,cur) => {
