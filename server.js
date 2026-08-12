@@ -1485,19 +1485,28 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
   const duplicate = await findDuplicateBill(bill.invoiceNo, tenantId);
   if (duplicate?.InvoiceID) {
     const voided = isVoidedBillStatus(duplicate.Status);
-    const error = new Error(voided
-      ? `Invoice number "${bill.invoiceNo}" belongs to a voided bill in Xero and cannot be reused.`
-      : `An active bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
-    error.statusCode = 409;
-    error.payload = {
-      duplicate: true,
-      voided,
-      invoiceId: duplicate.InvoiceID,
-      invoiceNumber: duplicate.InvoiceNumber,
-      status: duplicate.Status,
-      contactName: duplicate.Contact?.Name || null
-    };
-    throw error;
+    if (voided) {
+      // Xero won't accept the same InvoiceNumber as a voided bill — it matches
+      // the voided record and rejects with "not of valid status for modification".
+      // Work around by clearing InvoiceNumber and moving it to Reference so the
+      // number is still visible in Xero without conflicting.
+      bill.notes = bill.notes
+        ? `${bill.invoiceNo} — ${bill.notes}`
+        : `${bill.invoiceNo} (voided duplicate — ref only)`;
+      bill.invoiceNo = null;
+    } else {
+      const error = new Error(`An active bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
+      error.statusCode = 409;
+      error.payload = {
+        duplicate: true,
+        voided: false,
+        invoiceId: duplicate.InvoiceID,
+        invoiceNumber: duplicate.InvoiceNumber,
+        status: duplicate.Status,
+        contactName: duplicate.Contact?.Name || null
+      };
+      throw error;
+    }
   }
 
   // Determine the right Xero TaxType for this bill based on its declared
