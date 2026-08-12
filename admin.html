@@ -336,7 +336,10 @@
                 <input type="checkbox" id="enableItemCode" ${d.account.enable_item_code ? 'checked' : ''} style="width:auto;flex-shrink:0;">
                 <label for="enableItemCode" style="cursor:pointer;margin:0;">Enable item code matching</label>
               </div>
-              <button class="btn btn-primary" onclick="saveItemCode(${id})">Save</button>
+              <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="saveItemCode(${id})">Save</button>
+                <button class="btn btn-ghost" type="button" onclick="refreshItemsCache(${id},this)" title="Clear cached Xero items list — next bill will re-fetch from Xero">↻ Refresh items</button>
+              </div>
               <div class="msg" id="itemCodeMsg"></div></div>
           </div>
         </div>
@@ -483,6 +486,8 @@
   window.delChannel = async (id,cid) => { try { await api('DELETE','/admin/accounts/'+id+'/channels/'+cid); openAccount(id); } catch(e){ alert(e.message); } };
   window.refreshXeroCache = async (id,btn) => { const m=document.getElementById('xeroCacheMsg'); m.className='msg'; m.style.display='block'; m.textContent='Refreshing…'; if(btn) btn.disabled=true;
     try { const d=await api('POST','/admin/accounts/'+id+'/xero/refresh-cache'); m.className='msg ok'; m.textContent='Tax rates & accounts refreshed for '+d.refreshed+' org(s). Re-send the bill to apply.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
+  window.refreshItemsCache = async (id,btn) => { const m=document.getElementById('itemCodeMsg'); m.className='msg'; m.style.display='block'; m.textContent='Refreshing…'; if(btn) btn.disabled=true;
+    try { const d=await api('POST','/admin/accounts/'+id+'/xero/refresh-items'); m.className='msg ok'; m.textContent='Items cache cleared for '+d.refreshed+' org(s). Next bill will re-fetch from Xero.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
   window.saveItemCode = async (id) => { const m=document.getElementById('itemCodeMsg'); m.className='msg'; m.style.display='block'; m.textContent='Saving…';
     try { await api('PUT','/admin/accounts/'+id, { enableItemCode: document.getElementById('enableItemCode').checked }); m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.syncOrgNames = async (id,btn) => { const m=document.getElementById('xeroCacheMsg'); m.className='msg'; m.style.display='block'; m.textContent='Syncing org names…'; if(btn) btn.disabled=true;

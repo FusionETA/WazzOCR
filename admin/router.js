@@ -221,6 +221,15 @@ router.post('/accounts/:id/xero/refresh-cache', async (req, res) => {
   res.json({ ok: true, refreshed: conns.length });
 });
 
+router.post('/accounts/:id/xero/refresh-items', async (req, res) => {
+  const accountId = Number(req.params.id);
+  if (!(await accounts.getById(accountId))) return res.status(404).json({ error: 'Account not found.' });
+  const conns = await xeroConnections.listByAccount(accountId);
+  const { itemsCache } = require('../lib/xeroCaches');
+  for (const c of conns) itemsCache.delete(c.xero_tenant_id);
+  res.json({ ok: true, refreshed: conns.length });
+});
+
 // Disconnect one of an account's Xero orgs: revoke at Xero, then remove locally.
 router.delete('/accounts/:id/connections/:cid', async (req, res) => {
   const accountId = Number(req.params.id);
