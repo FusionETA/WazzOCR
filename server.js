@@ -1577,7 +1577,7 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
         Status: 'DRAFT',
         Contact: { ContactID: contact.ContactID },
         DateString: normalizeDateString(bill.date),
-        // Due date intentionally not set — leave it to Xero / org defaults.
+        DueDateString: normalizeDateString(bill.dueDate) || undefined,
         InvoiceNumber: bill.invoiceNo || undefined,
         CurrencyCode: currencyCode,
         Reference: bill.notes || undefined,
