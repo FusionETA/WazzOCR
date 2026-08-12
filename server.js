@@ -1485,16 +1485,7 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
   const duplicate = await findDuplicateBill(bill.invoiceNo, tenantId);
   if (duplicate?.InvoiceID) {
     const voided = isVoidedBillStatus(duplicate.Status);
-    if (voided) {
-      // Xero won't accept the same InvoiceNumber as a voided bill — it matches
-      // the voided record and rejects with "not of valid status for modification".
-      // Work around by clearing InvoiceNumber and moving it to Reference so the
-      // number is still visible in Xero without conflicting.
-      bill.notes = bill.notes
-        ? `${bill.invoiceNo} — ${bill.notes}`
-        : `${bill.invoiceNo} (voided duplicate — ref only)`;
-      bill.invoiceNo = null;
-    } else {
+    if (!voided) {
       const error = new Error(`An active bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
       error.statusCode = 409;
       error.payload = {
@@ -1507,6 +1498,8 @@ async function createDraftBill({ bill, sourceFile, tenantId }) {
       };
       throw error;
     }
+    // Voided bills: ACCPAY InvoiceNumber is non-unique in Xero, so the same
+    // number can be reused — just let it through.
   }
 
   // Determine the right Xero TaxType for this bill based on its declared
