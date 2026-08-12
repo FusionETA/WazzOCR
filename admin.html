@@ -332,10 +332,10 @@
 
             <div class="card"><h2>Item code matching</h2>
               <p class="muted">When enabled, a second AI pass matches each line item to a Xero item code from this org's Items list.</p>
-              <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;margin:.4rem 0 .8rem;">
-                <input type="checkbox" id="enableItemCode" ${d.account.enable_item_code ? 'checked' : ''}>
-                Enable item code matching
-              </label>
+              <div style="display:flex;align-items:center;gap:.5rem;margin:.4rem 0 .8rem;">
+                <input type="checkbox" id="enableItemCode" ${d.account.enable_item_code ? 'checked' : ''} style="width:auto;flex-shrink:0;">
+                <label for="enableItemCode" style="cursor:pointer;margin:0;">Enable item code matching</label>
+              </div>
               <button class="btn btn-primary" onclick="saveItemCode(${id})">Save</button>
               <div class="msg" id="itemCodeMsg"></div></div>
           </div>
