@@ -2438,15 +2438,18 @@ async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = [], ext
 // pass couldn't code, and the tenant's actual Xero expense accounts, ask Gemini
 // to assign the best account code per line (or null). Best-effort — any failure
 // returns an empty map and the lines just stay uncoded.
-async function callGeminiAssignAccounts(lines, accounts, model) {
+async function callGeminiAssignAccounts(lines, accounts, model, accountAddon = '') {
   if (!GEMINI_API_KEY || !lines.length || !accounts.length) return {};
   const accountList = accounts.map((a) => `${a.code}  ${a.name}`).join('\n');
   const lineList = lines.map((l) => `${l.index}: ${l.description}`).join('\n');
+  const addonSection = accountAddon && accountAddon.trim()
+    ? `\nACCOUNT-SPECIFIC RULES (these take priority):\n${accountAddon.trim()}\n`
+    : '';
   const prompt = `You are coding bill line items to a Xero chart of accounts.
 For each line item below, choose the SINGLE best-matching expense/cost account
 by meaning (not exact words). Only use codes from the ACCOUNTS list. If no
 account is a sensible fit, use null — do not force a poor match.
-
+${addonSection}
 ACCOUNTS:
 ${accountList}
 
@@ -2567,13 +2570,22 @@ async function resolveLineAccountCodes(bill, tenantId) {
   });
 
   // Second pass: ask Gemini to map anything the master COA didn't resolve.
+  // Include account-specific addon rules so custom COA rules are respected.
+  const ctx = xeroAccountCtx.getStore();
+  let addonRules = '';
+  if (ctx?.accountId) {
+    try {
+      const prompts = await resolveAiPrompts(ctx.accountId);
+      addonRules = prompts.accountAddon || '';
+    } catch (_) { /* best-effort */ }
+  }
   const unresolved = outcomes
     .filter((o) => o.needs2nd)
     .map((o) => ({ index: o.index, description: o.desc }));
   let secondPassRan = false;
   if (unresolved.length) {
     secondPassRan = true;
-    const assignments = await callGeminiAssignAccounts(unresolved, tenantAccounts);
+    const assignments = await callGeminiAssignAccounts(unresolved, tenantAccounts, undefined, addonRules);
     for (const o of outcomes) {
       if (!o.needs2nd) continue;
       const assigned = assignments[o.index];
