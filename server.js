@@ -76,7 +76,7 @@ const AI_PROVIDERS = {
 // Loaded from master-coa.json at the repo root. These are the standardised
 // codes loaded into every outlet's Xero, used to let the AI assign an account
 // code per bill line item. Falls back to an empty list if the file is missing.
-const MASTER_COA_FILE = path.join(APP_ROOT, 'master-coa.json');
+const MASTER_COA_FILE = path.join(APP_ROOT, 'data', 'master-coa.json');
 let MASTER_EXPENSE_ACCOUNTS = [];
 let MASTER_EXPENSE_CODES = new Set();
 function loadMasterCoa() {
@@ -3246,7 +3246,7 @@ app.use((req, res, next) => {
 
 // index:false so "/" falls through to the role-based root handler below
 // (instead of auto-serving the legacy index.html).
-app.use(express.static(APP_ROOT, { index: false }));
+app.use(express.static(path.join(APP_ROOT, 'public'), { index: false }));
 
 // Root routes by auth + role: not signed in → login; admin → admin dashboard;
 // customer → their account dashboard. (The legacy ops view stays at /index.html.)
@@ -4823,6 +4823,128 @@ app.delete('/api/pending-bills/:id', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// ── External API ─────────────────────────────────────────────────────────────
+// Stateless, API-key authenticated endpoints for Google Apps Script / third
+// party integrations. Key is stored in accounts.external_api_key and sent
+// via the X-Api-Key header or ?apiKey= query param.
+
+async function resolveExternalAccount(req, res) {
+  const key = (req.headers['x-api-key'] || req.query.apiKey || '').trim();
+  if (!key) {
+    res.status(401).json({ error: 'Missing API key. Send X-Api-Key header or ?apiKey= query param.' });
+    return null;
+  }
+  const db = require('./db');
+  const account = await db.getOne(
+    'SELECT * FROM accounts WHERE external_api_key = ? AND status != ?',
+    [key, 'suspended']
+  );
+  if (!account) {
+    res.status(401).json({ error: 'Invalid or inactive API key.' });
+    return null;
+  }
+  return account;
+}
+
+// POST /api/ext/process-pdf
+// Accepts a PDF (multipart field "file") or base64 JSON body {fileBase64, mimeType}.
+// Runs the full extraction + Xero draft bill creation pipeline.
+// Returns { ok, status, message, bills } where status = 'created' | 'ambiguous' | 'empty' | 'error'.
+app.post('/api/ext/process-pdf', upload.single('file'), async (req, res) => {
+  const account = await resolveExternalAccount(req, res);
+  if (!account) return;
+
+  let buffer, mime, fileName;
+  if (req.file) {
+    buffer = req.file.buffer;
+    mime   = req.file.mimetype;
+    fileName = req.file.originalname;
+  } else if (req.body && req.body.fileBase64) {
+    buffer = Buffer.from(req.body.fileBase64, 'base64');
+    mime   = req.body.mimeType || 'application/pdf';
+    fileName = req.body.fileName || 'upload.pdf';
+  } else {
+    return res.status(400).json({ error: 'No file provided. Send multipart "file" or JSON {fileBase64, mimeType}.' });
+  }
+
+  const accountId = account.id;
+
+  let knownOrgs = [];
+  try {
+    const { connections } = await xeroAccountCtx.run({ accountId }, () => getValidConnections());
+    knownOrgs = (connections || []).map((c) => c.tenantName).filter(Boolean);
+  } catch (err) {
+    console.error('[ext-api] could not fetch Xero orgs:', err.message);
+  }
+
+  let bills;
+  let extractionMethod = 'unknown';
+  try {
+    const out = await xeroAccountCtx.run({ accountId }, () =>
+      analyzeFileToBills({ buffer, mime, knownOrgs })
+    );
+    bills = out.bills;
+    extractionMethod = out.method;
+  } catch (err) {
+    console.error('[ext-api] extraction failed:', err.message);
+    return res.status(500).json({ ok: false, status: 'error', message: err.message });
+  }
+
+  if (!bills || !bills.length) {
+    return res.json({ ok: true, status: 'empty', message: 'No bill data found in the document.' });
+  }
+
+  const filename = await saveUploadedBuffer(buffer, mime);
+  const attachment = { filename, mime, originalName: fileName };
+
+  const results = [];
+  for (const bill of bills) {
+    try {
+      const outcome = await xeroAccountCtx.run({ accountId }, () =>
+        processBillForChat({ bill, attachment: bills.length === 1 ? attachment : null, chatId: null, source: 'external-api' })
+      );
+      results.push(outcome);
+    } catch (err) {
+      results.push({ ok: false, error: err.message });
+    }
+  }
+
+  if (bills.length > 1) await deleteUploadedFile(filename);
+
+  const allOk   = results.every((r) => r && r.ok !== false);
+  const anyFail = results.some((r) => r && r.ok === false);
+  return res.json({
+    ok: allOk,
+    status: allOk ? 'created' : anyFail ? 'partial' : 'error',
+    message: allOk
+      ? `${results.length} bill(s) processed successfully.`
+      : `Some bills failed to process.`,
+    bills: results,
+    extractionMethod
+  });
+});
+
+// POST /api/ext/prompt
+// Body: { prompt: "..." }  — replaces (or clears) this account's AI prompt addon.
+// The prompt is applied to every subsequent bill extraction for this account.
+app.post('/api/ext/prompt', async (req, res) => {
+  const account = await resolveExternalAccount(req, res);
+  if (!account) return;
+
+  const promptText = (req.body && req.body.prompt != null) ? String(req.body.prompt) : null;
+  if (promptText === null) {
+    return res.status(400).json({ error: 'Missing "prompt" field in request body.' });
+  }
+
+  await accounts.update(account.id, { aiPromptAddon: promptText });
+  return res.json({
+    ok: true,
+    message: promptText.trim()
+      ? 'AI prompt rules updated successfully.'
+      : 'AI prompt rules cleared.'
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

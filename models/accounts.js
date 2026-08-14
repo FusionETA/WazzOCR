@@ -28,7 +28,8 @@ async function update(id, fields = {}) {
     aiModel: 'ai_model',
     aiPromptAddon: 'ai_prompt_addon',
     autoCreateBills: 'auto_create_bills',
-    enableItemCode: 'enable_item_code'
+    enableItemCode: 'enable_item_code',
+    externalApiKey: 'external_api_key'
   };
   const sets = [];
   const params = [];

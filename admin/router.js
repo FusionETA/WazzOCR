@@ -369,4 +369,16 @@ router.put('/tickets/:id', async (req, res) => {
   }
 });
 
+// ── External API key management ────────────────────────────────────────────
+const crypto = require('crypto');
+
+router.post('/accounts/:id/generate-api-key', async (req, res) => {
+  const id = Number(req.params.id);
+  const account = await accounts.getById(id);
+  if (!account) return res.status(404).json({ error: 'Account not found.' });
+  const newKey = crypto.randomBytes(24).toString('hex');
+  await accounts.update(id, { externalApiKey: newKey });
+  res.json({ ok: true, apiKey: newKey });
+});
+
 module.exports = router;

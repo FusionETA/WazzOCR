@@ -1,0 +1,1190 @@
+<script>
+(function () {
+  document.title = "WazzOCR — WhatsApp Bills into Xero, Across Every Branch | FusionETA";
+  function setMeta(name, content) {
+    var m = document.head.querySelector('meta[name="' + name + '"]');
+    if (!m) { m = document.createElement('meta'); m.setAttribute('name', name); document.head.appendChild(m); }
+    m.setAttribute('content', content);
+  }
+  setMeta('description', "Send a bill or receipt on WhatsApp and WazzOCR's AI posts a draft bill into the right Xero branch — manage multiple Xero organisations from one place. By FusionETA.");
+  setMeta('keywords', "whatsapp to xero, bill to xero, receipt to xero, multi entity xero, xero bill automation, whatsapp ocr, wazzocr, fusioneta, wazzup24");
+})();
+</script>
+<!-- ===================================================================
+     WazzOCR section for Bitrix24 HTML-code block
+     Self-contained & scoped under #wazz (won't touch the rest of the site).
+     No <head>/nav/footer  -> set page Title & Description in Bitrix page SEO.
+     =================================================================== -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&family=Playfair+Display:wght@700;800&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap');
+#wazz{background:#fff;}
+#wazz{
+  --green:   #25D366;
+  --green2:  #1DB954;
+  --teal:    #128C7E;
+  --navy:    #0F2D4A;
+  --navy2:   #1A3D5C;
+  --orange:  #F97316;
+  --orange2: #EA6C0A;
+  --white:   #FFFFFF;
+  --off:     #F0F4F8;
+  --border:  #D1D9E6;
+  --text:    #1E293B;
+  --muted:   #64748B;
+  --light:   #94A3B8;
+  --font-h:  'Playfair Display', Georgia, serif;
+  --font-b:  'Open Sans', Arial, sans-serif;
+  --font-m:  'JetBrains Mono', 'Courier New', monospace;
+}
+#wazz *, #wazz *::before, #wazz *::after{box-sizing:border-box;margin:0;padding:0}
+
+#wazz{background:var(--white);color:var(--text);font-family:var(--font-b);overflow-x:hidden;line-height:1.6}
+
+
+
+
+
+#wazz .topbar{background:var(--navy);color:rgba(255,255,255,0.65);font-size:12px;padding:8px 60px;display:flex;justify-content:space-between;align-items:center}
+#wazz .topbar a{color:rgba(255,255,255,0.65);text-decoration:none;transition:color .2s}
+#wazz .topbar a:hover{color:var(--green)}
+#wazz .tb-left{display:flex;gap:28px}
+#wazz .tb-item{display:flex;align-items:center;gap:6px}
+#wazz .tb-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px}
+
+
+#wazz nav{background:var(--white);border-bottom:1px solid var(--border);padding:0 60px;display:flex;align-items:center;justify-content:space-between;height:72px;position:sticky;top:0;z-index:200;transition:box-shadow .3s}
+#wazz nav.scrolled{box-shadow:0 2px 20px rgba(0,0,0,0.08)}
+
+#wazz .nav-logo{display:flex;align-items:center;gap:12px;text-decoration:none}
+#wazz .logo-mark{width:44px;height:44px;background:var(--green);border-radius:10px;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;box-shadow:0 4px 12px rgba(37,211,102,0.3)}
+#wazz .logo-mark svg{width:26px;height:26px}
+#wazz .logo-text{font-family:var(--font-h);font-size:22px;font-weight:800;line-height:1}
+#wazz .logo-text em{color:var(--green);font-style:normal}
+#wazz .logo-sub{font-size:10px;color:var(--muted);letter-spacing:.06em;margin-top:2px;font-family:var(--font-b)}
+
+#wazz .nav-links{display:flex;align-items:center;gap:4px;list-style:none}
+#wazz .nav-links li{list-style:none}
+#wazz .nav-links a{font-size:13px;font-weight:600;color:var(--text);text-decoration:none;padding:8px 14px;border-radius:5px;transition:all .2s}
+#wazz .nav-links a:hover{background:var(--off);color:var(--navy)}
+#wazz .nav-cta{background:var(--green)!important;color:white!important;border-radius:5px!important;font-weight:700!important;transition:all .2s!important}
+#wazz .nav-cta:hover{background:var(--green2)!important;box-shadow:0 4px 14px rgba(37,211,102,0.35)!important}
+
+
+#wazz #hero{background:var(--navy);min-height:calc(100vh - 108px);display:grid;grid-template-columns:1fr 460px;gap:60px;align-items:center;padding:80px 60px;position:relative;overflow:hidden}
+
+#wazz .hero-bg-dots{position:absolute;inset:0;background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,0.035) 1px,transparent 0);background-size:30px 30px;pointer-events:none}
+#wazz .hero-bg-glow{position:absolute;right:-100px;top:-100px;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,rgba(37,211,102,0.1),transparent 65%);pointer-events:none}
+#wazz .hero-bg-glow2{position:absolute;left:-150px;bottom:-150px;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(18,140,126,0.08),transparent 65%);pointer-events:none}
+
+#wazz .hero-left{position:relative;z-index:1}
+
+#wazz .hero-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(37,211,102,0.12);border:1px solid rgba(37,211,102,0.3);border-radius:20px;padding:7px 16px;font-size:12px;font-weight:700;color:#4ADE80;letter-spacing:.06em;text-transform:uppercase;margin-bottom:28px}
+#wazz .badge-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+
+#wazz .hero-h1{font-family:var(--font-h);font-size:clamp(42px,5.5vw,72px);font-weight:800;line-height:1.05;color:white;margin-bottom:10px;letter-spacing:-.02em}
+#wazz .hero-h1 span, #wazz .hero-h1 em{color:var(--green);font-style:normal}
+#wazz .hero-h2sub{font-family:var(--font-h);font-size:clamp(22px,3vw,36px);font-weight:700;color:rgba(255,255,255,0.45);margin-bottom:28px;line-height:1.2;letter-spacing:-.01em}
+
+#wazz .hero-desc{font-size:17px;font-weight:300;line-height:1.75;color:rgba(255,255,255,0.7);max-width:500px;margin-bottom:40px}
+#wazz .hero-desc strong{color:white;font-weight:600}
+
+#wazz .hero-actions{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:52px}
+
+#wazz .btn-green{display:inline-flex;align-items:center;gap:8px;background:var(--green);color:white;font-weight:700;font-size:15px;padding:15px 30px;border-radius:5px;text-decoration:none;transition:all .25s;font-family:var(--font-b);border:none;cursor:pointer}
+#wazz .btn-green:hover{background:var(--green2);transform:translateY(-2px);box-shadow:0 8px 24px rgba(37,211,102,0.4)}
+
+#wazz .btn-ghost{display:inline-flex;align-items:center;gap:8px;background:transparent;color:white;font-weight:600;font-size:15px;padding:15px 30px;border-radius:5px;border:1px solid rgba(255,255,255,0.25);text-decoration:none;transition:all .25s;font-family:var(--font-b)}
+#wazz .btn-ghost:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.5)}
+
+#wazz .hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid rgba(255,255,255,0.1);border-radius:10px;overflow:hidden}
+#wazz .hstat{padding:20px 16px;border-right:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03)}
+#wazz .hstat:last-child{border-right:none}
+#wazz .hstat-num{font-family:var(--font-h);font-size:30px;font-weight:800;color:var(--green);line-height:1;margin-bottom:4px}
+#wazz .hstat-label{font-size:11px;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:.08em}
+
+
+#wazz .hero-right{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:16px}
+
+#wazz .phone-outer{position:relative}
+#wazz .float-card{position:absolute;background:white;border-radius:8px;padding:10px 14px;font-size:11px;font-weight:700;color:var(--navy);box-shadow:0 8px 28px rgba(0,0,0,0.25);white-space:nowrap;display:flex;align-items:center;gap:7px}
+#wazz .float-card .fc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+#wazz .fc-green{background:var(--green)}
+#wazz .fc-blue{background:#2563EB}
+#wazz .float-card-1{top:16px;left:-110px;animation:fa 4s ease-in-out infinite}
+#wazz .float-card-2{bottom:60px;right:-110px;animation:fb 4s ease-in-out infinite 1.5s}
+@keyframes fa{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+@keyframes fb{0%,100%{transform:translateY(0)}50%{transform:translateY(7px)}}
+
+#wazz .phone-shell{background:#1C1C1E;border-radius:48px;border:10px solid #2A2A2C;box-shadow:0 40px 100px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.06);overflow:hidden;width:290px}
+#wazz .ph-notch{background:#1C1C1E;height:26px;display:flex;justify-content:center;align-items:flex-end;padding-bottom:3px}
+#wazz .ph-pill{width:90px;height:14px;background:#000;border-radius:7px}
+#wazz .wa-hdr{background:#075E54;padding:10px 14px;display:flex;align-items:center;gap:10px}
+#wazz .wa-back{color:rgba(255,255,255,0.7);font-size:20px;line-height:1;margin-right:-4px}
+#wazz .wa-av{width:36px;height:36px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;font-weight:700;color:white;font-family:var(--font-h)}
+#wazz .wa-nm{font-size:13px;font-weight:700;color:white}
+#wazz .wa-st{font-size:10px;color:rgba(255,255,255,0.6)}
+#wazz .wa-more{margin-left:auto;color:rgba(255,255,255,0.6);font-size:20px;letter-spacing:1px}
+
+#wazz .wa-body{background:#ECE5DD;min-height:370px;max-height:370px;overflow-y:auto;padding:12px 10px;display:flex;flex-direction:column;gap:6px}
+
+
+#wazz .msg{max-width:82%;border-radius:8px;padding:7px 9px;font-size:11.5px;line-height:1.5;opacity:0;transform:translateY(8px);transition:opacity .35s ease,transform .35s ease}
+#wazz .msg.vis{opacity:1;transform:translateY(0)}
+#wazz .msg-out{align-self:flex-end;background:#DCF8C6;color:#1a1a1a;border-radius:8px 0 8px 8px;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+#wazz .msg-in{align-self:flex-start;background:white;color:#1a1a1a;border-radius:0 8px 8px 8px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+#wazz .msg-img{width:100%;border-radius:5px;margin-bottom:4px;object-fit:cover;max-height:110px;display:block}
+#wazz .msg-cap{font-size:10px;opacity:.55;margin-bottom:2px}
+#wazz .msg-time{font-size:9px;color:#999;text-align:right;margin-top:2px}
+#wazz .msg-scanning{align-self:flex-start;background:white;border-radius:0 8px 8px 8px;padding:8px 12px;display:flex;align-items:center;gap:8px;font-size:11px;color:#888;font-style:italic;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+#wazz .typing-dots{display:flex;gap:3px;align-items:center}
+#wazz .typing-dots span{width:5px;height:5px;border-radius:50%;background:#999;animation:blink 1.2s infinite}
+#wazz .typing-dots span:nth-child(2){animation-delay:.2s}
+#wazz .typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+#wazz .ext-label{font-size:10px;color:#075E54;font-weight:700;margin-bottom:5px;letter-spacing:.03em}
+#wazz .ext-text{font-family:var(--font-m);font-size:10px;line-height:1.75;color:#1a1a1a;white-space:pre-wrap}
+
+#wazz .wa-footer{background:#F0F0F0;padding:8px 12px;display:flex;align-items:center;gap:8px;border-top:1px solid #DDD}
+#wazz .wa-input-box{flex:1;background:white;border-radius:20px;padding:8px 14px;font-size:11px;color:#aaa;border:none;font-family:var(--font-b)}
+#wazz .wa-send-btn{background:var(--teal);width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+
+#wazz .demo-tabs{display:flex;gap:6px}
+#wazz .demo-tab{padding:6px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:rgba(255,255,255,0.55);font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;font-family:var(--font-b);letter-spacing:.04em}
+#wazz .demo-tab.active, #wazz .demo-tab:hover{border-color:var(--green);color:var(--green);background:rgba(37,211,102,0.1)}
+
+
+#wazz .trusted{background:var(--off);border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:22px 60px;display:flex;align-items:center;gap:48px;overflow:hidden}
+#wazz .trusted-lbl{font-size:11px;font-weight:700;color:var(--light);text-transform:uppercase;letter-spacing:.12em;white-space:nowrap}
+#wazz .trusted-logos{display:flex;gap:40px;flex-wrap:wrap;align-items:center}
+#wazz .tlogo{font-family:var(--font-h);font-size:14px;font-weight:700;color:var(--light);letter-spacing:.04em;transition:color .2s;cursor:default}
+#wazz .tlogo:hover{color:var(--muted)}
+
+
+#wazz .section{padding:90px 60px}
+#wazz .section-alt{background:var(--off)}
+
+#wazz .sec-eye{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.16em;color:var(--green);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+#wazz .sec-eye::before{content:'';width:28px;height:2px;background:var(--green);border-radius:1px}
+#wazz .sec-h2{font-family:var(--font-h);font-size:clamp(30px,4vw,48px);font-weight:800;color:var(--navy);line-height:1.1;margin-bottom:16px;letter-spacing:-.02em}
+#wazz .sec-sub{font-size:16px;color:var(--muted);max-width:560px;line-height:1.8;font-weight:300}
+#wazz .sec-head{margin-bottom:56px}
+
+
+#wazz .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-radius:10px;overflow:hidden;border:1px solid var(--border)}
+#wazz .step{padding:36px 28px;border-right:1px solid var(--border);background:white;position:relative;transition:all .3s;cursor:default}
+#wazz .step:last-child{border-right:none}
+#wazz .step:hover{background:var(--navy)}
+#wazz .step:hover .sn{color:rgba(255,255,255,.05)}
+#wazz .step:hover .sicon{background:rgba(37,211,102,.15);border-color:rgba(37,211,102,.3)}
+#wazz .step:hover h3{color:white}
+#wazz .step:hover p{color:rgba(255,255,255,.6)}
+#wazz .sn{font-family:var(--font-h);font-size:60px;font-weight:800;color:var(--off);line-height:1;position:absolute;top:18px;right:18px;transition:color .3s}
+#wazz .sicon{width:52px;height:52px;background:var(--off);border:1px solid var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:20px;transition:all .3s;position:relative;z-index:1}
+#wazz .step h3{font-size:16px;font-weight:700;color:var(--navy);margin-bottom:10px;transition:color .3s;position:relative;z-index:1}
+#wazz .step p{font-size:13px;color:var(--muted);line-height:1.75;font-weight:300;transition:color .3s;position:relative;z-index:1}
+
+
+#wazz .cases{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+#wazz .ccard{background:white;border:1px solid var(--border);border-radius:10px;padding:32px;position:relative;overflow:hidden;transition:all .3s;border-top:3px solid transparent}
+#wazz .ccard::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--green),var(--teal));transform:scaleX(0);transform-origin:left;transition:transform .3s}
+#wazz .ccard:hover{border-top-color:transparent;box-shadow:0 10px 36px rgba(0,0,0,.08);transform:translateY(-4px)}
+#wazz .ccard:hover::after{transform:scaleX(1)}
+#wazz .cicon{font-size:36px;margin-bottom:18px}
+#wazz .ccard h3{font-size:17px;font-weight:700;color:var(--navy);margin-bottom:10px}
+#wazz .ccard p{font-size:13px;color:var(--muted);line-height:1.75;font-weight:300}
+#wazz .ctags{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
+#wazz .ctag{font-size:11px;padding:3px 10px;border-radius:3px;background:var(--off);color:var(--muted);font-weight:600}
+
+
+#wazz .int-grid{display:flex;flex-wrap:wrap;gap:12px;margin-top:48px}
+#wazz .ichip{display:flex;align-items:center;gap:8px;background:white;border:1px solid var(--border);border-radius:6px;padding:10px 18px;font-size:13px;font-weight:600;color:var(--text);transition:all .2s;cursor:default}
+#wazz .ichip:hover{border-color:var(--green);color:var(--navy);transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.06)}
+#wazz .icdot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+
+
+#wazz .demo-strip{background:var(--navy);padding:80px 60px;position:relative;overflow:hidden}
+#wazz .demo-strip::before{content:'';position:absolute;inset:0;background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,.03) 1px,transparent 0);background-size:28px 28px;pointer-events:none}
+#wazz .demo-inner{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;position:relative;z-index:1}
+#wazz .demo-screens{display:flex;flex-direction:column;gap:12px}
+
+#wazz .doc-card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:16px;display:flex;align-items:flex-start;gap:14px;transition:all .3s;cursor:default}
+#wazz .doc-card:hover{background:rgba(255,255,255,.08);border-color:rgba(37,211,102,.3)}
+#wazz .doc-thumb{width:60px;height:44px;border-radius:6px;object-fit:cover;flex-shrink:0;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06)}
+#wazz .doc-info h4{font-size:13px;font-weight:700;color:white;margin-bottom:4px}
+#wazz .doc-result{font-family:var(--font-m);font-size:10.5px;color:var(--green);line-height:1.6}
+
+
+#wazz .pricing-grid{display:grid;grid-template-columns:1fr 1.06fr 1fr;gap:24px;max-width:980px;margin:0 auto}
+#wazz .pcard{background:white;border:1px solid var(--border);border-radius:10px;padding:40px 32px;position:relative;transition:all .3s}
+#wazz .pcard:hover{box-shadow:0 10px 36px rgba(0,0,0,.1)}
+#wazz .pcard.feat{border:2px solid var(--green);border-radius:10px}
+#wazz .pbadge{position:absolute;top:-13px;left:50%;transform:translateX(-50%);background:var(--green);color:white;font-size:11px;font-weight:700;padding:4px 16px;border-radius:12px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;font-family:var(--font-b)}
+#wazz .ptier{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin-bottom:16px}
+#wazz .pamount{font-family:var(--font-h);font-size:54px;font-weight:800;color:var(--navy);line-height:1;margin-bottom:4px}
+#wazz .pamount sup{font-size:22px;color:var(--green)}
+#wazz .pperiod{font-size:13px;color:var(--muted);margin-bottom:28px;padding-bottom:28px;border-bottom:1px solid var(--border)}
+#wazz .pfeats{list-style:none;display:flex;flex-direction:column;gap:12px;margin-bottom:32px}
+#wazz .pfeats li{font-size:13px;color:var(--text);display:flex;align-items:flex-start;gap:10px;line-height:1.5}
+#wazz .pfeats li::before{content:'✓';color:var(--green);font-weight:700;flex-shrink:0;margin-top:1px}
+#wazz .pcta{display:block;text-align:center;padding:13px;border-radius:5px;font-weight:700;font-size:14px;text-decoration:none;transition:all .2s;font-family:var(--font-b)}
+#wazz .pcta-green{background:var(--green);color:white}
+#wazz .pcta-green:hover{background:var(--green2);transform:translateY(-1px);box-shadow:0 4px 16px rgba(37,211,102,.35)}
+#wazz .pcta-outline{border:2px solid var(--navy);color:var(--navy)}
+#wazz .pcta-outline:hover{background:var(--navy);color:white}
+
+
+#wazz .tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+#wazz .tcard{background:white;border:1px solid var(--border);border-radius:10px;padding:28px;position:relative}
+#wazz .tcard::before{content:open-quote;font-family:var(--font-h);font-size:64px;color:var(--green);line-height:.8;position:absolute;top:16px;left:24px;opacity:.25}
+#wazz .tstars{color:var(--orange);margin-bottom:14px;font-size:14px;letter-spacing:2px}
+#wazz .ttext{font-size:14px;color:var(--text);line-height:1.8;font-style:italic;margin-bottom:20px;font-weight:300}
+#wazz .tauthor{display:flex;align-items:center;gap:12px}
+#wazz .tav{width:42px;height:42px;border-radius:50%;background:var(--navy);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;font-family:var(--font-h);flex-shrink:0}
+#wazz .tname{font-size:14px;font-weight:700;color:var(--navy)}
+#wazz .trole{font-size:12px;color:var(--muted)}
+
+
+#wazz .faq-wrap{max-width:760px;margin:0 auto}
+#wazz .faq-item{border-bottom:1px solid var(--border)}
+#wazz .faq-q{width:100%;background:none;border:none;display:flex;justify-content:space-between;align-items:center;padding:22px 0;font-size:15px;font-weight:600;color:var(--navy);cursor:pointer;text-align:left;gap:20px;font-family:var(--font-b);transition:color .2s}
+#wazz .faq-q:hover{color:var(--green)}
+#wazz .faq-arr{font-size:22px;color:var(--green);flex-shrink:0;transition:transform .3s}
+#wazz .faq-item.open .faq-arr{transform:rotate(45deg)}
+#wazz .faq-a{font-size:14px;color:var(--muted);line-height:1.8;font-weight:300;max-height:0;overflow:hidden;transition:max-height .4s ease,padding .3s}
+#wazz .faq-item.open .faq-a{max-height:320px;padding-bottom:22px}
+
+
+#wazz #cta-section{background:var(--navy);padding:100px 60px;text-align:center;position:relative;overflow:hidden}
+#wazz #cta-section::before{content:'';position:absolute;inset:0;background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,.03) 1px,transparent 0);background-size:28px 28px;pointer-events:none}
+#wazz #cta-section::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:700px;height:400px;background:radial-gradient(ellipse,rgba(37,211,102,.08),transparent 70%);pointer-events:none}
+#wazz .cta-h2{font-family:var(--font-h);font-size:clamp(36px,5vw,64px);font-weight:800;color:white;margin-bottom:20px;letter-spacing:-.02em;position:relative;z-index:1}
+#wazz .cta-h2 em{color:var(--green);font-style:normal}
+#wazz .cta-sub{font-size:18px;color:rgba(255,255,255,.6);max-width:520px;margin:0 auto 48px;line-height:1.75;font-weight:300;position:relative;z-index:1}
+#wazz .cta-acts{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;position:relative;z-index:1}
+
+#wazz .btn-orange{display:inline-flex;align-items:center;gap:8px;background:var(--orange);color:white;font-weight:700;font-size:15px;padding:15px 30px;border-radius:5px;text-decoration:none;transition:all .25s;font-family:var(--font-b)}
+#wazz .btn-orange:hover{background:var(--orange2);transform:translateY(-2px);box-shadow:0 8px 24px rgba(249,115,22,.4)}
+
+
+#wazz footer{background:#08192B;padding:64px 60px 36px;color:rgba(255,255,255,.55)}
+#wazz .footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:60px;margin-bottom:48px}
+#wazz .fl-brand-name{font-family:var(--font-h);font-size:24px;font-weight:800;color:white;margin-bottom:6px}
+#wazz .fl-brand-name em{color:var(--green);font-style:normal}
+#wazz .fl-by{font-size:11px;color:rgba(255,255,255,.3);margin-bottom:14px;letter-spacing:.06em}
+#wazz .fl-desc{font-size:13px;line-height:1.8;max-width:280px}
+#wazz .fcol h4{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:18px}
+#wazz .fcol ul{list-style:none;display:flex;flex-direction:column;gap:11px}
+#wazz .fcol a{font-size:13px;color:rgba(255,255,255,.5);text-decoration:none;transition:color .2s}
+#wazz .fcol a:hover{color:var(--green)}
+#wazz .footer-bottom{border-top:1px solid rgba(255,255,255,.08);padding-top:28px;display:flex;justify-content:space-between;align-items:center;font-size:12px;flex-wrap:wrap;gap:12px}
+#wazz .footer-bottom a{color:rgba(255,255,255,.35);text-decoration:none}
+#wazz .footer-bottom a:hover{color:var(--green)}
+#wazz .fl-poweredby{color:rgba(255,255,255,.25);display:flex;align-items:center;gap:6px}
+#wazz .fl-poweredby span{color:var(--green)}
+
+
+#wazz .reveal{opacity:0;transform:translateY(24px);transition:opacity .65s ease,transform .65s ease}
+#wazz .reveal.vis{opacity:1;transform:translateY(0)}
+#wazz .reveal-delay-1{transition-delay:.1s}
+#wazz .reveal-delay-2{transition-delay:.2s}
+#wazz .reveal-delay-3{transition-delay:.3s}
+
+
+@media(max-width:1100px){
+  #wazz #hero{grid-template-columns:1fr;padding:60px 40px}
+  #wazz .hero-right{display:none}
+  #wazz .steps{grid-template-columns:repeat(2,1fr)}
+  #wazz .step:nth-child(2){border-right:none}
+  #wazz .step:nth-child(1), #wazz .step:nth-child(2){border-bottom:1px solid var(--border)}
+  #wazz .cases, #wazz .tgrid{grid-template-columns:repeat(2,1fr)}
+  #wazz .pricing-grid{grid-template-columns:1fr;max-width:420px}
+  #wazz .pcard.feat{border-width:2px}
+  #wazz .demo-inner{grid-template-columns:1fr}
+  #wazz .footer-grid{grid-template-columns:1fr 1fr;gap:40px}
+  #wazz .topbar, #wazz .trusted, #wazz nav, #wazz .section, #wazz .demo-strip, #wazz #cta-section, #wazz footer{padding-left:40px;padding-right:40px}
+}
+@media(max-width:640px){
+  #wazz .topbar{display:none}
+  #wazz .nav-links{display:flex !important;gap:2px}
+  #wazz .nav-links .nav-hide-m{display:none}
+  #wazz .nav-logo .logo-sub{display:none}
+  #wazz .steps, #wazz .cases, #wazz .tgrid{grid-template-columns:1fr}
+  #wazz .step{border-right:none!important;border-bottom:1px solid var(--border)}
+  #wazz .step:last-child{border-bottom:none}
+  #wazz .hero-stats{grid-template-columns:repeat(2,1fr)}
+  #wazz .footer-grid{grid-template-columns:1fr}
+  #wazz nav, #wazz .section, #wazz .demo-strip, #wazz #cta-section, #wazz footer, #wazz .trusted{padding-left:24px;padding-right:24px}
+}
+
+
+#wazz #wzf{max-width:1180px;margin:0 auto;position:relative;}
+#wazz #wzf *, #wazz #wzf *::before, #wazz #wzf *::after{box-sizing:border-box;margin:0;padding:0;}
+#wazz #wzf .wzf-head{text-align:center;max-width:680px;margin:0 auto 42px;position:relative;z-index:1;}
+#wazz #wzf .wzf-eye{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--green);margin-bottom:12px;}
+#wazz #wzf .wzf-eye::before{content:"";width:26px;height:2px;background:var(--green);border-radius:1px;}
+#wazz #wzf .wzf-head h2{font-family:var(--font-h);font-size:clamp(26px,3.6vw,42px);font-weight:800;color:#fff;line-height:1.12;letter-spacing:-.02em;}
+#wazz #wzf .wzf-head h2 em{color:var(--green);font-style:normal;}
+#wazz #wzf .wzf-head p{margin-top:12px;font-size:15px;font-weight:300;color:rgba(255,255,255,.62);line-height:1.7;}
+#wazz #wzf .wzf-stage{position:relative;display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:420px;}
+#wazz #wzf .wzf-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:visible;}
+#wazz #wzf .wzf-link{fill:none;stroke:rgba(255,255,255,.16);stroke-width:2;stroke-dasharray:6 7;}
+#wazz #wzf .wzf-link.hot{stroke:var(--green);stroke-width:3;animation:wzfdash .7s linear infinite;}
+@keyframes wzfdash{to{stroke-dashoffset:-26;}}
+#wazz #wzf .wzf-col{position:relative;z-index:1;}
+#wazz #wzf .wzf-wa{width:236px;flex:0 0 236px;background:#fff;border-radius:18px;box-shadow:0 18px 44px rgba(0,0,0,.28);overflow:hidden;}
+#wazz #wzf .wzf-wa-hd{background:#075E54;color:#fff;display:flex;align-items:center;gap:9px;padding:10px 13px;}
+#wazz #wzf .wzf-av{width:30px;height:30px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;font-family:var(--font-h);}
+#wazz #wzf .wzf-wa-hd b{font-size:12.5px;line-height:1.1;}
+#wazz #wzf .wzf-wa-hd span{font-size:9.5px;opacity:.7;}
+#wazz #wzf .wzf-chat{background:#ECE5DD;min-height:150px;padding:14px 12px;display:flex;flex-direction:column;justify-content:flex-end;gap:8px;}
+#wazz #wzf .wzf-bub{align-self:flex-end;background:#DCF8C6;border-radius:10px 2px 10px 10px;box-shadow:0 1px 2px rgba(0,0,0,.12);padding:8px;display:flex;align-items:center;gap:9px;max-width:90%;}
+#wazz #wzf .wzf-doc{width:38px;height:38px;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);}
+#wazz #wzf .wzf-bub-t{line-height:1.25;}
+#wazz #wzf .wzf-bub-t b{display:block;font-size:11.5px;color:#15391f;}
+#wazz #wzf .wzf-bub-t span{font-size:11px;color:#3c6b4c;}
+#wazz #wzf .wzf-ai{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;}
+#wazz #wzf .wzf-orb-wrap{position:relative;width:150px;height:150px;display:flex;align-items:center;justify-content:center;}
+#wazz #wzf .wzf-orb{width:104px;height:104px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#2D4DB3,#0F2D4A);box-shadow:0 14px 38px rgba(0,0,0,.45),inset 0 0 22px rgba(255,255,255,.14);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;position:relative;z-index:2;}
+#wazz #wzf .wzf-orb b{font-family:var(--font-h);font-size:26px;font-weight:800;letter-spacing:.04em;}
+#wazz #wzf .wzf-orb span{font-size:9px;letter-spacing:.14em;opacity:.7;text-transform:uppercase;margin-top:2px;}
+#wazz #wzf .wzf-ring{position:absolute;inset:8px;border-radius:50%;border:2px dashed rgba(37,211,102,.6);opacity:0;z-index:1;}
+#wazz #wzf .wzf-ai.busy .wzf-ring{opacity:1;}
+#wazz #wzf .wzf-pulse{position:absolute;inset:18px;border-radius:50%;background:radial-gradient(circle,rgba(37,211,102,.34),transparent 70%);opacity:0;z-index:0;}
+#wazz #wzf .wzf-ai.busy .wzf-pulse{animation:wzfpulse 1s ease-out infinite;}
+@keyframes wzfpulse{0%{transform:scale(.6);opacity:.7;}100%{transform:scale(1.5);opacity:0;}}
+#wazz #wzf .wzf-read{margin-top:14px;width:188px;min-height:104px;background:#fff;border-radius:12px;box-shadow:0 10px 26px rgba(0,0,0,.22);padding:11px 13px;font-family:var(--font-m);font-size:10.5px;line-height:1.5;color:var(--navy);}
+#wazz #wzf .wzf-read .wzf-rh{font-family:var(--font-b);font-weight:700;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--green2);margin-bottom:7px;}
+#wazz #wzf .wzf-field{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#wazz #wzf .wzf-orgs{flex:0 0 256px;width:256px;display:flex;flex-direction:column;gap:14px;}
+#wazz #wzf .wzf-org{background:#fff;border-left:3px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 22px rgba(0,0,0,.18);padding:14px 16px;transition:border-color .25s,box-shadow .25s,transform .25s;}
+#wazz #wzf .wzf-org .wzf-onm{display:flex;align-items:center;gap:9px;font-weight:700;font-size:13.5px;color:var(--navy);}
+#wazz #wzf .wzf-dot{width:9px;height:9px;border-radius:50%;background:#cbd5e1;flex-shrink:0;transition:background .25s;}
+#wazz #wzf .wzf-org .wzf-ost{margin-top:6px;font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;}
+#wazz #wzf .wzf-org .wzf-tick{opacity:0;color:var(--green);font-weight:800;transform:scale(.4);transition:opacity .25s,transform .25s;}
+#wazz #wzf .wzf-org.on{border-left-color:var(--green);box-shadow:0 16px 34px rgba(37,211,102,.3);transform:translateX(-3px);}
+#wazz #wzf .wzf-org.on .wzf-dot{background:var(--green);}
+#wazz #wzf .wzf-org.on .wzf-ost{color:var(--green2);font-weight:600;}
+#wazz #wzf .wzf-org.on .wzf-tick{opacity:1;transform:scale(1);}
+#wazz #wzf .wzf-packet{position:absolute;left:0;top:0;z-index:5;display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:30px;font-size:12px;font-weight:700;white-space:nowrap;opacity:0;pointer-events:none;box-shadow:0 12px 28px rgba(0,0,0,.3);}
+#wazz #wzf .wzf-packet span{font-size:15px;}
+#wazz #wzf .wzf-packet.doc{background:#fff;color:var(--navy);}
+#wazz #wzf .wzf-packet.bill{background:var(--green);color:#fff;}
+@media(max-width:860px){
+  #wazz #wzf .wzf-stage{flex-direction:column;gap:20px;min-height:0;}
+  #wazz #wzf .wzf-wa, #wazz #wzf .wzf-orgs{flex:0 0 auto;width:min(340px,100%);}
+  #wazz #wzf .wzf-svg{display:none;}
+}
+
+
+#wazz #wzd{max-width:880px;margin:0 auto;text-align:left;font-family:'Inter',Arial,sans-serif;
+  --dn:#1A2E6F;--db:#2D4DB3;--da:#FF6B35;--dink:#16223F;--dtx:#1C2B3A;--dmut:#6B7A8D;--dline:#E2E8F0;--dbg:#F4F6FB;
+  --dgrad:linear-gradient(135deg,#1A2E6F,#2D4DB3);--dhead:'Plus Jakarta Sans','Inter',sans-serif;}
+#wazz #wzd *{box-sizing:border-box;}
+#wazz #wzd .wzd-win{background:var(--dbg);border:1px solid var(--dline);border-radius:16px;box-shadow:0 34px 80px rgba(16,35,92,.20);overflow:hidden;}
+#wazz #wzd .wzd-bar{display:flex;align-items:center;gap:8px;padding:11px 15px;background:#fff;border-bottom:1px solid var(--dline);}
+#wazz #wzd .wzd-dots{display:flex;gap:6px;}
+#wazz #wzd .wzd-dots i{width:10px;height:10px;border-radius:50%;background:#e2e8f0;display:block;}
+#wazz #wzd .wzd-url{margin-left:8px;font-size:11px;color:var(--dmut);background:var(--dbg);border:1px solid var(--dline);border-radius:20px;padding:3px 12px;}
+#wazz #wzd .wzd-app{padding:18px 20px 22px;}
+#wazz #wzd .wzd-topbar{display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid var(--dline);}
+#wazz #wzd .wzd-brand{display:flex;align-items:center;gap:8px;font-family:var(--dhead);font-weight:800;color:var(--dn);font-size:15px;}
+#wazz #wzd .wzd-logo{width:24px;height:24px;border-radius:6px;background:var(--dgrad);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:800;}
+#wazz #wzd .wzd-who{font-size:11.5px;color:var(--dmut);}
+#wazz #wzd .wzd-h1{font-family:var(--dhead);font-size:20px;font-weight:800;color:var(--dink);letter-spacing:-.02em;}
+#wazz #wzd .wzd-subt{font-size:12.5px;color:var(--dmut);margin-top:3px;}
+#wazz #wzd .wzd-hero{margin-top:16px;border-radius:14px;padding:18px 20px;color:#fff;position:relative;overflow:hidden;
+  background:radial-gradient(620px 240px at 86% -50%,rgba(255,107,53,.42),transparent),var(--dgrad);box-shadow:0 14px 34px rgba(26,46,111,.28);}
+#wazz #wzd .wzd-eye{font-family:var(--dhead);font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#ffd9c7;}
+#wazz #wzd .wzd-stat{display:flex;align-items:baseline;gap:8px;margin-top:6px;}
+#wazz #wzd .wzd-num{font-family:var(--dhead);font-size:42px;font-weight:800;line-height:1;letter-spacing:-.02em;}
+#wazz #wzd .wzd-unit{font-weight:600;color:rgba(255,255,255,.78);font-size:14px;}
+#wazz #wzd .wzd-all{margin-top:5px;font-size:12px;color:rgba(255,255,255,.72);}
+#wazz #wzd .wzd-tabs{display:inline-flex;gap:3px;background:#fff;border:1px solid var(--dline);border-radius:12px;padding:4px;margin:18px 0 14px;box-shadow:0 1px 2px rgba(16,35,92,.06);}
+#wazz #wzd .wzd-tb{border:none;background:transparent;color:var(--dmut);font-family:'Inter',sans-serif;font-weight:700;font-size:12px;padding:7px 15px;border-radius:8px;}
+#wazz #wzd .wzd-tb.on{background:var(--dgrad);color:#fff;}
+#wazz #wzd .wzd-panel{background:#fff;border:1px solid var(--dline);border-radius:14px;box-shadow:0 1px 2px rgba(16,35,92,.04),0 10px 28px rgba(16,35,92,.06);padding:16px 18px;}
+#wazz #wzd .wzd-h2{font-family:var(--dhead);font-size:15px;color:var(--dink);position:relative;padding-left:11px;display:flex;align-items:center;gap:9px;margin-bottom:14px;}
+#wazz #wzd .wzd-h2::before{content:'';position:absolute;left:0;top:3px;bottom:3px;width:3px;border-radius:3px;background:var(--da);}
+#wazz #wzd .wzd-cnt{font-family:'Inter',sans-serif;font-size:11px;font-weight:700;color:var(--dn);background:rgba(45,77,179,.1);border-radius:20px;padding:2px 9px;}
+#wazz #wzd .wzd-fbar{display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;flex-wrap:wrap;}
+#wazz #wzd .wzd-fld{display:flex;flex-direction:column;gap:4px;}
+#wazz #wzd .wzd-fld.grow{flex:1;min-width:150px;}
+#wazz #wzd .wzd-fld label{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dmut);}
+#wazz #wzd .wzd-inp{border:1px solid var(--dline);border-radius:9px;background:#fff;padding:8px 11px;font-size:12px;color:var(--dmut);}
+#wazz #wzd .wzd-clr{border:1px solid var(--dline);background:#fff;color:var(--dtx);border-radius:9px;padding:8px 14px;font-size:12px;font-weight:700;align-self:flex-end;}
+#wazz #wzd table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;table-layout:fixed;}
+#wazz #wzd th{text-align:left;font-size:9.5px;font-weight:700;color:var(--dmut);text-transform:uppercase;letter-spacing:.05em;padding:8px;border-bottom:1px solid var(--dline);background:#F7F9FC;white-space:nowrap;}
+#wazz #wzd th:first-child{border-top-left-radius:8px;} #wazz #wzd th:last-child{border-top-right-radius:8px;}
+#wazz #wzd td{padding:9px 8px;border-bottom:1px solid var(--dline);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#wazz #wzd tbody tr:last-child td{border-bottom:none;}
+#wazz #wzd .wzd-dt{color:var(--dmut);font-variant-numeric:tabular-nums;}
+#wazz #wzd .wzd-sup{font-weight:700;color:var(--dink);}
+#wazz #wzd .wzd-tot{font-variant-numeric:tabular-nums;font-weight:700;color:var(--dink);}
+#wazz #wzd .wzd-org{color:var(--db);font-weight:600;}
+#wazz #wzd .wzd-open{color:var(--dn);font-weight:600;}
+#wazz #wzd .wzd-set{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:30px;}
+#wazz #wzd .wzd-step{display:flex;gap:12px;align-items:flex-start;}
+#wazz #wzd .wzd-stepn{width:30px;height:30px;border-radius:8px;background:var(--navy);color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:var(--font-h);}
+#wazz #wzd .wzd-step h4{font-size:13.5px;color:var(--navy);font-weight:700;margin-bottom:3px;}
+#wazz #wzd .wzd-step p{font-size:12.5px;color:var(--muted);line-height:1.6;font-weight:300;}
+@media(max-width:760px){
+  #wazz #wzd .wzd-col-inv{display:none;}
+  #wazz #wzd .wzd-set{grid-template-columns:1fr;}
+}
+</style>
+
+<div id="wazz">
+
+<!-- ===== Top bar + nav (Sign in / Create account) ===== -->
+<div class="topbar">
+  <div class="tb-left">
+    <span class="tb-item"><span class="tb-dot"></span>WhatsApp bills → Xero, across every branch</span>
+    <a class="tb-item" href="tel:+60126030996">+60 12-603 0996</a>
+  </div>
+  <a href="https://wazzocr.fusioneta.com.my/login.html">Sign in →</a>
+</div>
+
+<nav id="wazz-nav">
+  <a class="nav-logo" href="#hero">
+    <span class="logo-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.4 8.4 0 0 1 21 11.5Z"/><path d="m9 11 2 2 4-4"/></svg>
+    </span>
+    <span><span class="logo-text">Wazz<em>OCR</em></span><div class="logo-sub">BY FUSIONETA</div></span>
+  </a>
+  <ul class="nav-links">
+    <li class="nav-hide-m"><a href="#platform">Platform</a></li>
+    <li class="nav-hide-m"><a href="#flow">How it works</a></li>
+    <li class="nav-hide-m"><a href="#usecases">Features</a></li>
+    <li class="nav-hide-m"><a href="#pricing">Pricing</a></li>
+    <li class="nav-hide-m"><a href="#faq">FAQ</a></li>
+    <li><a href="https://wazzocr.fusioneta.com.my/login.html">Sign in</a></li>
+    <li><a class="nav-cta" href="https://wazzocr.fusioneta.com.my/register.html">Create account</a></li>
+  </ul>
+</nav>
+
+<header id="hero">
+  <div class="hero-bg-dots"></div>
+  <div class="hero-bg-glow"></div>
+  <div class="hero-bg-glow2"></div>
+
+  <div class="hero-left">
+    <div class="hero-badge"><span class="badge-dot"></span>WhatsApp Bills → Xero · Multi-Entity · Live</div>
+
+    <h1 class="hero-h1">Snap. Send.<br><em>In&nbsp;Xero.</em></h1>
+    <div class="hero-h2sub">Every bill from WhatsApp into the right Xero entity.</div>
+
+    <p class="hero-desc">
+      Forward any <strong>bill or receipt</strong> to <strong>WhatsApp</strong> and WazzOCR reads it with AI vision OCR, then creates a <strong>Xero draft bill</strong> — automatically routed to the correct company. Run <strong>unlimited entities</strong> from one place with consolidated mode.
+    </p>
+
+    <div class="hero-actions">
+      <a href="https://wazzocr.fusioneta.com.my/register.html" class="btn-green">Start your free trial →</a>
+      <a href="#flow" class="btn-ghost">See how it works</a>
+    </div>
+
+    <div class="hero-stats">
+      <div class="hstat"><div class="hstat-num"><3s</div><div class="hstat-label">Bill → Xero</div></div>
+      <div class="hstat"><div class="hstat-num">99%</div><div class="hstat-label">OCR accuracy</div></div>
+      <div class="hstat"><div class="hstat-num">∞</div><div class="hstat-label">Xero entities</div></div>
+      <div class="hstat"><div class="hstat-num">100+</div><div class="hstat-label">Languages</div></div>
+    </div>
+  </div>
+
+  <!-- PHONE DEMO -->
+  <div class="hero-right">
+    <div class="phone-outer">
+      <div class="float-card float-card-1"><div class="fc-dot fc-green"></div>Draft bill in Xero ✓</div>
+      <div class="float-card float-card-2"><div class="fc-dot fc-blue"></div>Routed to entity ✓</div>
+
+      <div class="phone-shell">
+        <div class="ph-notch"><div class="ph-pill"></div></div>
+        <div class="wa-hdr">
+          <div class="wa-back">‹</div>
+          <div class="wa-av">W</div>
+          <div>
+            <div class="wa-nm">WazzOCR Bot</div>
+            <div class="wa-st">online · reading your bills</div>
+          </div>
+          <div class="wa-more">⋮</div>
+        </div>
+        <div class="wa-body" id="wa-body"></div>
+        <div class="wa-footer">
+          <div class="wa-input-box">Send a bill, receipt or invoice…</div>
+          <div class="wa-send-btn">📷</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-tabs" id="demo-tabs">
+      <button class="demo-tab active" data-demo="rcpt">Receipt</button>
+      <button class="demo-tab" data-demo="inv">Supplier Invoice</button>
+      <button class="demo-tab" data-demo="bill">Utility Bill</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- TRUSTED -->
+<div class="trusted">
+  <div class="trusted-lbl">Works with</div>
+  <div class="trusted-logos">
+    <div class="tlogo">XERO</div>
+    <div class="tlogo">WHATSAPP</div>
+    <div class="tlogo">WAZZUP24</div>
+    <div class="tlogo">GEMINI VISION AI</div>
+    <div class="tlogo">MULTI-ENTITY</div>
+    <div class="tlogo">FUSIONETA</div>
+  </div>
+</div>
+
+<!-- PLATFORM + DASHBOARD ANIMATION -->
+<section id="platform" class="section">
+  <div class="sec-head reveal" style="text-align:center;max-width:620px;margin:0 auto 44px">
+    <div class="sec-eye" style="justify-content:center">The platform</div>
+    <h2 class="sec-h2">Set it up once. Monitor every branch.</h2>
+    <p class="sec-sub" style="margin:0 auto">Connect your Xero branches, WhatsApp channels and chart of accounts — then watch every bill flow in across all entities, from one live dashboard.</p>
+  </div>
+
+  <div id="wzd" class="reveal">
+    <div class="wzd-win">
+      <div class="wzd-bar">
+        <div class="wzd-dots"><i></i><i></i><i></i></div>
+        <div class="wzd-url">app.wazzocr.com/account</div>
+      </div>
+      <div class="wzd-app">
+        <div class="wzd-topbar">
+          <div class="wzd-brand"><span class="wzd-logo">W</span>WazzOCR</div>
+          <div class="wzd-who">Sterling Mart Group · finance@sterlingmart.my</div>
+        </div>
+
+        <div class="wzd-h1">Sterling Mart Group</div>
+        <div class="wzd-subt">Bill automation overview</div>
+
+        <div class="wzd-hero">
+          <div class="wzd-eye">Bills created this month</div>
+          <div class="wzd-stat"><span class="wzd-num" id="wzd-num">0</span><span class="wzd-unit">bills</span></div>
+          <div class="wzd-all"><span id="wzd-all">0</span> all-time</div>
+        </div>
+
+        <div class="wzd-tabs">
+          <button class="wzd-tb on">Bills</button>
+          <button class="wzd-tb">Unmatched</button>
+          <button class="wzd-tb">Settings</button>
+        </div>
+
+        <div class="wzd-panel">
+          <div class="wzd-h2">Created bills <span class="wzd-cnt" id="wzd-cnt">0</span></div>
+          <div class="wzd-fbar">
+            <div class="wzd-fld grow"><label>Search</label><div class="wzd-inp">Supplier, invoice or Xero org…</div></div>
+            <div class="wzd-fld"><label>From</label><div class="wzd-inp">dd / mm / yyyy</div></div>
+            <div class="wzd-fld"><label>To</label><div class="wzd-inp">dd / mm / yyyy</div></div>
+            <button class="wzd-clr">Clear</button>
+          </div>
+          <table>
+            <colgroup><col style="width:74px"><col><col class="wzd-col-inv" style="width:100px"><col style="width:96px"><col style="width:168px"><col style="width:60px"></colgroup>
+            <thead><tr><th>Date</th><th>Supplier</th><th class="wzd-col-inv">Invoice</th><th>Total</th><th>Xero org</th><th>Xero</th></tr></thead>
+            <tbody id="wzd-rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="wzd-set">
+      <div class="wzd-step"><div class="wzd-stepn">1</div><div><h4>Connect</h4><p>Link each Xero branch and its WhatsApp channel in a few clicks.</p></div></div>
+      <div class="wzd-step"><div class="wzd-stepn">2</div><div><h4>Configure</h4><p>Upload each branch's chart of accounts and tune the AI extraction rules.</p></div></div>
+      <div class="wzd-step"><div class="wzd-stepn">3</div><div><h4>Monitor</h4><p>Track matched, pending & unmatched bills and per-branch analytics — live.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- USE CASES -->
+<section id="usecases" class="section section-alt">
+  <div class="sec-head reveal">
+    <div class="sec-eye">Why WazzOCR</div>
+    <h2 class="sec-h2">One WhatsApp. Every entity. All in Xero.</h2>
+    <p class="sec-sub">Built for accounting firms, group companies and franchises juggling many sets of books — not just a single Xero file.</p>
+  </div>
+  <div class="cases">
+    <div class="ccard reveal reveal-delay-1">
+      <div class="cicon">🏢</div>
+      <h3>Consolidated multi-entity mode</h3>
+      <p>Connect unlimited Xero organisations to one account. WazzOCR detects the entity from each bill and posts to the correct company automatically — no switching files.</p>
+      <div class="ctags"><span class="ctag">Multi-org</span><span class="ctag">Auto-routing</span><span class="ctag">Group companies</span></div>
+    </div>
+    <div class="ccard reveal reveal-delay-2">
+      <div class="cicon">💬</div>
+      <h3>Capture on WhatsApp</h3>
+      <p>Staff and clients simply forward a bill photo to a WhatsApp number powered by Wazzup24. Nothing to install, works on every phone.</p>
+      <div class="ctags"><span class="ctag">WhatsApp</span><span class="ctag">Wazzup24</span><span class="ctag">No app</span></div>
+    </div>
+    <div class="ccard reveal reveal-delay-3">
+      <div class="cicon">📗</div>
+      <h3>Xero draft bills, automatically</h3>
+      <p>Vendor, amount, date, tax and line items are written straight into a Xero draft bill — you stay in control and approve before anything posts.</p>
+      <div class="ctags"><span class="ctag">Xero</span><span class="ctag">Draft bills</span><span class="ctag">Review first</span></div>
+    </div>
+    <div class="ccard reveal reveal-delay-1">
+      <div class="cicon">🧠</div>
+      <h3>Smart AI extraction</h3>
+      <p>Gemini Vision AI reads messy, angled and multi-language documents. Add per-entity extraction rules so each company's bills come out exactly right.</p>
+      <div class="ctags"><span class="ctag">Gemini AI</span><span class="ctag">Custom rules</span><span class="ctag">100+ languages</span></div>
+    </div>
+    <div class="ccard reveal reveal-delay-2">
+      <div class="cicon">🗂️</div>
+      <h3>Per-entity chart of accounts</h3>
+      <p>Upload each company's chart of accounts so bills are coded to the right account from the start — accurate books across every entity.</p>
+      <div class="ctags"><span class="ctag">COA upload</span><span class="ctag">Account coding</span><span class="ctag">Per company</span></div>
+    </div>
+    <div class="ccard reveal reveal-delay-3">
+      <div class="cicon">📊</div>
+      <h3>Dashboard & analytics</h3>
+      <p>Track matched, pending and unmatched bills per company, with activity charts — all from one dashboard.</p>
+      <div class="ctags"><span class="ctag">Per-entity stats</span><span class="ctag">Bill matching</span><span class="ctag">Activity charts</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- LIVE FLOW ANIMATION -->
+<div class="demo-strip" id="flow">
+  <div id="wzf">
+    <div class="wzf-stage" id="wzf-stage">
+      <svg class="wzf-svg" id="wzf-svg" preserveAspectRatio="none">
+        <path class="wzf-link" id="wzf-link-ai"></path>
+        <path class="wzf-link" id="wzf-link-0"></path>
+        <path class="wzf-link" id="wzf-link-1"></path>
+        <path class="wzf-link" id="wzf-link-2"></path>
+      </svg>
+
+      <!-- WhatsApp -->
+      <div class="wzf-col wzf-wa" id="wzf-wa">
+        <div class="wzf-wa-hd">
+          <div class="wzf-av">W</div>
+          <div><b>WazzOCR Bot</b><br><span>online · reading your bills</span></div>
+        </div>
+        <div class="wzf-chat" id="wzf-chat"></div>
+      </div>
+
+      <!-- AI -->
+      <div class="wzf-col wzf-ai" id="wzf-ai">
+        <div class="wzf-orb-wrap">
+          <div class="wzf-pulse"></div>
+          <div class="wzf-ring" id="wzf-ring"></div>
+          <div class="wzf-orb"><b>AI</b><span>WazzOCR</span></div>
+        </div>
+        <div class="wzf-read" id="wzf-read"><div class="wzf-rh">Extracting…</div></div>
+      </div>
+
+      <!-- Xero branches -->
+      <div class="wzf-col wzf-orgs">
+        <div class="wzf-org" id="wzf-org-0">
+          <div class="wzf-onm"><span class="wzf-dot"></span>Sterling Mart — KL HQ</div>
+          <div class="wzf-ost"><span class="wzf-tick">✓</span><span class="wzf-otx">Xero · Kuala Lumpur</span></div>
+        </div>
+        <div class="wzf-org" id="wzf-org-1">
+          <div class="wzf-onm"><span class="wzf-dot"></span>Sterling Mart — Penang</div>
+          <div class="wzf-ost"><span class="wzf-tick">✓</span><span class="wzf-otx">Xero · Penang</span></div>
+        </div>
+        <div class="wzf-org" id="wzf-org-2">
+          <div class="wzf-onm"><span class="wzf-dot"></span>Sterling Mart — Johor Bahru</div>
+          <div class="wzf-ost"><span class="wzf-tick">✓</span><span class="wzf-otx">Xero · Johor Bahru</span></div>
+        </div>
+      </div>
+
+      <div class="wzf-packet" id="wzf-packet"></div>
+    </div>
+  </div>
+</div>
+
+<!-- INTEGRATIONS -->
+<section id="integrations" class="section">
+  <div class="sec-head reveal" style="text-align:center;max-width:580px;margin:0 auto 0">
+    <div class="sec-eye" style="justify-content:center">Integrations</div>
+    <h2 class="sec-h2">Plugs into how you already work.</h2>
+    <p class="sec-sub" style="margin:0 auto">Native Xero bill automation across unlimited organisations, captured over WhatsApp. FusionETA handles the full setup for you.</p>
+  </div>
+  <div class="int-grid reveal" style="justify-content:center">
+    <div class="ichip"><span class="icdot"></span>Xero</div>
+    <div class="ichip"><span class="icdot"></span>Unlimited Xero organisations</div>
+    <div class="ichip"><span class="icdot"></span>WhatsApp</div>
+    <div class="ichip"><span class="icdot"></span>Wazzup24</div>
+    <div class="ichip"><span class="icdot"></span>Gemini Vision AI</div>
+    <div class="ichip"><span class="icdot"></span>Per-entity chart of accounts</div>
+    <div class="ichip"><span class="icdot"></span>Draft bill review</div>
+    <div class="ichip"><span class="icdot"></span>Google sign-in</div>
+    <div class="ichip"><span class="icdot"></span>Activity & bill analytics</div>
+  </div>
+  <p class="reveal" style="text-align:center;margin-top:32px;font-size:14px;color:var(--muted)">Need bills to flow somewhere else too? <a href="mailto:simon@fusioneta.com" style="color:var(--green);font-weight:700">Contact FusionETA</a> — if it has an API, we can connect it.</p>
+</section>
+
+<!-- PRICING -->
+<section id="pricing" class="section section-alt">
+  <div class="sec-head reveal" style="text-align:center;max-width:580px;margin:0 auto 48px">
+    <div class="sec-eye" style="justify-content:center">Pricing</div>
+    <h2 class="sec-h2">Simple, transparent pricing.</h2>
+    <p class="sec-sub" style="margin:0 auto">Simple annual plans, priced by how many bills you send each month.</p>
+  </div>
+  <div class="pricing-grid reveal">
+    <div class="pcard">
+      <div class="ptier">Starter</div>
+      <div class="pamount"><sup>$</sup>1,000</div>
+      <div class="pperiod">USD per year</div>
+      <ul class="pfeats">
+        <li>50 bills / month</li>
+        <li>Connect multiple Xero entities</li>
+        <li>Per-entity extraction rules</li>
+        <li>Analytics dashboard</li>
+        <li>WhatsApp capture (Wazzup24)</li>
+        <li>Email & chat support</li>
+      </ul>
+      <a href="https://wazzocr.fusioneta.com.my/register.html" class="pcta pcta-outline">Get started</a>
+    </div>
+    <div class="pcard feat">
+      <div class="pbadge">Most Popular</div>
+      <div class="ptier">Business</div>
+      <div class="pamount"><sup>$</sup>2,000</div>
+      <div class="pperiod">USD per year</div>
+      <ul class="pfeats">
+        <li>250 bills / month</li>
+        <li>Connect multiple Xero entities</li>
+        <li>Per-entity extraction rules</li>
+        <li>Analytics dashboard</li>
+        <li>WhatsApp capture (Wazzup24)</li>
+        <li>Email & chat support</li>
+      </ul>
+      <a href="https://wazzocr.fusioneta.com.my/register.html" class="pcta pcta-green">Start now</a>
+    </div>
+    <div class="pcard">
+      <div class="ptier">Enterprise / Firms</div>
+      <div class="pamount" style="font-size:40px">Custom</div>
+      <div class="pperiod">for accounting firms & large groups</div>
+      <ul class="pfeats">
+        <li>Unlimited Xero entities & bills</li>
+        <li>AI usage & cost tracking</li>
+        <li>Multiple WhatsApp numbers</li>
+        <li>Dedicated account manager</li>
+        <li>On-premise deployment option</li>
+        <li>SLA guarantee & white-label</li>
+      </ul>
+      <a href="mailto:simon@fusioneta.com" class="pcta pcta-outline">Contact FusionETA</a>
+    </div>
+  </div>
+  <p class="reveal" style="text-align:center;margin-top:30px;font-size:13px;color:var(--muted);max-width:640px;margin-left:auto;margin-right:auto;">
+    Prices in USD, billed annually. Plans scale with how many bills you send each month. Need higher volume or more branches? <a href="mailto:simon@fusioneta.com" style="color:var(--green);font-weight:700">Get a tailored quote</a>.
+  </p>
+</section>
+
+<!-- TESTIMONIALS -->
+<section id="testimonials" class="section">
+  <div class="sec-head reveal">
+    <div class="sec-eye">Testimonials</div>
+    <h2 class="sec-h2">What our clients say.</h2>
+  </div>
+  <div class="tgrid">
+    <div class="tcard reveal reveal-delay-1">
+      <div class="tstars">★★★★★</div>
+      <p class="ttext">"We run books for 14 clients. Their staff just WhatsApp us the bills and WazzOCR drops a draft into the right Xero file. It's cut our data entry to almost nothing."</p>
+      <div class="tauthor"><div class="tav">R</div><div><div class="tname">Raj Subramaniam</div><div class="trole">Partner, FinServe Accounting KL</div></div></div>
+    </div>
+    <div class="tcard reveal reveal-delay-2">
+      <div class="tstars">★★★★★</div>
+      <p class="ttext">"Three companies under one group, one WhatsApp number. Each bill lands in the correct entity automatically — month-end close is hours faster now."</p>
+      <div class="tauthor"><div class="tav">S</div><div><div class="tname">Sarah Chen</div><div class="trole">Group CFO, Nexus Holdings SG</div></div></div>
+    </div>
+    <div class="tcard reveal reveal-delay-3">
+      <div class="tstars">★★★★★</div>
+      <p class="ttext">"Our outlet managers snap supplier invoices on the spot. Reviewing draft bills in Xero instead of typing them has been a huge time saver for the whole team."</p>
+      <div class="tauthor"><div class="tav">A</div><div><div class="tname">Ahmad Fadzillah</div><div class="trole">Finance Lead, SwiftMart MY</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" class="section section-alt">
+  <div class="sec-head reveal" style="text-align:center;max-width:600px;margin:0 auto 48px">
+    <div class="sec-eye" style="justify-content:center">FAQ</div>
+    <h2 class="sec-h2">Frequently asked questions.</h2>
+  </div>
+  <div class="faq-wrap reveal">
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">How does WazzOCR handle multiple Xero entities?<span class="faq-arr">+</span></button>
+      <div class="faq-a">Connect as many Xero organisations as you need to a single WazzOCR account. When a bill arrives, WazzOCR identifies which entity it belongs to and creates the draft bill in that company's Xero file — so a firm or group can manage every set of books from one WhatsApp number.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">Do bills post to Xero automatically, or do I review them first?<span class="faq-arr">+</span></button>
+      <div class="faq-a">WazzOCR creates a <strong>draft</strong> bill in Xero — nothing is finalised without you. You review matched, pending and unmatched bills on the dashboard and approve them in Xero whenever you're ready.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">How does it know which entity a bill belongs to?<span class="faq-arr">+</span></button>
+      <div class="faq-a">Each WhatsApp channel and set of AI extraction rules is mapped to a Xero organisation, and the AI also reads cues on the document itself. You can fine-tune routing and per-entity rules from the admin dashboard.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">Do my team or clients need to install anything?<span class="faq-arr">+</span></button>
+      <div class="faq-a">No. They use WhatsApp exactly as they always have — WazzOCR is just a contact they forward bill and receipt photos to. Nothing to install, works on any phone, in 100+ languages.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">What does WazzOCR cost?<span class="faq-arr">+</span></button>
+      <div class="faq-a">From USD 1,000 per year for up to 50 bills a month. Larger plans add more monthly bills and consolidated multi-entity support; accounting firms get unlimited entities. Contact us for a tailored quote.</div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">Is my financial data secure?<span class="faq-arr">+</span></button>
+      <div class="faq-a">Yes. Images are processed in real time and not retained after extraction, all data moves over encrypted HTTPS, Xero is connected via official OAuth, and WazzOCR can be deployed on your own server for full data sovereignty.</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- CTA -->
+<section id="cta-section">
+  <div class="reveal">
+    <h2 class="cta-h2">Stop typing bills.<br>Start <em>consolidating</em>.</h2>
+    <p class="cta-sub">Turn WhatsApp bills into Xero draft bills across every entity you manage. Built by FusionETA for firms and groups in Malaysia, Singapore and beyond.</p>
+    <div class="cta-acts">
+      <a href="https://wazzocr.fusioneta.com.my/register.html" class="btn-green">Get started — free trial →</a>
+      <a href="mailto:simon@fusioneta.com" class="btn-orange">Book a free demo</a>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     STRUCTURED DATA FOR GOOGLE (helps rich results & ranking)
+     ───────────────────────────────────────────────────────────── -->
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"SoftwareApplication",
+  "name":"WazzOCR",
+  "applicationCategory":"BusinessApplication",
+  "operatingSystem":"Web, WhatsApp",
+  "url":"https://fusioneta.com/bitrix24solution/wazzocr-image-text-whatsapp/",
+  "description":"WazzOCR turns bills and receipts sent over WhatsApp into Xero draft bills, automatically routed to the right entity. Consolidated multi-entity mode manages unlimited Xero organisations from one place.",
+  "publisher":{"@type":"Organization","name":"FusionETA","url":"https://fusioneta.com/"},
+  "offers":{"@type":"Offer","price":"1000","priceCurrency":"USD","url":"https://fusioneta.com/bitrix24solution/wazzocr-image-text-whatsapp/"}
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"Organization",
+  "name":"FusionETA",
+  "url":"https://fusioneta.com/",
+  "logo":"https://wazzocr.fusioneta.com.my/assets/fusioneta-logo.png",
+  "contactPoint":{"@type":"ContactPoint","telephone":"+60-12-603-0996","email":"simon@fusioneta.com","contactType":"sales"}
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"FAQPage",
+  "mainEntity":[
+    {"@type":"Question","name":"How does WazzOCR handle multiple Xero entities?","acceptedAnswer":{"@type":"Answer","text":"Connect as many Xero organisations as you need to one WazzOCR account. When a bill arrives over WhatsApp, WazzOCR identifies the entity and creates the draft bill in that company's Xero file, so a firm or group manages every set of books from one number."}},
+    {"@type":"Question","name":"Do bills post to Xero automatically or do I review them first?","acceptedAnswer":{"@type":"Answer","text":"WazzOCR creates a draft bill in Xero — nothing is finalised without you. You review matched, pending and unmatched bills on the dashboard and approve them in Xero when ready."}},
+    {"@type":"Question","name":"Do my team or clients need to install anything?","acceptedAnswer":{"@type":"Answer","text":"No. They use WhatsApp exactly as they always have. WazzOCR is just a contact they forward bill and receipt photos to — nothing to install, works on any phone."}},
+    {"@type":"Question","name":"What does WazzOCR cost?","acceptedAnswer":{"@type":"Answer","text":"From USD 1,000 per year for up to 50 bills a month. Larger plans add more monthly bills and consolidated multi-entity support; accounting firms get unlimited entities."}},
+    {"@type":"Question","name":"Is my financial data secure?","acceptedAnswer":{"@type":"Answer","text":"Yes. Images are processed in real time and not retained after extraction, all data moves over encrypted HTTPS, Xero connects via official OAuth, and WazzOCR can be deployed on your own server."}}
+  ]
+}
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   DEMO IMAGES — lightweight SVG mockups (work out of the box).
+   To use your own real photos instead, just replace any img value
+   below with a "data:image/jpeg;base64,...." data URI. Both the phone
+   demo and the thumbnail cards reuse these, so you only set each once.
+   ═══════════════════════════════════════════════════════════════ */
+const SVG_RCPT = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><rect width="320" height="200" rx="12" fill="#0f2d4a"/><rect x="96" y="16" width="128" height="172" rx="6" fill="#ffffff"/><rect x="112" y="32" width="96" height="12" rx="2" fill="#0f2d4a"/><rect x="112" y="56" width="96" height="6" rx="2" fill="#cbd5e1"/><rect x="112" y="70" width="96" height="6" rx="2" fill="#cbd5e1"/><rect x="112" y="84" width="70" height="6" rx="2" fill="#cbd5e1"/><rect x="112" y="104" width="96" height="6" rx="2" fill="#cbd5e1"/><rect x="112" y="118" width="60" height="6" rx="2" fill="#cbd5e1"/><rect x="112" y="148" width="96" height="16" rx="3" fill="#25D366"/></svg>`;
+const SVG_INV = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><rect width="320" height="200" rx="12" fill="#e2e8f0"/><rect x="30" y="22" width="260" height="156" rx="6" fill="#ffffff"/><text x="46" y="58" font-family="Arial,sans-serif" font-size="20" font-weight="800" fill="#0f2d4a">INVOICE</text><rect x="188" y="40" width="86" height="9" rx="2" fill="#94a3b8"/><rect x="188" y="56" width="86" height="9" rx="2" fill="#cbd5e1"/><rect x="46" y="88" width="228" height="7" rx="2" fill="#cbd5e1"/><rect x="46" y="104" width="228" height="7" rx="2" fill="#cbd5e1"/><rect x="46" y="120" width="176" height="7" rx="2" fill="#cbd5e1"/><rect x="170" y="148" width="104" height="16" rx="3" fill="#0f2d4a"/></svg>`;
+const SVG_BILL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><rect width="320" height="200" rx="12" fill="#fff7ed"/><rect x="28" y="22" width="264" height="156" rx="6" fill="#ffffff" stroke="#fed7aa" stroke-width="2"/><rect x="44" y="40" width="120" height="14" rx="3" fill="#ea580c"/><rect x="44" y="72" width="232" height="7" rx="2" fill="#cbd5e1"/><rect x="44" y="88" width="232" height="7" rx="2" fill="#cbd5e1"/><rect x="44" y="104" width="160" height="7" rx="2" fill="#cbd5e1"/><rect x="44" y="140" width="96" height="9" rx="2" fill="#94a3b8"/><rect x="180" y="132" width="96" height="22" rx="4" fill="#ea580c"/></svg>`;
+const svgURI = s => 'data:image/svg+xml,' + encodeURIComponent(s);
+
+const DEMOS = {
+  rcpt: {
+    img: svgURI(SVG_RCPT),
+    label: 'Café receipt',
+    text: `Vendor: Starbucks Coffee
+Date: 12 Jun 2026
+Subtotal: RM 25.75
+SST 6%: RM 1.55
+Total: RM 27.30
+→ Draft bill in Sterling Mart — KL HQ`,
+  },
+  inv: {
+    img: svgURI(SVG_INV),
+    label: 'Supplier invoice',
+    text: `Vendor: ABC Trading Sdn Bhd
+Invoice: INV-20418
+Date: 11 Jun 2026  ·  Terms: Net 30
+Subtotal: RM 1,396.23
+SST 6%: RM 83.77
+Total: RM 1,480.00
+→ Draft bill in Sterling Mart — Penang`,
+  },
+  bill: {
+    img: svgURI(SVG_BILL),
+    label: 'Utility bill',
+    text: `Vendor: Tenaga Nasional (TNB)
+Account: 220148800391
+Amount: RM 612.45
+Due: 28 Jun 2026
+→ Draft bill in Sterling Mart — Johor Bahru`,
+  },
+};
+
+/* Fill the demo-strip thumbnails from the same images */
+['rcpt','inv','bill'].forEach(k => {
+  const el = document.getElementById('thumb-' + k);
+  if (el && DEMOS[k].img.indexOf('data:image') === 0) el.src = DEMOS[k].img;
+});
+
+let currentDemo = 'rcpt';
+
+function renderDemo(key) {
+  const d = DEMOS[key];
+  const body = document.getElementById('wa-body');
+  body.innerHTML = '';
+  [
+    { type: 'out',      delay: 0 },
+    { type: 'scanning', delay: 950 },
+    { type: 'in',       delay: 2500 },
+  ].forEach(s => {
+    setTimeout(() => {
+      const el = document.createElement('div');
+      if (s.type === 'out') {
+        el.className = 'msg msg-out';
+        el.innerHTML = `<img class="msg-img" src="${d.img}" alt="${d.label}"><div class="msg-cap">${d.label}</div><div class="msg-time">09:22 ✓✓</div>`;
+      } else if (s.type === 'scanning') {
+        el.className = 'msg-scanning';
+        el.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div><span>Scanning image…</span>`;
+      } else {
+        body.querySelectorAll('.msg-scanning').forEach(e => e.remove());
+        el.className = 'msg msg-in';
+        el.innerHTML = `<div class="ext-label">📝 Extracted text:</div><div class="ext-text">${d.text}</div><div class="msg-time">09:22 ✓✓</div>`;
+      }
+      body.appendChild(el);
+      requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('vis')));
+      body.scrollTop = body.scrollHeight;
+    }, s.delay);
+  });
+}
+
+document.getElementById('demo-tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.demo-tab');
+  if (!tab) return;
+  document.querySelectorAll('.demo-tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  currentDemo = tab.dataset.demo;
+  renderDemo(currentDemo);
+});
+
+renderDemo('rcpt');
+setInterval(() => {
+  const keys = ['rcpt','inv','bill'];
+  currentDemo = keys[(keys.indexOf(currentDemo) + 1) % keys.length];
+  document.querySelectorAll('.demo-tab').forEach(t => t.classList.toggle('active', t.dataset.demo === currentDemo));
+  renderDemo(currentDemo);
+}, 6500);
+
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('vis'); });
+}, { threshold: 0.1 });
+document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+
+function toggleFaq(btn) {
+  const item = btn.closest('.faq-item');
+  const wasOpen = item.classList.contains('open');
+  document.querySelectorAll('.faq-item.open').forEach(i => i.classList.remove('open'));
+  if (!wasOpen) item.classList.add('open');
+}
+
+/* Sticky-nav shadow on scroll */
+(function () {
+  var n = document.getElementById('wazz-nav');
+  if (n) window.addEventListener('scroll', function () { n.classList.toggle('scrolled', window.scrollY > 10); });
+})();
+
+</script>
+
+<!-- ── FLOW ANIMATION (GSAP) ── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+(function () {
+  function boot() {
+    if (!window.gsap) { return setTimeout(boot, 60); }
+    var $ = function (id) { return document.getElementById(id); };
+    var stage = $('wzf-stage'), packet = $('wzf-packet');
+    if (!stage || !packet) return;
+
+    var orgs = [$('wzf-org-0'), $('wzf-org-1'), $('wzf-org-2')];
+    var links = { ai: $('wzf-link-ai'), 0: $('wzf-link-0'), 1: $('wzf-link-1'), 2: $('wzf-link-2') };
+
+    var BILLS = [
+      { icon: '🧾', name: 'Café receipt',     amount: 'RM 27.30',    org: 0,
+        fields: ['Vendor: Starbucks', 'Total: RM 27.30', 'SST 6% · 12 Jun', 'Branch: KL HQ'] },
+      { icon: '📄', name: 'Supplier invoice', amount: 'RM 1,480.00', org: 1,
+        fields: ['Vendor: ABC Trading', 'Inv: INV-20418', 'Total: RM 1,480.00', 'Branch: Penang'] },
+      { icon: '⚡', name: 'Utility bill',      amount: 'RM 612.45',   org: 2,
+        fields: ['Vendor: TNB', 'Amount: RM 612.45', 'Due: 28 Jun 2026', 'Branch: Johor Bahru'] }
+    ];
+
+    function center(el) {
+      var s = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
+      return { x: r.left - s.left + r.width / 2, y: r.top - s.top + r.height / 2 };
+    }
+    function setLink(path, a, b) {
+      var mx = (a.x + b.x) / 2;
+      path.setAttribute('d', 'M ' + a.x + ' ' + a.y + ' C ' + mx + ' ' + a.y + ' ' + mx + ' ' + b.y + ' ' + b.x + ' ' + b.y);
+    }
+    function layout() {
+      var w = stage.clientWidth, h = stage.clientHeight;
+      $('wzf-svg').setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+      var ai = center($('wzf-ai')), wa = center($('wzf-wa'));
+      setLink(links.ai, wa, ai);
+      [0, 1, 2].forEach(function (i) { setLink(links[i], ai, center(orgs[i])); });
+    }
+    function coolLines() { links.ai.classList.remove('hot'); [0,1,2].forEach(function(i){ links[i].classList.remove('hot'); }); }
+
+    gsap.set(packet, { xPercent: -50, yPercent: -50 });
+
+    function cycle(i) {
+      var b = BILLS[i % BILLS.length];
+      var chat = $('wzf-chat'), read = $('wzf-read');
+      layout();
+      chat.innerHTML = '';
+      read.innerHTML = '<div class="wzf-rh">Extracting…</div>';
+      orgs.forEach(function (o) { o.classList.remove('on'); });
+      coolLines();
+
+      var bub = document.createElement('div');
+      bub.className = 'wzf-bub';
+      bub.innerHTML = '<div class="wzf-doc">' + b.icon + '</div><div class="wzf-bub-t"><b>' + b.name + '</b><span>' + b.amount + '</span></div>';
+      chat.appendChild(bub);
+
+      var tl = gsap.timeline({ onComplete: function () { cycle(i + 1); } });
+
+      gsap.set(bub, { y: 16, opacity: 0 });
+      tl.to(bub, { y: 0, opacity: 1, duration: .5, ease: 'back.out(1.6)' });
+
+      tl.add(function () {
+        packet.className = 'wzf-packet doc';
+        packet.innerHTML = '<span>' + b.icon + '</span>' + b.name;
+        var p = center(bub);
+        gsap.set(packet, { x: p.x, y: p.y, scale: .6, opacity: 0 });
+        links.ai.classList.add('hot');
+      });
+      tl.to(packet, { opacity: 1, scale: 1, duration: .35, ease: 'back.out(2)' }, '+=.15');
+
+      tl.to(packet, { duration: .95, ease: 'power2.inOut',
+        onStart: function () { var ai = center($('wzf-ai')); gsap.to(packet, { x: ai.x, y: ai.y, duration: .95, ease: 'power2.inOut' }); } }, '+=.05');
+      tl.to(packet, { scale: .25, opacity: 0, duration: .3, ease: 'power1.in' });
+
+      tl.add(function () { $('wzf-ai').classList.add('busy'); coolLines(); });
+      b.fields.forEach(function (f, fi) {
+        tl.add(function () {
+          var d = document.createElement('div'); d.className = 'wzf-field'; d.textContent = f;
+          read.appendChild(d); gsap.from(d, { x: -8, opacity: 0, duration: .3 });
+        }, fi === 0 ? '+=.1' : '+=.22');
+      });
+      tl.to({}, { duration: .4 });
+      tl.add(function () { $('wzf-ai').classList.remove('busy'); });
+
+      tl.add(function () {
+        packet.className = 'wzf-packet bill';
+        packet.innerHTML = '<span>✓</span>Draft bill';
+        var p = center($('wzf-ai'));
+        gsap.set(packet, { x: p.x, y: p.y, scale: .4, opacity: 0 });
+        links[b.org].classList.add('hot');
+      });
+      tl.to(packet, { opacity: 1, scale: 1, duration: .3, ease: 'back.out(2)' });
+      tl.to(packet, { duration: .95, ease: 'power2.inOut',
+        onStart: function () { var oc = center(orgs[b.org]); gsap.to(packet, { x: oc.x, y: oc.y, duration: .95, ease: 'power2.inOut' }); } }, '+=.05');
+      tl.to(packet, { scale: .25, opacity: 0, duration: .3 });
+
+      tl.add(function () { orgs[b.org].classList.add('on'); coolLines(); });
+      tl.to({}, { duration: 1.5 });
+      tl.to(bub, { opacity: 0, y: -12, duration: .4 });
+    }
+
+    var rt;
+    window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(layout, 150); });
+    setTimeout(function () { layout(); cycle(0); }, 200);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+
+<!-- ── PLATFORM DASHBOARD ANIMATION (GSAP) ── -->
+<script>
+(function () {
+  function boot() {
+    if (!window.gsap) { return setTimeout(boot, 60); }
+    var wd = document.getElementById('wzd'); if (!wd) return;
+    var rows = document.getElementById('wzd-rows');
+    var elNum = document.getElementById('wzd-num'),
+        elAll = document.getElementById('wzd-all'),
+        elCnt = document.getElementById('wzd-cnt');
+    if (!rows || !elNum) return;
+
+    var ORGS = ['Sterling Mart — KL HQ', 'Sterling Mart — Penang', 'Sterling Mart — Johor Bahru'];
+    var POOL = [
+      ['Starbucks', 'INV-8841', 'RM 27.30'], ['ABC Trading', 'INV-20418', 'RM 1,480.00'],
+      ['TNB', 'TNB-5567', 'RM 612.45'], ['Grab', 'GR-99231', 'RM 54.10'],
+      ['Office Depot', 'OD-1180', 'RM 320.00'], ['Maxis', 'MX-7720', 'RM 189.00'],
+      ['Poslaju', 'PL-4456', 'RM 22.00'], ['Kopitiam', 'KT-3310', 'RM 18.50'],
+      ['JB Trading', 'JB-7781', 'RM 760.00'], ['Air Penang', 'AP-2204', 'RM 134.00']
+    ];
+    var DATES = ['12 Jun', '12 Jun', '11 Jun', '11 Jun', '10 Jun', '09 Jun'];
+    var MAX = 6;
+
+    function cells(date, p, org) {
+      return '<td class="wzd-dt">' + date + '</td>'
+        + '<td class="wzd-sup" title="' + p[0] + '">' + p[0] + '</td>'
+        + '<td class="wzd-col-inv">' + p[1] + '</td>'
+        + '<td class="wzd-tot">' + p[2] + '</td>'
+        + '<td class="wzd-org" title="' + org + '">' + org + '</td>'
+        + '<td><span class="wzd-open">Open ↗</span></td>';
+    }
+    var oNum = { v: 0 }, oAll = { v: 0 }, oCnt = { v: 0 };
+    function count(el, o, t, d) {
+      gsap.to(o, { v: t, duration: d || 1, ease: 'power1.out', onUpdate: function () { el.textContent = Math.round(o.v).toLocaleString(); } });
+    }
+
+    var month = 248, all = 3194, tick = 0, started = false;
+    function start() {
+      if (started) return; started = true;
+      count(elNum, oNum, month);
+      count(elAll, oAll, all);
+      count(elCnt, oCnt, month);
+      for (var i = 0; i < MAX; i++) {
+        var p = POOL[i % POOL.length], org = ORGS[i % 3];
+        var tr = document.createElement('tr'); tr.innerHTML = cells(DATES[i % DATES.length], p, org);
+        rows.appendChild(tr);
+        gsap.fromTo(tr, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: .4, delay: .15 + i * 0.08 });
+      }
+      tick = MAX;
+      setInterval(arrive, 2900);
+    }
+    function arrive() {
+      var p = POOL[tick % POOL.length], org = ORGS[tick % 3]; tick++;
+      var tr = document.createElement('tr'); tr.innerHTML = cells('12 Jun', p, org);
+      rows.insertBefore(tr, rows.firstChild);
+      gsap.fromTo(tr, { opacity: 0, y: -10, backgroundColor: 'rgba(37,211,102,.16)' },
+        { opacity: 1, y: 0, duration: .45, ease: 'power2.out' });
+      gsap.to(tr, { backgroundColor: 'rgba(255,255,255,0)', duration: 1.1, delay: .5 });
+      while (rows.children.length > MAX) rows.removeChild(rows.lastChild);
+      month += 1; all += 1;
+      count(elNum, oNum, month, .5); count(elAll, oAll, all, .5); count(elCnt, oCnt, month, .5);
+    }
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) { start(); io.disconnect(); } });
+      }, { threshold: 0.25 });
+      io.observe(wd);
+    } else { start(); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>

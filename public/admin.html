@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — WazzOCR</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <meta name="robots" content="noindex, nofollow">
+  <script src="/assets/chart.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand"><img class="brand-logo" src="/assets/fusioneta-logo.png" alt="FusionETA"><span class="brand-divider"></span><span class="brand-name">WazzOCR</span> <span class="badge neutral" style="margin-left:.4rem;">Admin</span></span>
+    <div class="right"><button class="btn btn-ghost btn-sm" onclick="renderList()">Accounts</button><button class="btn btn-ghost btn-sm" onclick="renderTickets()">Tickets</button><span class="who" id="whoLabel"></span><button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button></div>
+  </div>
+  <div class="container" id="app"><div class="card">Loading…</div></div>
+  <script>
+  const app = document.getElementById('app');
+  const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  async function api(method, url, body) {
+    const r = await fetch(url, { method, headers: body?{'Content-Type':'application/json'}:undefined, body: body?JSON.stringify(body):undefined });
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(data.error || ('HTTP '+r.status));
+    return data;
+  }
+  document.getElementById('logoutBtn').onclick = async () => { await fetch('/auth/logout',{method:'POST'}); location.href='/login.html'; };
+
+  async function guard() {
+    try { const me = await api('GET','/auth/me');
+      document.getElementById('whoLabel').textContent = me.user.name || me.user.email;
+      if (!me.user.isSuperAdmin) { app.innerHTML = '<div class="card">Admin access required. <a href="/account.html">Go to your account</a></div>'; return false; }
+      return true;
+    } catch { location.href='/login.html'; return false; }
+  }
+
+  let ACCOUNTS=[], GENERAL_PROMPTS=[], acctPage=1, acctSearch='';
+  const ACCT_PAGE=10;
+
+  async function renderList() {
+    history.replaceState(null, '', '#accounts');
+    const [acc, pr] = await Promise.all([api('GET','/admin/accounts'), api('GET','/admin/prompts')]);
+    ACCOUNTS = acc.accounts||[]; GENERAL_PROMPTS = pr.prompts||[]; acctPage=1; acctSearch='';
+    app.innerHTML = `
+      <div class="page-head"><h1>Accounts</h1><p>Manage customer accounts, channels and configuration.</p></div>
+      <div class="card">
+        <div class="filterbar"><div class="fb-field fb-grow"><label>Search accounts</label><input type="search" id="acctSearch" placeholder="Account name…"></div><span class="fb-count" id="acctCount"></span></div>
+        <div id="acctTable"></div></div>
+      <div class="card"><h2>Create account</h2>
+        <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap;"><div style="flex:1;min-width:200px;"><input id="newAcctName" placeholder="Company / account name"></div>
+        <button class="btn btn-primary" onclick="createAccount()">Create</button></div><div class="msg" id="createMsg"></div></div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;"><h2 style="margin:0;">General AI prompt</h2><button class="btn btn-primary btn-sm" onclick="openPromptModal(null,'general')">＋ Add prompt</button></div>
+        <p class="muted" style="margin:.5rem 0 1rem;">These blocks are combined (top to bottom) and applied to every account. Toggle a block off to exclude it.</p>
+        <div id="promptLib"></div></div>
+      <div class="card">
+        <h2>Trial default channel</h2>
+        <p class="muted" style="margin:.5rem 0 1rem;">The shared Wazzup channel id that all <strong>trial</strong> accounts use. Trial senders are routed to their account by phone number, so this channel must have phone restriction ON and each trial account's numbers added.</p>
+        <div class="grid2"><div class="field"><label>Channel ID</label><input id="trialChanId" placeholder="61e245cf-…"></div><div style="display:flex;align-items:flex-end;"><button class="btn btn-primary" onclick="saveTrialChannel()">Save</button></div></div>
+        <div class="msg" id="trialChanMsg"></div></div>`;
+    document.getElementById('acctSearch').oninput = (e)=>{ acctSearch=e.target.value; acctPage=1; renderAccountsTable(); };
+    renderAccountsTable(); renderPromptLib(); loadTrialChannel();
+  }
+  async function loadTrialChannel(){
+    const el=document.getElementById('trialChanId'); if(!el) return;
+    try { const d=await api('GET','/admin/settings/trial-channel'); el.value=d.channelId||''; } catch {}
+  }
+  window.saveTrialChannel = async () => { const m=document.getElementById('trialChanMsg');
+    try { await api('PUT','/admin/settings/trial-channel',{ channelId:document.getElementById('trialChanId').value.trim() });
+      m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  function renderAccountsTable(){
+    const q=acctSearch.toLowerCase().trim();
+    const filtered = ACCOUNTS.filter(a=>!q || String(a.name||'').toLowerCase().includes(q));
+    const el=document.getElementById('acctTable'); const cnt=document.getElementById('acctCount');
+    if(cnt) cnt.textContent = q ? `${filtered.length} of ${ACCOUNTS.length}` : `${ACCOUNTS.length} total`;
+    if(!filtered.length){ el.innerHTML='<div class="empty">'+(q?'No accounts match.':'No accounts yet.')+'</div>'; return; }
+    const pages=Math.max(1,Math.ceil(filtered.length/ACCT_PAGE)); if(acctPage>pages)acctPage=pages;
+    const start=(acctPage-1)*ACCT_PAGE; const slice=filtered.slice(start,start+ACCT_PAGE);
+    const rows=slice.map(a=>`<tr><td><strong>${esc(a.name)}</strong></td>
+      <td><span class="badge ${a.status==='active'?'success':'pending'}">${esc(a.status)}</span></td>
+      <td class="muted">${esc(a.ai_model)}</td><td class="muted num-cell">${new Date(a.created_at).toLocaleDateString()}</td>
+      <td style="text-align:right;"><button class="btn btn-ghost btn-sm" onclick="openAccount(${a.id})">Open →</button></td></tr>`).join('');
+    const pager = pages>1?`<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.82rem;color:var(--muted);">
+      <span>Showing ${start+1}–${start+slice.length} of ${filtered.length}</span>
+      <span><button class="btn btn-ghost btn-sm" ${acctPage===1?'disabled':''} onclick="acctGo(${acctPage-1})">‹ Prev</button>
+      <span style="margin:0 .6rem;">${acctPage} / ${pages}</span>
+      <button class="btn btn-ghost btn-sm" ${acctPage===pages?'disabled':''} onclick="acctGo(${acctPage+1})">Next ›</button></span></div>`:'';
+    el.innerHTML=`<table class="table"><thead><tr><th>Name</th><th>Status</th><th>AI model</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>${pager}`;
+  }
+  window.acctGo=(p)=>{ acctPage=p; renderAccountsTable(); };
+
+  // ── AI prompt library (general blocks; reused per-account in the detail page) ──
+  function promptRow(p, scope){
+    return `<tr style="cursor:pointer;" onclick="openPromptModal(${p.id},${typeof scope==='number'?scope:`'general'`})">
+      <td><strong>${esc(p.title)}</strong></td>
+      <td>${p.enabled?'<span class="badge success">on</span>':'<span class="badge skipped">off</span>'}</td>
+      <td class="muted" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((p.body||'').replace(/\s+/g,' ').slice(0,110))}</td>
+      <td style="text-align:right;"><span class="linkbtn">Edit</span></td></tr>`;
+  }
+  function renderPromptLib(){
+    const el=document.getElementById('promptLib');
+    el.innerHTML = GENERAL_PROMPTS.length
+      ? `<table class="table"><tbody>${GENERAL_PROMPTS.map(p=>promptRow(p,'general')).join('')}</tbody></table>`
+      : '<div class="empty">No prompt blocks yet. Click “Add prompt” to create one.</div>';
+  }
+  function findPrompt(id){ return GENERAL_PROMPTS.concat(window.ACCOUNT_PROMPTS||[]).find(p=>p.id===id); }
+  // scope: 'general' or an accountId number (per-account add-on).
+  window.openPromptModal = (id, scope) => {
+    const p = id ? findPrompt(id) : null;
+    const isAcct = typeof scope === 'number';
+    const scopeArg = isAcct ? scope : `'general'`;
+    openModal((id?'Edit':'New')+' prompt block', `
+      <div class="field"><label>Title</label><input id="pmTitle" value="${esc(p?p.title:'')}"></div>
+      <div class="field"><label>Prompt text</label><textarea id="pmBody" rows="12">${esc(p?p.body:'')}</textarea></div>
+      <label style="display:flex;align-items:center;gap:.5rem;font-size:.86rem;margin:.4rem 0 .2rem;cursor:pointer;"><input type="checkbox" id="pmEnabled" ${(!p||p.enabled)?'checked':''} style="width:auto;"> Enabled (included in the prompt)</label>
+      <div class="msg" id="pmMsg"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;">
+        ${id?`<button class="btn btn-ghost" style="color:var(--bad);border-color:var(--line);" onclick="deletePrompt(${id},${scopeArg})">Delete</button>`:'<span></span>'}
+        <button class="btn btn-primary" onclick="savePrompt(${id||'null'},${scopeArg})">Save</button></div>`);
+  };
+  window.savePrompt = async (id, scope) => {
+    const m=document.getElementById('pmMsg');
+    const title=document.getElementById('pmTitle').value.trim(), body=document.getElementById('pmBody').value, enabled=document.getElementById('pmEnabled').checked;
+    if(!title){ m.className='msg err'; m.textContent='Title is required.'; return; }
+    const isAcct = typeof scope === 'number';
+    try {
+      if(id) await api('PUT','/admin/prompts/'+id,{title,body,enabled});
+      else if(isAcct) await api('POST','/admin/accounts/'+scope+'/prompts',{title,body,enabled});
+      else await api('POST','/admin/prompts',{title,body,enabled});
+      closeModal();
+      if(isAcct) openAccount(scope);
+      else { GENERAL_PROMPTS=(await api('GET','/admin/prompts')).prompts||[]; renderPromptLib(); }
+    } catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  window.deletePrompt = async (id, scope) => {
+    if(!confirm('Delete this prompt block?')) return;
+    const isAcct = typeof scope === 'number';
+    try { await api('DELETE','/admin/prompts/'+id); closeModal();
+      if(isAcct) openAccount(scope);
+      else { GENERAL_PROMPTS=(await api('GET','/admin/prompts')).prompts||[]; renderPromptLib(); }
+    } catch(e){ alert(e.message); }
+  };
+
+  // ── Modal ──
+  function openModal(title, bodyHtml){
+    let m=document.getElementById('appModal'); if(!m){ m=document.createElement('div'); m.id='appModal'; document.body.appendChild(m); }
+    m.style.cssText='position:fixed;inset:0;z-index:2000;background:rgba(15,27,45,.45);display:flex;align-items:center;justify-content:center;padding:1rem;';
+    m.innerHTML=`<div style="background:#fff;border-radius:14px;max-width:640px;width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(8,16,45,.3);">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:1rem 1.25rem;border-bottom:1px solid var(--line);"><strong>${title}</strong><button class="linkbtn" style="font-size:1.1rem;" onclick="closeModal()">✕</button></div>
+      <div style="padding:1.25rem;overflow:auto;">${bodyHtml}</div></div>`;
+    m.onclick=(ev)=>{ if(ev.target===m) closeModal(); };
+  }
+  window.closeModal=()=>{ const m=document.getElementById('appModal'); if(m) m.remove(); };
+
+  // ── Channel details modal (label-only row outside; ID + API key inside) ──
+  const COPY_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+  function copyBtn(value){ return `<button class="copy-btn" title="Copy" onclick="copyText(event,'${esc(value)}')">${COPY_ICON}</button>`; }
+  window.openChannelModal = (cid) => {
+    const c = (window.CHAN_BY_ID||{})[cid]; if(!c) return;
+    openModal('Channel — ' + esc(c.label||'(no label)'), `
+      <div class="kv"><div class="k">Channel ID</div><div style="display:flex;align-items:center;gap:.4rem;font-family:ui-monospace,monospace;word-break:break-all;">${esc(c.channel_id)} ${copyBtn(c.channel_id)}</div></div>
+      <div class="kv"><div class="k">API key</div><div id="modalKey" style="display:flex;align-items:center;gap:.4rem;font-family:ui-monospace,monospace;word-break:break-all;">${c.hasApiKey?`${esc(c.apiKeyMasked)} <a href="#" onclick="revealModalKey(event,${cid})">Reveal</a>`:'<span style="color:var(--bad)">no API key</span>'}</div></div>`);
+  };
+  window.revealModalKey = async (e,cid)=>{ e.preventDefault();
+    try{ const d=await api('GET','/admin/accounts/'+window.CUR_ACCOUNT+'/channels/'+cid+'/api-key');
+      document.getElementById('modalKey').innerHTML = `${esc(d.apiKey)} ${copyBtn(d.apiKey)}`;
+    }catch(err){ alert(err.message); } };
+  window.copyText = (e,t)=>{ e.preventDefault(); if(navigator.clipboard) navigator.clipboard.writeText(t);
+    const btn=e.currentTarget; const o=btn.innerHTML; btn.innerHTML='<span style="color:var(--ok);font-size:.85rem;">✓</span>'; setTimeout(()=>{ btn.innerHTML=o; },1200); };
+
+  // ── Reusable searchable dropdown ── items:[{value,label}]; el.value() → selected
+  function searchDropdown(mount, items, opts){
+    opts=opts||{}; const el=typeof mount==='string'?document.getElementById(mount):mount; if(!el) return null;
+    let selected = opts.selected || (items[0]&&items[0].value) || '';
+    el.className='sdrop';
+    function labelOf(v){ const it=items.find(i=>i.value===v); return it?it.label:(opts.placeholder||'Select…'); }
+    el.innerHTML=`<button type="button" class="sdrop-btn"><span class="sdrop-cur">${esc(labelOf(selected))}</span><span class="sdrop-caret">▾</span></button>
+      <div class="sdrop-panel"><input class="sdrop-search" placeholder="Search…"><div class="sdrop-list"></div></div>`;
+    const btn=el.querySelector('.sdrop-btn'), panel=el.querySelector('.sdrop-panel'), search=el.querySelector('.sdrop-search'), list=el.querySelector('.sdrop-list'), cur=el.querySelector('.sdrop-cur');
+    function draw(q){ q=(q||'').toLowerCase(); const f=items.filter(i=>i.label.toLowerCase().includes(q));
+      list.innerHTML=f.length?f.map(i=>`<div class="sdrop-opt${i.value===selected?' sel':''}" data-v="${esc(i.value)}">${esc(i.label)}</div>`).join(''):'<div class="sdrop-empty">No matches</div>';
+      list.querySelectorAll('.sdrop-opt').forEach(o=>o.onclick=()=>{ selected=o.dataset.v; cur.textContent=o.textContent; closeP(); if(opts.onSelect)opts.onSelect(selected,o.textContent); }); }
+    function openP(){ panel.classList.add('open'); search.value=''; draw(''); search.focus(); document.addEventListener('click',outside); }
+    function closeP(){ panel.classList.remove('open'); document.removeEventListener('click',outside); }
+    function outside(ev){ if(!el.contains(ev.target)) closeP(); }
+    btn.onclick=(e)=>{ e.stopPropagation(); panel.classList.contains('open')?closeP():openP(); };
+    search.oninput=()=>draw(search.value);
+    el.value=()=>selected;
+    return el;
+  }
+  window.__searchDropdown = searchDropdown;
+
+  window.createAccount = async () => {
+    const name = document.getElementById('newAcctName').value.trim(); const m = document.getElementById('createMsg');
+    if (!name) { m.className='msg err'; m.textContent='Enter a name.'; return; }
+    try { await api('POST','/admin/accounts',{name}); renderList(); } catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+
+  window.adminTab = (name) => {
+    document.querySelectorAll('#app > .tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+    document.querySelectorAll('#app > .panel').forEach(p=>p.classList.toggle('active', p.id==='ap-'+name));
+    if (window.CUR_ACCOUNT) history.replaceState(null, '', '#account/'+window.CUR_ACCOUNT+'/'+name);
+  };
+  // In-card switcher for the two analytics charts.
+  window.chartTab = (name) => {
+    document.querySelectorAll('.chart-tabs button').forEach(b=>b.classList.toggle('active', b.dataset.ctab===name));
+    document.querySelectorAll('.chart-stack > .cpanel').forEach(p=>p.classList.toggle('active', p.id==='cpanel-'+name));
+    const ch = name==='ai' ? window._aiChart : window._actChart;
+    if (ch) { try { ch.resize(); } catch(_){} }
+  };
+  window.openAccount = async (id, subtab) => {
+    // If no sub-tab passed (e.g. a re-render after saving), keep the one in the URL.
+    if (!subtab) { const p=(location.hash||'').replace(/^#/,'').split('/'); if(p[0]==='account' && Number(p[1])===Number(id) && p[2]) subtab=p[2]; }
+    const [d, pr] = await Promise.all([ api('GET','/admin/accounts/'+id), api('GET','/admin/accounts/'+id+'/prompts') ]);
+    window.ACCOUNT_PROMPTS = pr.prompts||[]; window.CUR_CONNS = d.connections||[];
+    window.CUR_ACCOUNT = id; window.CHAN_BY_ID = {}; (d.channels||[]).forEach(c=>{ window.CHAN_BY_ID[c.id]=c; });
+    const counts = {}; (d.statusCounts||[]).forEach(s=>counts[s.status]=s.n);
+    const addonLib = window.ACCOUNT_PROMPTS.length
+      ? `<table class="table"><tbody>${window.ACCOUNT_PROMPTS.map(p=>promptRow(p,id)).join('')}</tbody></table>`
+      : '<div class="empty">No add-on blocks yet. Click “Add prompt”.</div>';
+    app.innerHTML = `
+      <div class="page-head"><button class="linkbtn" onclick="renderList()">← All accounts</button><h1 style="margin-top:.4rem;">${esc(d.account.name)}</h1></div>
+      <div class="tabs">
+        <button data-tab="stats" class="active" onclick="adminTab('stats')">Stats</button>
+        <button data-tab="settings" onclick="adminTab('settings')">Settings &amp; users</button>
+        <button data-tab="connections" onclick="adminTab('connections')">Connections</button></div>
+
+      <div class="panel active" id="ap-stats">
+        <div class="card hero"><div class="eyebrow">Bills created this month</div>
+          <div class="stat" style="margin-top:.35rem;"><span class="num">${d.successThisMonth||0}</span><span class="unit">bills</span></div>
+          <div class="muted" style="margin-top:.25rem;">${counts.success||0} all-time</div></div>
+        <div class="card">
+          <div class="stat-grid">
+            <div class="stat-tile ok"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span><span class="t-num">${counts.success||0}</span><span class="t-label">Success</span></div>
+            <div class="stat-tile bad"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span><span class="t-num">${counts.failed||0}</span><span class="t-label">Failed</span></div>
+            <div class="stat-tile warn"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="t-num">${counts.pending||0}</span><span class="t-label">Pending</span></div>
+            <div class="stat-tile"><span class="t-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span><span class="t-num">${d.coaCount}</span><span class="t-label">COA codes</span></div>
+          </div>
+          ${(d.failureReasons||[]).length?`<h3>Why bills failed</h3><table class="table"><thead><tr><th>Reason</th><th style="text-align:right;">Count</th></tr></thead><tbody>${d.failureReasons.map(f=>`<tr><td>${esc(f.failure_reason||'(none)')}</td><td style="text-align:right" class="num-cell">${f.n}</td></tr>`).join('')}</tbody></table>`:'<p class="muted" style="margin-top:1rem;margin-bottom:0;">No failed bills 🎉</p>'}</div>
+        <div class="card">
+          <div class="tabs chart-tabs" style="margin-bottom:1.1rem;">
+            <button class="active" data-ctab="activity" onclick="chartTab('activity')">Activity over time</button>
+            <button data-ctab="ai" onclick="chartTab('ai')">AI usage &amp; cost</button>
+          </div>
+          <div class="chart-stack">
+            <div id="cpanel-activity" class="cpanel active">
+              <div class="stat-grid" id="actTiles" style="margin-bottom:1.1rem;"></div>
+              <div style="position:relative;height:300px;"><canvas id="actChart"></canvas></div>
+              <p class="muted" style="margin:.7rem 0 0;"><strong style="color:var(--blue);">Documents processed</strong> ≈ AI extraction runs (one per document sent in). <strong style="color:var(--accent);">Bills created</strong> = drafts pushed to Xero. Last 12 months.</p>
+            </div>
+            <div id="cpanel-ai" class="cpanel">
+              <div class="stat-grid" id="aiTiles" style="margin-bottom:1.1rem;"></div>
+              <div style="position:relative;height:300px;"><canvas id="aiChart"></canvas></div>
+              <p class="muted" style="margin:.7rem 0 0;">Estimated from Gemini token counts (input + output) at current prices (1 USD ≈ <span id="aiRate">—</span> MYR). Token tracking started when this feature went live, so months before then read zero.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="ap-settings">
+        <div class="card"><h2>Settings</h2>
+          <div class="grid2">
+            <div class="field"><label>Status</label><div id="setStatusDrop"></div></div>
+            <div class="field"><label>Plan</label><div id="setPlanDrop"></div></div>
+            <div class="field"><label>AI model</label><div id="setModelDrop"></div></div>
+          </div>
+          <p class="muted" style="margin:.2rem 0 .8rem;">Trial accounts share the default trial channel and are routed by sender phone — add their numbers under <strong>Connections → Allowed phone numbers</strong>.</p>
+          <button class="btn btn-primary" onclick="saveSettings(${id})">Save settings</button><div class="msg" id="setMsg"></div></div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;"><h2 style="margin:0;">AI prompt add-on</h2><button class="btn btn-primary btn-sm" onclick="openPromptModal(null,${id})">＋ Add prompt</button></div>
+          <p class="muted" style="margin:.5rem 0 1rem;">Extra rules for this account only, combined with the general prompt.</p>
+          <div id="acctPromptLib">${addonLib}</div></div>
+
+        <div class="card"><h2>Users</h2>
+          <table class="table"><tbody>${(d.users||[]).map(u=>`<tr><td>${esc(u.name||'-')}</td><td>${esc(u.email)}</td><td style="text-align:right;"><span class="badge ${u.status==='active'?'success':'pending'}">${esc(u.status)}</span></td></tr>`).join('')||'<tr><td class="muted">No users</td></tr>'}</tbody></table>
+          <h3>Invite a user (WhatsApp)</h3>
+          <div class="grid2"><div class="field"><label>Email</label><input id="invEmail" type="email"></div><div class="field"><label>Phone (e.g. 60123…)</label><input id="invPhone"></div></div>
+          <div class="field"><label>Name</label><input id="invName"></div>
+          <button class="btn btn-primary" onclick="invite(${id})">Send invite</button><div class="msg" id="invMsg"></div></div>
+      </div>
+
+      <div class="panel" id="ap-connections">
+        <div class="settings-grid">
+          <div class="col-left">
+            <div class="card"><h2>Xero organisations</h2>
+              ${(d.connections||[]).length?`<div id="xeroDrop" style="max-width:340px;"></div>
+                <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.45rem;">
+                  <span class="muted">${d.connections.length} connected</span>
+                  <button class="linkbtn danger" type="button" id="xeroDiscBtn">Disconnect selected</button></div>
+                <div class="msg" id="xeroDiscMsg"></div>`:'<p class="muted">None connected yet</p>'}
+              <div style="margin-top:.7rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+                <a class="btn btn-primary" href="/admin/accounts/${id}/xero/connect">＋ Connect Xero</a>
+                <button class="btn btn-ghost" type="button" onclick="refreshXeroCache(${id},this)" title="Reload tax rates & accounts from Xero (after adding a new tax rate)">↻ Refresh tax rates</button>
+                <button class="btn btn-ghost" type="button" onclick="syncOrgNames(${id},this)" title="Re-fetch organisation names from Xero">✎ Sync org names</button>
+              </div>
+              <div class="msg" id="xeroCacheMsg"></div>
+              <p class="muted" style="margin-top:.5rem;">Opens Xero's consent screen — you'll need this account's Xero login.</p></div>
+          </div>
+          <div class="col-right">
+            <div class="card"><h2>Wazzup channels</h2>
+              <table class="table"><tbody>${(d.channels||[]).map(c=>`<tr>
+                <td><strong>${esc(c.label||'(no label)')}</strong> ${c.webhookRegistered?'<span class="badge success">Webhook registered</span>':'<span class="badge skipped">Not registered</span>'}</td>
+                <td style="text-align:right;white-space:nowrap;">
+                  <button class="linkbtn" onclick="openChannelModal(${c.id})">View</button>
+                  &nbsp; <button class="linkbtn" onclick="toggleChannelRestrict(${id},${c.id},${c.phoneRestrictionEnabled?1:0})" title="Limit this channel to the allowed phone numbers">${c.phoneRestrictionEnabled?'🔒 Restricted':'🔓 Open'}</button>
+                  &nbsp; <button class="linkbtn" onclick="registerWebhook(${id},${c.id})">Register webhook</button>
+                  &nbsp; <button class="linkbtn danger" onclick="delChannel(${id},${c.id})">Remove</button></td></tr>`).join('')||'<tr><td class="muted">No channels</td></tr>'}</tbody></table>
+              <div class="msg" id="regMsg"></div>
+              <h3>Add channel</h3>
+              <div class="grid2"><div class="field"><label>Channel ID</label><input id="chId"></div><div class="field"><label>Label</label><input id="chLabel"></div></div>
+              <div class="field"><label>API key (optional)</label><input id="chKey"></div>
+              <button class="btn btn-primary" onclick="addChannel(${id})">Add channel</button><div class="msg" id="chMsg"></div></div>
+
+            <div class="card"><h2>Allowed phone numbers</h2>
+              <p class="muted">Numbers that may use this account. For <strong>trial</strong> accounts these attach to the shared trial channel and route messages to this account. For paid accounts they apply when a channel above is set to 🔒 Restricted.</p>
+              <div id="acctPhonesBox" style="margin:.6rem 0;">…</div>
+              <div class="grid2"><div class="field"><label>Phone number</label><input id="acctPhoneNum" placeholder="60123456789"></div><div class="field"><label>Label (optional)</label><input id="acctPhoneLabel"></div></div>
+              <button class="btn btn-primary" onclick="addAcctPhone(${id})">Add number</button><div class="msg" id="acctPhoneMsg"></div></div>
+
+            <div class="card"><h2>Chart of accounts</h2>
+              <p class="muted">Upload a CSV with columns: code, name, category. Replaces the current ${d.coaCount} codes.</p>
+              <label class="file-drop" id="coaDrop">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span class="fd-text" id="coaFileText">Choose a CSV file or drag it here</span>
+                <input type="file" id="coaFile" accept=".csv,text/csv" hidden>
+              </label>
+              <div style="margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="uploadCoa(${id})">Upload COA</button>
+                <a class="btn btn-ghost" href="/admin/accounts/${id}/coa.csv">⬇ Download CSV (template + current)</a>
+              </div><div class="msg" id="coaMsg"></div></div>
+
+            <div class="card"><h2>Item code matching</h2>
+              <p class="muted">When enabled, a second AI pass matches each line item to a Xero item code from this org's Items list.</p>
+              <div style="display:flex;align-items:center;gap:.5rem;margin:.4rem 0 .8rem;">
+                <input type="checkbox" id="enableItemCode" ${d.account.enable_item_code ? 'checked' : ''} style="width:auto;flex-shrink:0;">
+                <label for="enableItemCode" style="cursor:pointer;margin:0;">Enable item code matching</label>
+              </div>
+              <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="saveItemCode(${id})">Save</button>
+                <button class="btn btn-ghost" type="button" onclick="refreshItemsCache(${id},this)" title="Clear cached Xero items list — next bill will re-fetch from Xero">↻ Refresh items</button>
+              </div>
+              <div class="msg" id="itemCodeMsg"></div></div>
+
+            <div class="card"><h2>External API</h2>
+              <p class="muted">Use the API key below to call WazzOCR from Google Apps Script or any external system.</p>
+              ${d.account.external_api_key ? `
+              <div style="display:flex;align-items:center;gap:.5rem;margin:.4rem 0 .8rem;flex-wrap:wrap;">
+                <code style="background:var(--surface-2,#f4f4f4);padding:.25rem .5rem;border-radius:4px;font-size:.85rem;word-break:break-all;flex:1;">${d.account.external_api_key}</code>
+                <button class="btn btn-ghost" onclick="copyApiKey('${d.account.external_api_key}',this)">Copy</button>
+              </div>` : `<p class="muted" style="margin:.4rem 0 .8rem;">No API key generated yet.</p>`}
+              <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="generateApiKey(${id},this)">↻ ${d.account.external_api_key ? 'Regenerate' : 'Generate'} API key</button>
+              </div>
+              <div class="msg" id="apiKeyMsg"></div></div>
+          </div>
+        </div>
+      </div>`;
+    wireFileDrop('coaDrop','coaFile','coaFileText','Choose a CSV file or drag it here');
+    renderAnalytics(id);
+    window.__searchDropdown('setStatusDrop', ['active','suspended','trial'].map(s=>({value:s,label:s})), { selected:d.account.status });
+    window.__searchDropdown('setPlanDrop', ['trial','paid'].map(s=>({value:s,label:s})), { selected:d.account.plan||'paid' });
+    window.__searchDropdown('setModelDrop', ['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>({value:s,label:s})), { selected:d.account.ai_model });
+    loadAcctPhones(id);
+    if ((d.connections||[]).length) {
+      window.__searchDropdown('xeroDrop', d.connections.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
+      document.getElementById('xeroDiscBtn').onclick = () => disconnectSelectedXero(id);
+    }
+    // restore / set the URL so a refresh stays on this account + sub-tab
+    if (['settings','connections'].includes(subtab)) adminTab(subtab);
+    else history.replaceState(null, '', '#account/'+id+'/stats');
+  };
+  // Last N calendar months as [{ym:'2026-06', label:'Jun'}], oldest → newest.
+  function lastNMonths(n){
+    const out=[]; const now=new Date();
+    for(let i=n-1;i>=0;i--){ const m=new Date(now.getFullYear(), now.getMonth()-i, 1);
+      const ym = m.getFullYear()+'-'+String(m.getMonth()+1).padStart(2,'0');
+      let label = m.toLocaleDateString('en-GB',{month:'short'});
+      if(m.getMonth()===0) label += " '"+String(m.getFullYear()).slice(-2);
+      out.push({ ym, label }); }
+    return out;
+  }
+  async function renderAnalytics(id){
+    if (typeof Chart === 'undefined') return;
+    let data; try { data = await api('GET','/admin/accounts/'+id+'/analytics'); } catch { return; }
+    const months = lastNMonths(12); const labels = months.map(m=>m.label);
+
+    // ── Activity chart (documents processed vs bills created) ──
+    const byYm = {}; (data.monthly||[]).forEach(r=>{ byYm[r.ym]=r; });
+    const procArr = months.map(m=>byYm[m.ym]?byYm[m.ym].processed:0);
+    const creaArr = months.map(m=>byYm[m.ym]?byYm[m.ym].created:0);
+    const sum = (a)=>a.reduce((x,y)=>x+y,0);
+    const actTiles = document.getElementById('actTiles');
+    if (actTiles) actTiles.innerHTML = `
+      <div class="stat-tile"><span class="t-num">${procArr[procArr.length-1]||0}</span><span class="t-label">Processed this month</span></div>
+      <div class="stat-tile ok"><span class="t-num">${creaArr[creaArr.length-1]||0}</span><span class="t-label">Created this month</span></div>
+      <div class="stat-tile"><span class="t-num">${sum(procArr)}</span><span class="t-label">Processed (12 mo)</span></div>
+      <div class="stat-tile ok"><span class="t-num">${sum(creaArr)}</span><span class="t-label">Created (12 mo)</span></div>`;
+    const actCtx = document.getElementById('actChart');
+    if (actCtx) {
+      if (window._actChart) { window._actChart.destroy(); window._actChart=null; }
+      window._actChart = new Chart(actCtx, {
+        type:'line',
+        data:{ labels, datasets:[
+          { label:'Documents processed', data:procArr, borderColor:'#2D4DB3', backgroundColor:'rgba(45,77,179,.12)', fill:true, tension:.35, borderWidth:2, pointRadius:3, pointHoverRadius:5 },
+          { label:'Bills created', data:creaArr, borderColor:'#FF6B35', backgroundColor:'rgba(255,107,53,.10)', fill:true, tension:.35, borderWidth:2, pointRadius:3, pointHoverRadius:5 }
+        ]},
+        options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+          plugins:{ legend:{ position:'bottom', labels:{ usePointStyle:true, boxWidth:8, font:{ family:'Inter', size:12 } } } },
+          scales:{ y:{ beginAtZero:true, ticks:{ precision:0, color:'#6B7A8D' }, grid:{ color:'#EEF2F8' } }, x:{ ticks:{ color:'#6B7A8D' }, grid:{ display:false } } } }
+      });
+    }
+
+    // ── AI usage & cost ──
+    const ai = data.ai || { monthly:[], totalTokens:0, totalCostMyr:0, myrPerUsd:0 };
+    const aiYm = {}; (ai.monthly||[]).forEach(r=>{ aiYm[r.ym]=r; });
+    const tokens = months.map(m=>aiYm[m.ym]?aiYm[m.ym].tokens:0);
+    const cost   = months.map(m=>aiYm[m.ym]?aiYm[m.ym].costMyr:0);
+    const fmtTok = (n)=> n>=1e6?(n/1e6).toFixed(2)+'M' : n>=1e3?(n/1e3).toFixed(1)+'k' : String(n||0);
+    const fmtMyr = (n)=> 'RM '+Number(n||0).toFixed(2);
+    const tiles = document.getElementById('aiTiles');
+    if (tiles) tiles.innerHTML = `
+      <div class="stat-tile"><span class="t-num">${fmtTok(tokens[tokens.length-1])}</span><span class="t-label">Tokens this month</span></div>
+      <div class="stat-tile"><span class="t-num" style="font-size:1.5rem;">${fmtMyr(cost[cost.length-1])}</span><span class="t-label">Est. cost this month</span></div>
+      <div class="stat-tile"><span class="t-num">${fmtTok(ai.totalTokens)}</span><span class="t-label">Tokens all-time</span></div>
+      <div class="stat-tile"><span class="t-num" style="font-size:1.5rem;">${fmtMyr(ai.totalCostMyr)}</span><span class="t-label">Est. cost all-time</span></div>`;
+    const rate = document.getElementById('aiRate'); if (rate) rate.textContent = Number(ai.myrPerUsd||0).toFixed(2);
+    const aiCtx = document.getElementById('aiChart');
+    if (aiCtx) {
+      if (window._aiChart) { window._aiChart.destroy(); window._aiChart=null; }
+      window._aiChart = new Chart(aiCtx, {
+        data:{ labels, datasets:[
+          { type:'bar', label:'Tokens', data:tokens, backgroundColor:'rgba(45,77,179,.22)', borderColor:'#2D4DB3', borderWidth:1, borderRadius:4, yAxisID:'y' },
+          { type:'line', label:'Est. cost (MYR)', data:cost, borderColor:'#FF6B35', backgroundColor:'rgba(255,107,53,.12)', fill:true, tension:.35, borderWidth:2, pointRadius:3, pointHoverRadius:5, yAxisID:'y1' }
+        ]},
+        options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:'index', intersect:false },
+          plugins:{ legend:{ position:'bottom', labels:{ usePointStyle:true, boxWidth:8, font:{ family:'Inter', size:12 } } } },
+          scales:{
+            y:{ beginAtZero:true, position:'left', grid:{ color:'#EEF2F8' }, title:{ display:true, text:'Tokens', color:'#6B7A8D' },
+                ticks:{ color:'#6B7A8D', callback:(v)=> v>=1e6?(v/1e6)+'M' : v>=1e3?(v/1e3)+'k' : v } },
+            y1:{ beginAtZero:true, position:'right', grid:{ display:false }, title:{ display:true, text:'Cost (MYR)', color:'#6B7A8D' },
+                 ticks:{ color:'#6B7A8D', callback:(v)=>'RM '+v } },
+            x:{ ticks:{ color:'#6B7A8D' }, grid:{ display:false } } }
+        }
+      });
+    }
+  }
+  window.disconnectSelectedXero = async (id) => {
+    const dd=document.getElementById('xeroDrop'); const tid = dd && dd.value ? dd.value() : '';
+    const m=document.getElementById('xeroDiscMsg');
+    const conn=(window.CUR_CONNS||[]).find(c=>c.xero_tenant_id===tid);
+    if(!conn){ m.className='msg err'; m.style.display='block'; m.textContent='Choose an organisation to disconnect first.'; return; }
+    const name=conn.tenant_name||conn.xero_tenant_id;
+    if(!confirm('Disconnect "'+name+'" from Xero?\n\nThis revokes WazzOCR\'s access to that organisation at Xero, then removes it here.')) return;
+    m.className='msg'; m.style.display='block'; m.textContent='Disconnecting…';
+    try { await api('DELETE','/admin/accounts/'+id+'/connections/'+conn.id); openAccount(id); }
+    catch(e){ m.className='msg err'; m.textContent=e.message; }
+  };
+  // Reusable styled file picker (click or drag-drop), shows the chosen filename.
+  function wireFileDrop(dropId, inputId, textId, placeholder){
+    const drop=document.getElementById(dropId), input=document.getElementById(inputId), text=document.getElementById(textId);
+    if(!drop||!input) return;
+    const show=()=>{ const f=input.files[0]; text.innerHTML = f ? '<strong>'+esc(f.name)+'</strong>' : placeholder; };
+    input.onchange=show;
+    ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('dragover');}));
+    ['dragleave','dragend'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('dragover');}));
+    drop.addEventListener('drop',e=>{ e.preventDefault(); drop.classList.remove('dragover'); if(e.dataTransfer.files.length){ input.files=e.dataTransfer.files; show(); } });
+    show();
+  }
+  window.saveSettings = async (id) => { const m=document.getElementById('setMsg');
+    try { await api('PUT','/admin/accounts/'+id, { status:document.getElementById('setStatusDrop').value(), plan:document.getElementById('setPlanDrop').value(), aiModel:document.getElementById('setModelDrop').value(), enableItemCode:document.getElementById('enableItemCode').checked });
+      m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  // Per-channel phone restriction toggle + allowed-phone management.
+  window.toggleChannelRestrict = async (id,cid,cur) => {
+    try { await api('POST','/admin/accounts/'+id+'/channels/'+cid+'/phone-restriction',{ enabled:!cur }); openAccount(id); }
+    catch(e){ alert(e.message); } };
+  async function loadAcctPhones(id){
+    const box=document.getElementById('acctPhonesBox'); if(!box) return;
+    try { const d=await api('GET','/admin/accounts/'+id+'/phones'); const phones=d.phones||[];
+      box.innerHTML = phones.length ? `<table class="table"><tbody>${phones.map(p=>`<tr>
+        <td><strong>${esc(p.phone)}</strong>${p.label?` <span class="muted">— ${esc(p.label)}</span>`:''}</td>
+        <td style="text-align:right;"><button class="linkbtn danger" onclick="delAcctPhone(${id},${p.id})">Remove</button></td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">No numbers yet.</div>';
+    } catch(e){ box.innerHTML='<div class="empty">Could not load.</div>'; } }
+  window.addAcctPhone = async (id) => { const m=document.getElementById('acctPhoneMsg');
+    const phone=document.getElementById('acctPhoneNum').value.trim(), label=document.getElementById('acctPhoneLabel').value.trim();
+    if(!phone){ m.className='msg err'; m.textContent='Enter a phone number.'; return; }
+    try { await api('POST','/admin/accounts/'+id+'/phones',{ phone, label:label||undefined });
+      document.getElementById('acctPhoneNum').value=''; document.getElementById('acctPhoneLabel').value='';
+      m.className='msg ok'; m.textContent='Number added.'; loadAcctPhones(id); }
+    catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  window.delAcctPhone = async (id,pid) => { try { await api('DELETE','/admin/accounts/'+id+'/phones/'+pid); loadAcctPhones(id); } catch(e){ alert(e.message); } };
+  window.invite = async (id) => { const m=document.getElementById('invMsg');
+    try { const r=await api('POST','/admin/accounts/'+id+'/invite',{ email:document.getElementById('invEmail').value.trim(), phone:document.getElementById('invPhone').value.trim(), name:document.getElementById('invName').value.trim() });
+      m.className='msg ok'; m.textContent = r.sent?'Invite sent via WhatsApp.':('WhatsApp send failed. Share this link: '+r.link); openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  window.addChannel = async (id) => { const m=document.getElementById('chMsg');
+    try { await api('POST','/admin/accounts/'+id+'/channels',{ channelId:document.getElementById('chId').value.trim(), label:document.getElementById('chLabel').value.trim(), apiKey:document.getElementById('chKey').value.trim()||undefined }); openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  window.delChannel = async (id,cid) => { try { await api('DELETE','/admin/accounts/'+id+'/channels/'+cid); openAccount(id); } catch(e){ alert(e.message); } };
+  window.refreshXeroCache = async (id,btn) => { const m=document.getElementById('xeroCacheMsg'); m.className='msg'; m.style.display='block'; m.textContent='Refreshing…'; if(btn) btn.disabled=true;
+    try { const d=await api('POST','/admin/accounts/'+id+'/xero/refresh-cache'); m.className='msg ok'; m.textContent='Tax rates & accounts refreshed for '+d.refreshed+' org(s). Re-send the bill to apply.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
+  window.refreshItemsCache = async (id,btn) => { const m=document.getElementById('itemCodeMsg'); m.className='msg'; m.style.display='block'; m.textContent='Refreshing…'; if(btn) btn.disabled=true;
+    try { const d=await api('POST','/admin/accounts/'+id+'/xero/refresh-items'); m.className='msg ok'; m.textContent='Items cache cleared for '+d.refreshed+' org(s). Next bill will re-fetch from Xero.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
+  window.saveItemCode = async (id) => { const m=document.getElementById('itemCodeMsg'); m.className='msg'; m.style.display='block'; m.textContent='Saving…';
+    try { await api('PUT','/admin/accounts/'+id, { enableItemCode: document.getElementById('enableItemCode').checked }); m.className='msg ok'; m.textContent='Saved.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  window.generateApiKey = async (id, btn) => { const m=document.getElementById('apiKeyMsg'); m.className='msg'; m.style.display='block'; m.textContent='Generating…'; if(btn) btn.disabled=true;
+    try { const d=await api('POST','/admin/accounts/'+id+'/generate-api-key'); m.className='msg ok'; m.textContent='New API key: '+d.apiKey+' — refresh the page to see it in the card.'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
+  window.copyApiKey = (key, btn) => { navigator.clipboard.writeText(key).then(()=>{ const t=btn.textContent; btn.textContent='Copied!'; setTimeout(()=>btn.textContent=t,1500); }); };
+  window.syncOrgNames = async (id,btn) => { const m=document.getElementById('xeroCacheMsg'); m.className='msg'; m.style.display='block'; m.textContent='Syncing org names…'; if(btn) btn.disabled=true;
+    try { const d=await api('POST','/admin/accounts/'+id+'/xero/sync-org-names'); m.className='msg ok'; m.textContent='Org names updated: '+d.updated+' change(s).'; } catch(e){ m.className='msg err'; m.textContent=e.message; } finally { if(btn) btn.disabled=false; } };
+  window.registerWebhook = async (id,cid) => { const m=document.getElementById('regMsg'); m.className='msg'; m.style.display='block'; m.textContent='Registering…';
+    try { await api('POST','/admin/accounts/'+id+'/channels/'+cid+'/register-webhook'); m.className='msg ok'; m.textContent='Webhook registered with Wazzup ✓'; openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+  window.uploadCoa = async (id) => { const m=document.getElementById('coaMsg');
+    const f=document.getElementById('coaFile').files[0];
+    if(!f){ m.className='msg err'; m.textContent='Choose a CSV file first.'; return; }
+    try { const csv=await f.text(); const r=await api('POST','/admin/accounts/'+id+'/coa',{ csv }); m.className='msg ok'; m.textContent=`Uploaded ${r.count} codes.`;
+      document.getElementById('coaFile').value=''; const t=document.getElementById('coaFileText'); if(t) t.textContent='Choose a CSV file or drag it here';
+    } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+
+  // ── Support tickets (error tracking) ──────────────────────────────────────
+  let TICKET_FILTER = null;
+  async function renderTickets() {
+    history.replaceState(null, '', '#tickets');
+    app.innerHTML = `
+      <div class="page-head"><h1>Support tickets</h1><p>Errors customers hit. Look up a code they quoted, see the raw cause, and mark it resolved.</p></div>
+      <div class="card" id="ticketsCard">Loading…</div>`;
+    await loadTickets();
+  }
+  async function loadTickets() {
+    const card = document.getElementById('ticketsCard');
+    if (!card) return;
+    try {
+      const d = await api('GET', '/admin/tickets' + (TICKET_FILTER ? ('?status=' + TICKET_FILTER) : ''));
+      const counts = { open:0, investigating:0, resolved:0 };
+      (d.counts||[]).forEach(c => counts[c.status] = Number(c.n));
+      const total = counts.open + counts.investigating + counts.resolved;
+      const chip = (key,label,n) => `<button class="btn btn-sm ${TICKET_FILTER===key?'btn-primary':'btn-ghost'}" onclick="setTicketFilter(${key?`'${key}'`:'null'})">${label} · ${n}</button>`;
+      const filters = `<div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem;">
+        ${chip(null,'All',total)}${chip('open','Open',counts.open)}${chip('investigating','Investigating',counts.investigating)}${chip('resolved','Resolved',counts.resolved)}</div>`;
+      const rows = (d.tickets||[]).map(ticketRow).join('');
+      card.innerHTML = filters + (rows
+        ? `<table class="table"><thead><tr><th>Code</th><th>Account</th><th>Stage</th><th>Error</th><th>When</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="empty">No tickets here 🎉</div>');
+    } catch (e) { card.innerHTML = '<div class="msg err">' + esc(e.message) + '</div>'; }
+  }
+  function ticketRow(t) {
+    const when = new Date(t.created_at).toLocaleString();
+    const badge = t.status==='resolved' ? 'success' : (t.status==='investigating' ? 'pending' : 'neutral');
+    const errPreview = esc((t.error_message||'').replace(/\s+/g,' ').slice(0,70)) || '<span class="muted">—</span>';
+    const acts = [];
+    if (t.status === 'open') acts.push(`<button class="btn btn-ghost btn-sm" onclick="setTicket(${t.id},'investigating')">Investigating</button>`);
+    acts.push(t.status === 'resolved'
+      ? `<button class="btn btn-ghost btn-sm" onclick="setTicket(${t.id},'open')">Reopen</button>`
+      : `<button class="btn btn-ghost btn-sm" onclick="setTicket(${t.id},'resolved')">Resolve</button>`);
+    const detail = typeof t.error_detail === 'string' ? t.error_detail : (t.error_detail ? JSON.stringify(t.error_detail, null, 2) : '');
+    return `<tr style="cursor:pointer;" onclick="toggleTicket(${t.id})">
+        <td><strong>${esc(t.ticket_code)}</strong></td>
+        <td>${esc(t.account_name||'—')}</td>
+        <td><span class="badge neutral">${esc(t.stage||'')}</span></td>
+        <td class="muted">${errPreview}</td>
+        <td class="muted num-cell">${esc(when)}</td>
+        <td><span class="badge ${badge}">${esc(t.status)}</span></td>
+        <td style="text-align:right;white-space:nowrap;" onclick="event.stopPropagation()">${acts.join(' ')}</td></tr>
+      <tr id="tk-${t.id}" style="display:none;"><td colspan="7">
+        <div style="background:#f6f7fb;border-radius:8px;padding:.75rem;font-size:.8rem;white-space:pre-wrap;word-break:break-word;line-height:1.5;">`
+        + `<strong>chat:</strong> ${esc(t.chat_id||'—')}\n<strong>error:</strong> ${esc(t.error_message||'—')}`
+        + (detail ? `\n<strong>detail:</strong> ${esc(detail)}` : '')
+        + `</div></td></tr>`;
+  }
+  function setTicketFilter(f){ TICKET_FILTER = f; loadTickets(); }
+  function toggleTicket(id){ const r = document.getElementById('tk-'+id); if (r) r.style.display = r.style.display==='none' ? '' : 'none'; }
+  async function setTicket(id, status){ try { await api('PUT','/admin/tickets/'+id,{status}); await loadTickets(); } catch(e){ alert(e.message); } }
+
+  // Restore the view (accounts list, tickets, or a specific account + sub-tab) after refresh.
+  function route() {
+    const p = (location.hash||'').replace(/^#/,'').split('/');
+    if (p[0]==='tickets') renderTickets();
+    else if (p[0]==='account' && p[1]) openAccount(Number(p[1]), p[2]).catch(()=>renderList());
+    else renderList();
+  }
+  // Surface the result of a Xero connect (admin connected an account's Xero),
+  // then strip the ?xero query but keep the hash so route() lands on the right
+  // account + connections tab.
+  function flashXeroResult() {
+    const q = new URLSearchParams(location.search); const x = q.get('xero'); if (!x) return;
+    const reason = decodeURIComponent(q.get('reason') || '');
+    const ok = x === 'connected';
+    const d = document.createElement('div');
+    d.textContent = ok ? 'Xero connected successfully ✓'
+      : (/denied|cancel|access_denied/i.test(reason) ? 'Xero connection was cancelled.' : ('Xero connection failed' + (reason ? ': ' + reason : '.')));
+    d.style.cssText = 'position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:1000;padding:.7rem 1.1rem;border-radius:10px;font-size:.9rem;font-weight:600;box-shadow:0 8px 24px rgba(16,35,92,.18);background:' + (ok ? '#ECFDF3' : '#FEF3F2') + ';color:' + (ok ? '#067647' : '#B42318') + ';';
+    document.body.appendChild(d);
+    setTimeout(() => { d.style.transition = 'opacity .4s'; d.style.opacity = '0'; setTimeout(() => d.remove(), 400); }, 4500);
+    history.replaceState({}, '', location.pathname + location.hash);
+  }
+  (async () => { if (await guard()) { route(); flashXeroResult(); } })();
+  </script>
+</body>
+</html>
