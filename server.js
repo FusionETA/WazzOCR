@@ -380,23 +380,7 @@ function getFirstItem(payload, key) {
   return Array.isArray(list) && list.length ? list[0] : null;
 }
 
-// Only DELETED frees the invoice number for reuse. VOIDED keeps it reserved
-// forever, and a POST /Invoices carrying that number gets matched to the voided
-// invoice and rejected with "Invoice not of valid status for modification" —
-// so VOIDED has to block the create just like an active bill does. (Archiving
-// still treats both as gone, hence the separate set below.)
-const NON_BLOCKING_BILL_STATUSES = new Set(['DELETED']);
 const ARCHIVED_BILL_STATUSES = new Set(['DELETED', 'VOIDED', 'MISSING', 'NOT_FOUND']);
-
-function isBlockingDuplicateBill(invoice) {
-  if (!invoice?.InvoiceID) return false;
-  const status = String(invoice.Status || '').toUpperCase();
-  return !NON_BLOCKING_BILL_STATUSES.has(status);
-}
-
-function isVoidedBillStatus(status) {
-  return String(status || '').toUpperCase() === 'VOIDED';
-}
 
 function isArchivedBillStatus(status) {
   return ARCHIVED_BILL_STATUSES.has(String(status || '').toUpperCase());
@@ -404,6 +388,10 @@ function isArchivedBillStatus(status) {
 
 function isArchivedBillRecord(record) {
   return Boolean(record?.archivedAt || isArchivedBillStatus(record?.status));
+}
+
+function hasCreatedXeroBill(outcome) {
+  return Boolean(outcome?.status === 'created' && outcome?.xero?.invoiceId);
 }
 
 function collectValidationMessages(node, messages = [], seen = new Set()) {
@@ -1254,17 +1242,6 @@ async function findOrCreateContact(bill, tenantId) {
   return created;
 }
 
-async function findDuplicateBill(invoiceNumber, tenantId) {
-  if (!invoiceNumber) return null;
-  const where = buildWhereClause([
-    'Type=="ACCPAY"',
-    `InvoiceNumber=="${escapeXeroString(invoiceNumber)}"`,
-    'Status!="DELETED"'
-  ]);
-  const payload = await xeroApi(`/Invoices?where=${encodeURIComponent(where)}`, {}, tenantId);
-  return (payload.Invoices || []).find(isBlockingDuplicateBill) || null;
-}
-
 // Extensions Xero will accept on an attachment. Anything outside this list gets
 // rejected with "isn't a supported file type", so a filename must never be the
 // thing that decides the file type — see sanitizeAttachmentName below.
@@ -1504,25 +1481,6 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
   }
   bill.supplier = String(bill.supplier || '').trim() || FALLBACK_SUPPLIER_NAME;
   const contact = await findOrCreateContact(bill, tenantId);
-  const duplicate = await findDuplicateBill(bill.invoiceNo, tenantId);
-  if (duplicate?.InvoiceID) {
-    const voided = isVoidedBillStatus(duplicate.Status);
-    if (!voided) {
-      const error = new Error(`An active bill with invoice number "${bill.invoiceNo}" already exists in Xero.`);
-      error.statusCode = 409;
-      error.payload = {
-        duplicate: true,
-        voided: false,
-        invoiceId: duplicate.InvoiceID,
-        invoiceNumber: duplicate.InvoiceNumber,
-        status: duplicate.Status,
-        contactName: duplicate.Contact?.Name || null
-      };
-      throw error;
-    }
-    // Voided bills: ACCPAY InvoiceNumber is non-unique in Xero, so the same
-    // number can be reused — just let it through.
-  }
 
   // Determine the right Xero TaxType for this bill based on its declared
   // tax %. Example: invoice has subtotal 772.50 + tax 46.35 = 6% → find the
@@ -3514,11 +3472,14 @@ async function logBillOutcomes({ accountId, channelDbId, chatId, source, outcome
     try {
       const b = o.bill || {};
       let status = 'pending', failureReason = null, xeroInvoiceId = null, xeroUrl = null, xeroTenantName = null;
-      if (o.status === 'created') {
+      if (hasCreatedXeroBill(o)) {
         status = 'success';
         xeroInvoiceId = (o.xero && o.xero.invoiceId) || null;
         xeroUrl = (o.xero && (o.xero.xeroUrl || o.xero.url)) || null;
         xeroTenantName = (o.xero && o.xero.tenantName) || (o.matchedTenant && o.matchedTenant.tenantName) || null;
+      } else if (o.status === 'created') {
+        status = 'failed';
+        failureReason = 'OCR reported created, but Xero did not return an invoice ID.';
       } else if (o.status === 'xero-error') {
         status = 'failed';
         failureReason = String(o.xeroError || 'Xero error').slice(0, 500);
@@ -3630,12 +3591,9 @@ function formatLateOutcome(payload, typeLabel = 'file') {
   const bill = payload.bill || {};
   const xero = payload.xero || null;
   const matched = payload.matchedTenant || null;
-  // Lead icon tracks the outcome — a ✅ above a "Xero rejected this bill" block
-  // reads as success at a glance, which is the same mistake WZ-BGWYAW made.
-  // A voided-number collision is a duplicate but NOT a success — nothing landed
-  // in Xero and the user has to act, so it must not lead with ✅.
-  const voidedDuplicate = Boolean(payload.duplicate && payload.duplicateDetail?.voided);
-  const good = payload.status === 'created' || (payload.duplicate && !voidedDuplicate);
+  // Lead icon tracks actual Xero creation; a status label without an invoice ID
+  // must not read as success at a glance.
+  const good = hasCreatedXeroBill(payload);
   const lines = [`${good ? '✅' : '📄'} *Finished reading your ${typeLabel}* (it took longer than usual)`, ''];
 
   lines.push(`Supplier: ${bill.supplier || 'Unknown'}`);
@@ -3650,13 +3608,9 @@ function formatLateOutcome(payload, typeLabel = 'file') {
     lines.push(`Status: ${xero.status || 'DRAFT'}`);
     lines.push(`View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${xero.invoiceId}`);
     lines.push('', '_No need to send this one again._');
-  } else if (voidedDuplicate) {
-    lines.push('', '❌ *Invoice number was voided in Xero*');
-    lines.push(`${bill.invoiceNo || 'This invoice'} belongs to a voided bill, so Xero will not let it be reused.`);
-    lines.push('', '_Send this bill again with a new invoice number, or restore the voided one in Xero._');
   } else if (payload.duplicate) {
     lines.push('', '⚠️ *Already exists in Xero*');
-    lines.push(`${bill.invoiceNo || 'This invoice'} is already in Xero — no action needed.`);
+    lines.push(`${bill.invoiceNo || 'This invoice'} was reported as already existing in Xero, so no new bill was created.`);
   } else if (payload.status === 'pending' && payload.pending) {
     lines.push('', '⚠️ *Action needed: pick the organisation*');
     lines.push(payload.pending.reason || 'Could not match this bill to any connected Xero organisation.');
@@ -4848,10 +4802,56 @@ async function resolveExternalAccount(req, res) {
   return account;
 }
 
+function externalOutcomeFailureMessage(outcome) {
+  if (!outcome) return 'No response returned for bill.';
+  if (outcome.error) return String(outcome.error);
+  if (outcome.status === 'xero-error') return String(outcome.xeroError || 'Xero error');
+  if (outcome.status === 'pending') return String(outcome.pending?.reason || 'Bill needs manual review before it can be created.');
+  if (outcome.status === 'duplicate') {
+    const detail = outcome.duplicateDetail || {};
+    const number = detail.invoiceNumber || outcome.bill?.invoiceNo || '';
+    return `Xero reported an existing bill${number ? ` for ${number}` : ''}, so no new bill was created.`;
+  }
+  if (outcome.status === 'created') return 'OCR reported created, but Xero did not return an invoice ID.';
+  return `Bill was not created${outcome.status ? ` (${outcome.status})` : ''}.`;
+}
+
+function summarizeExternalProcessResults(results) {
+  const total = results.length;
+  const createdCount = results.filter(hasCreatedXeroBill).length;
+  const failures = results
+    .filter((result) => !hasCreatedXeroBill(result))
+    .map(externalOutcomeFailureMessage)
+    .filter(Boolean);
+
+  if (total > 0 && createdCount === total) {
+    return {
+      ok: true,
+      status: 'created',
+      message: `${createdCount} bill(s) created successfully.`
+    };
+  }
+
+  const hasPending = results.some((result) => result?.status === 'pending');
+  const hasCreated = createdCount > 0;
+  const status = hasCreated ? 'partial' : hasPending ? 'ambiguous' : 'error';
+  const prefix = hasCreated
+    ? `${createdCount} of ${total} bill(s) created; ${total - createdCount} failed.`
+    : hasPending
+      ? 'No bills were created; one or more bills need manual review.'
+      : 'No bills were created.';
+
+  return {
+    ok: false,
+    status,
+    message: failures.length ? `${prefix} ${failures.join(' | ')}` : prefix
+  };
+}
+
 // POST /api/ext/process-pdf
 // Accepts a PDF (multipart field "file") or base64 JSON body {fileBase64, mimeType}.
 // Runs the full extraction + Xero draft bill creation pipeline.
-// Returns { ok, status, message, bills } where status = 'created' | 'ambiguous' | 'empty' | 'error'.
+// Returns { ok, status, message, bills } where status = 'created' | 'partial' | 'ambiguous' | 'empty' | 'error'.
 app.post('/api/ext/process-pdf', upload.single('file'), async (req, res) => {
   const account = await resolveExternalAccount(req, res);
   if (!account) return;
@@ -4913,14 +4913,11 @@ app.post('/api/ext/process-pdf', upload.single('file'), async (req, res) => {
 
   if (bills.length > 1) await deleteUploadedFile(filename);
 
-  const allOk   = results.every((r) => r && r.ok !== false);
-  const anyFail = results.some((r) => r && r.ok === false);
+  const summary = summarizeExternalProcessResults(results);
   return res.json({
-    ok: allOk,
-    status: allOk ? 'created' : anyFail ? 'partial' : 'error',
-    message: allOk
-      ? `${results.length} bill(s) processed successfully.`
-      : `Some bills failed to process.`,
+    ok: summary.ok,
+    status: summary.status,
+    message: summary.message,
     bills: results,
     extractionMethod
   });
