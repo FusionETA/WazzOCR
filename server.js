@@ -447,11 +447,32 @@ const MIME_EXT = {
   'image/gif': '.gif',
   'image/webp': '.webp',
   'image/bmp': '.bmp',
+  'image/tiff': '.tif',
+  'image/heic': '.heic',
+  'image/heif': '.heif',
   'application/pdf': '.pdf'
 };
 
 function mimeToExt(mime) {
   return MIME_EXT[String(mime || '').toLowerCase()] || '.bin';
+}
+
+function mimeFromFilename(name) {
+  const ext = path.extname(String(name || '')).toLowerCase().replace(/^\./, '');
+  const byExt = {
+    pdf: 'application/pdf',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    tif: 'image/tiff',
+    tiff: 'image/tiff',
+    heic: 'image/heic',
+    heif: 'image/heif'
+  };
+  return byExt[ext] || '';
 }
 
 async function saveUploadedBuffer(buffer, mime) {
@@ -2369,6 +2390,22 @@ function sniffMime(buffer, declaredMime) {
     if (buffer.slice(0, 4).toString('latin1') === '%PDF') return 'application/pdf';
     if (buffer.slice(0, 4).toString('latin1') === '\x89PNG') return 'image/png';
     if (buffer.slice(0, 2).toString('latin1') === '\xFF\xD8') return 'image/jpeg';
+    if (buffer.slice(0, 3).toString('latin1') === 'GIF') return 'image/gif';
+    if (buffer.slice(0, 2).toString('latin1') === 'BM') return 'image/bmp';
+    if (
+      buffer.length >= 12 &&
+      buffer.slice(0, 4).toString('latin1') === 'RIFF' &&
+      buffer.slice(8, 12).toString('latin1') === 'WEBP'
+    ) return 'image/webp';
+    if (
+      buffer.slice(0, 4).toString('latin1') === 'II*\x00' ||
+      buffer.slice(0, 4).toString('latin1') === 'MM\x00*'
+    ) return 'image/tiff';
+    if (
+      buffer.length >= 12 &&
+      buffer.slice(4, 8).toString('latin1') === 'ftyp' &&
+      /^(heic|heix|hevc|hevx|mif1|msf1|heif)/.test(buffer.slice(8, 12).toString('latin1'))
+    ) return 'image/heic';
   }
   return declaredMime || 'application/octet-stream';
 }
@@ -4848,26 +4885,48 @@ function summarizeExternalProcessResults(results) {
   };
 }
 
-// POST /api/ext/process-pdf
-// Accepts a PDF (multipart field "file") or base64 JSON body {fileBase64, mimeType}.
+function resolveExternalUpload(req) {
+  if (req.file?.buffer) {
+    const fileName = req.file.originalname || 'upload';
+    const declaredMime = req.file.mimetype || mimeFromFilename(fileName) || 'application/octet-stream';
+    return {
+      buffer: req.file.buffer,
+      mime: sniffMime(req.file.buffer, declaredMime),
+      fileName
+    };
+  }
+
+  const body = req.body || {};
+  const encoded = body.fileBase64 || body.imageBase64;
+  if (!encoded) return null;
+
+  const buffer = Buffer.from(String(encoded), 'base64');
+  const fileName = body.fileName || body.filename || body.imageName || 'upload';
+  const declaredMime = body.mimeType || body.imageMime || body.mime || mimeFromFilename(fileName) || 'application/octet-stream';
+
+  return {
+    buffer,
+    mime: sniffMime(buffer, declaredMime),
+    fileName
+  };
+}
+
+// POST /api/ext/process-pdf (legacy name) or /api/ext/process-file
+// Accepts PDF/images via multipart field "file" or base64 JSON
+// {fileBase64|imageBase64, mimeType|imageMime, fileName}.
 // Runs the full extraction + Xero draft bill creation pipeline.
 // Returns { ok, status, message, bills } where status = 'created' | 'partial' | 'ambiguous' | 'empty' | 'error'.
-app.post('/api/ext/process-pdf', upload.single('file'), async (req, res) => {
+app.post(['/api/ext/process-pdf', '/api/ext/process-file'], upload.single('file'), async (req, res) => {
   const account = await resolveExternalAccount(req, res);
   if (!account) return;
 
-  let buffer, mime, fileName;
-  if (req.file) {
-    buffer = req.file.buffer;
-    mime   = req.file.mimetype;
-    fileName = req.file.originalname;
-  } else if (req.body && req.body.fileBase64) {
-    buffer = Buffer.from(req.body.fileBase64, 'base64');
-    mime   = req.body.mimeType || 'application/pdf';
-    fileName = req.body.fileName || 'upload.pdf';
-  } else {
-    return res.status(400).json({ error: 'No file provided. Send multipart "file" or JSON {fileBase64, mimeType}.' });
+  const uploadData = resolveExternalUpload(req);
+  if (!uploadData?.buffer?.length) {
+    return res.status(400).json({
+      error: 'No file provided. Send multipart "file" or JSON {fileBase64|imageBase64, mimeType|imageMime, fileName}.'
+    });
   }
+  const { buffer, mime, fileName } = uploadData;
 
   const accountId = account.id;
 
