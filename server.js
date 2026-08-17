@@ -487,6 +487,25 @@ function retryPayloadWithoutInvoiceNumber(invoicePayload, bill) {
   return { Invoices: [invoice] };
 }
 
+async function restoreInvoiceNumberOnCreatedBill(invoiceId, invoiceNumber, tenantId) {
+  const number = String(invoiceNumber || '').trim();
+  if (!invoiceId || !number) return null;
+  const payload = {
+    Invoices: [
+      {
+        InvoiceID: invoiceId,
+        InvoiceNumber: number
+      }
+    ]
+  };
+  const updatedPayload = await xeroApi(`/Invoices/${encodeURIComponent(invoiceId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }, tenantId);
+  return getFirstItem(updatedPayload, 'Invoices');
+}
+
 // ── File storage helpers ────────────────────────────────────────────────────
 
 const MIME_EXT = {
@@ -1704,6 +1723,17 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
   let invoice = getFirstItem(createdPayload, 'Invoices');
   if (!invoice?.InvoiceID) {
     throw new Error('Xero did not return an invoice after creation.');
+  }
+
+  if (creationRetry && bill.invoiceNo && !invoice.InvoiceNumber) {
+    try {
+      const numberedInvoice = await restoreInvoiceNumberOnCreatedBill(invoice.InvoiceID, bill.invoiceNo, tenantId);
+      if (numberedInvoice?.InvoiceID) {
+        invoice = { ...invoice, ...numberedInvoice };
+      }
+    } catch (error) {
+      console.error(`[xero] created invoice ${invoice.InvoiceID} but could not restore InvoiceNumber ${bill.invoiceNo}:`, error.message);
+    }
   }
 
   try {
