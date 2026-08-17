@@ -438,6 +438,37 @@ function formatXeroError(payload, fallbackStatus) {
   );
 }
 
+function isInvalidInvoiceModificationStatusError(error) {
+  const text = [
+    error?.message,
+    error?.payload ? JSON.stringify(error.payload) : ''
+  ].filter(Boolean).join(' ');
+  return /invoice not of valid status for modification/i.test(text);
+}
+
+function mergeBillReference(notes, invoiceNo) {
+  const ref = String(notes || '').trim();
+  const no = String(invoiceNo || '').trim();
+  if (!no) return ref || undefined;
+  if (ref && ref.toLowerCase().includes(no.toLowerCase())) return ref.slice(0, 255);
+  return (ref ? `${no} | ${ref}` : no).slice(0, 255);
+}
+
+function retryPayloadWithoutInvoiceNumber(invoicePayload, bill) {
+  const invoice = { ...(invoicePayload?.Invoices?.[0] || {}) };
+  delete invoice.InvoiceID;
+  delete invoice.InvoiceNumber;
+  invoice.Reference = mergeBillReference(invoice.Reference, bill?.invoiceNo);
+  if (Array.isArray(invoice.LineItems)) {
+    invoice.LineItems = invoice.LineItems.map((line) => {
+      const clean = { ...line };
+      delete clean.LineItemID;
+      return clean;
+    });
+  }
+  return { Invoices: [invoice] };
+}
+
 // ── File storage helpers ────────────────────────────────────────────────────
 
 const MIME_EXT = {
@@ -1600,11 +1631,28 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
     ]
   };
 
-  const createdPayload = await xeroApi('/Invoices', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(invoicePayload)
-  }, tenantId);
+  let payloadSentToXero = invoicePayload;
+  let creationRetry = null;
+  let createdPayload;
+  try {
+    createdPayload = await xeroApi('/Invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payloadSentToXero)
+    }, tenantId);
+  } catch (error) {
+    if (!bill.invoiceNo || !isInvalidInvoiceModificationStatusError(error)) {
+      throw error;
+    }
+    payloadSentToXero = retryPayloadWithoutInvoiceNumber(invoicePayload, bill);
+    creationRetry = 'omitted-invoice-number-after-invalid-status';
+    console.warn(`[xero] create hit invalid-status modification for bill ${bill.invoiceNo}; retrying fresh create without InvoiceNumber.`);
+    createdPayload = await xeroApi('/Invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payloadSentToXero)
+    }, tenantId);
+  }
 
   let invoice = getFirstItem(createdPayload, 'Invoices');
   if (!invoice?.InvoiceID) {
@@ -1651,7 +1699,8 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
     dueDate: invoice.DueDateString || normalizeDateString(bill.dueDate) || null,
     url: invoice.Url || `https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${invoice.InvoiceID}`,
     attachment,
-    xeroPayload: invoicePayload
+    xeroPayload: payloadSentToXero,
+    creationRetry
   };
 }
 
