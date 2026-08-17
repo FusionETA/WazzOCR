@@ -394,6 +394,24 @@ function hasCreatedXeroBill(outcome) {
   return Boolean(outcome?.status === 'created' && outcome?.xero?.invoiceId);
 }
 
+function isActiveXeroBillStatus(status) {
+  return !isArchivedBillStatus(status);
+}
+
+function makeExistingBillError(invoice) {
+  const error = new Error(`An active bill with invoice number "${invoice.InvoiceNumber}" already exists in Xero.`);
+  error.statusCode = 409;
+  error.payload = {
+    duplicate: true,
+    voided: false,
+    invoiceId: invoice.InvoiceID,
+    invoiceNumber: invoice.InvoiceNumber,
+    status: invoice.Status,
+    contactName: invoice.Contact?.Name || null
+  };
+  return error;
+}
+
 function collectValidationMessages(node, messages = [], seen = new Set()) {
   if (!node || typeof node !== 'object') {
     return messages;
@@ -1294,6 +1312,17 @@ async function findOrCreateContact(bill, tenantId) {
   return created;
 }
 
+async function findBillsByInvoiceNumber(invoiceNumber, tenantId) {
+  const number = String(invoiceNumber || '').trim();
+  if (!number) return [];
+  const where = buildWhereClause([
+    'Type=="ACCPAY"',
+    `InvoiceNumber=="${escapeXeroString(number)}"`
+  ]);
+  const payload = await xeroApi(`/Invoices?where=${encodeURIComponent(where)}`, {}, tenantId);
+  return Array.isArray(payload?.Invoices) ? payload.Invoices : [];
+}
+
 // Extensions Xero will accept on an attachment. Anything outside this list gets
 // rejected with "isn't a supported file type", so a filename must never be the
 // thing that decides the file type — see sanitizeAttachmentName below.
@@ -1532,6 +1561,20 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
     throw new Error('tenantId is required.');
   }
   bill.supplier = String(bill.supplier || '').trim() || FALLBACK_SUPPLIER_NAME;
+
+  let omitInvoiceNumberForArchivedMatch = false;
+  if (bill.invoiceNo) {
+    const matchingBills = await findBillsByInvoiceNumber(bill.invoiceNo, tenantId);
+    const activeMatch = matchingBills.find((invoice) => invoice?.InvoiceID && isActiveXeroBillStatus(invoice.Status));
+    if (activeMatch) {
+      throw makeExistingBillError(activeMatch);
+    }
+    omitInvoiceNumberForArchivedMatch = matchingBills.some((invoice) => invoice?.InvoiceID && isArchivedBillStatus(invoice.Status));
+    if (omitInvoiceNumberForArchivedMatch) {
+      console.warn(`[xero] bill ${bill.invoiceNo} only matches archived Xero bills; creating fresh without InvoiceNumber and storing the number in Reference.`);
+    }
+  }
+
   const contact = await findOrCreateContact(bill, tenantId);
 
   // Determine the right Xero TaxType for this bill based on its declared
@@ -1631,8 +1674,12 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
     ]
   };
 
+  if (omitInvoiceNumberForArchivedMatch) {
+    invoicePayload.Invoices[0] = retryPayloadWithoutInvoiceNumber(invoicePayload, bill).Invoices[0];
+  }
+
   let payloadSentToXero = invoicePayload;
-  let creationRetry = null;
+  let creationRetry = omitInvoiceNumberForArchivedMatch ? 'omitted-invoice-number-after-archived-match' : null;
   let createdPayload;
   try {
     createdPayload = await xeroApi('/Invoices', {
