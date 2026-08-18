@@ -2004,7 +2004,7 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
 
 // ── AI bill analysis ────────────────────────────────────────────────────────
 
-async function resolveAiPrompts() {
+async function resolveAiPrompts({ requestPrompt = '' } = {}) {
   // The general (base) prompt is admin-editable in the DB; the per-account
   // add-on lives on the account. Account id comes from the ambient Xero context
   // (set by runWithCtx in the webhook path). Both fall back to empty/default.
@@ -2034,7 +2034,7 @@ async function resolveAiPrompts() {
   } catch (err) {
     console.error('[prompt] could not load account prompt add-on from DB:', err.message);
   }
-  return { generalPrompt, accountAddon };
+  return { generalPrompt, accountAddon, requestPrompt };
 }
 
 // Composes the final extraction prompt from:
@@ -2042,9 +2042,10 @@ async function resolveAiPrompts() {
 //      shipped DEFAULT_GENERAL_PROMPT fallback),
 //   2. the dynamic connected-Xero-org list (built per request),
 //   3. the per-account add-on rules (DB → accounts.ai_prompt_addon),
-//   4. the dynamic master chart of accounts,
-//   5. the JSON output schema (kept in code — the parser depends on its shape).
-function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPrompt = '', accountAddon = '', xeroItems = [] } = {}) {
+//   4. per-request rules supplied by external API callers for this document only,
+//   5. the dynamic master chart of accounts,
+//   6. the JSON output schema (kept in code — the parser depends on its shape).
+function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPrompt = '', accountAddon = '', requestPrompt = '', xeroItems = [] } = {}) {
   const hasOrgList = Array.isArray(knownOrgs) && knownOrgs.length > 0;
   const hasCoa = Array.isArray(MASTER_EXPENSE_ACCOUNTS) && MASTER_EXPENSE_ACCOUNTS.length > 0;
   const hasItems = Array.isArray(xeroItems) && xeroItems.length > 0;
@@ -2073,7 +2074,13 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
     ? '\n\n─── ACCOUNT-SPECIFIC RULES ───\n' + accountAddon.trim()
     : '';
 
-  // 4. Master chart of accounts (dynamic) for per-line account coding.
+  // 4. Per-request rules. External API callers use this for one document only;
+  // it is not saved to the account and should win over broader prompt layers.
+  const requestBlock = (requestPrompt && requestPrompt.trim())
+    ? '\n\n─── DOCUMENT-SPECIFIC RULES ───\n' + requestPrompt.trim()
+    : '';
+
+  // 5. Master chart of accounts (dynamic) for per-line account coding.
   const coaBlock = hasCoa
     ? '\n\n─── EXPENSE / COST ACCOUNTS (Chart of Accounts) ───\n'
       + 'For EACH line item, set "accountCode" to the code of the single best-matching\n'
@@ -2090,7 +2097,7 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
       + MASTER_EXPENSE_ACCOUNTS.map((a) => a.code + '  ' + a.name).join('\n')
     : '';
 
-  // 5. Xero Items list (optional — only when enable_item_code is on for the account).
+  // 6. Xero Items list (optional — only when enable_item_code is on for the account).
   const itemsBlock = hasItems
     ? '\n\n─── XERO ITEMS (Item Codes) ───\n'
       + 'For each line item, set "itemCode" to the code of the best-matching Xero item\n'
@@ -2099,7 +2106,7 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
       + xeroItems.map((i) => `${i.code}  ${i.name}${i.description ? ' — ' + i.description : ''}`).join('\n')
     : '';
 
-  // 6. JSON output contract (kept in code — must stay in lockstep with the parser).
+  // 7. JSON output contract (kept in code — must stay in lockstep with the parser).
   const schemaBlock = '\n\n'
     + (vision
         ? 'Read the attached image/PDF and extract and return ONLY a valid JSON object:'
@@ -2134,7 +2141,7 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
     ? (ocrText ? '\n\nThe embedded text from the PDF is provided below as a reference for accurate numbers and names. Use the visual (image/PDF) to identify supplier logos and any details not captured in the text.\n\nEmbedded PDF Text:\n' + ocrText : '')
     : ('\n\nOCR Text:\n' + ocrText);
 
-  return base + orgListBlock + addonBlock + coaBlock + itemsBlock + schemaBlock + ocrBlock;
+  return base + orgListBlock + addonBlock + requestBlock + coaBlock + itemsBlock + schemaBlock + ocrBlock;
 }
 
 // Applies `fn` only to the stretches of a JSON-ish text that sit OUTSIDE string
@@ -2375,12 +2382,12 @@ function normalizeBillPayloads(payload) {
     ));
 }
 
-async function callGroqBillPayload(ocrText, model, knownOrgs = []) {
+async function callGroqBillPayload(ocrText, model, knownOrgs = [], requestPrompt = '') {
   if (!GROQ_API_KEY) {
     throw new Error('Missing GROQ_API_KEY in .env.');
   }
 
-  const prompts = await resolveAiPrompts();
+  const prompts = await resolveAiPrompts({ requestPrompt });
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -2403,12 +2410,12 @@ async function callGroqBillPayload(ocrText, model, knownOrgs = []) {
   return JSON.parse(extractJsonText(payload.choices?.[0]?.message?.content));
 }
 
-async function callGroqBills(ocrText, model, knownOrgs = []) {
-  return normalizeBillPayloads(await callGroqBillPayload(ocrText, model, knownOrgs));
+async function callGroqBills(ocrText, model, knownOrgs = [], requestPrompt = '') {
+  return normalizeBillPayloads(await callGroqBillPayload(ocrText, model, knownOrgs, requestPrompt));
 }
 
-async function callGroqBill(ocrText, model, knownOrgs = []) {
-  return callGroqBills(ocrText, model, knownOrgs).then((bills) => bills[0] || normalizeBillPayload({}));
+async function callGroqBill(ocrText, model, knownOrgs = [], requestPrompt = '') {
+  return callGroqBills(ocrText, model, knownOrgs, requestPrompt).then((bills) => bills[0] || normalizeBillPayload({}));
 }
 
 // Per-model output ceilings — generateContent rejects a maxOutputTokens above
@@ -2529,8 +2536,8 @@ async function callGeminiJson(parts, model, purpose = 'extraction') {
   }
 }
 
-async function callGeminiBillPayload(ocrText, model, knownOrgs = []) {
-  const prompts = await resolveAiPrompts();
+async function callGeminiBillPayload(ocrText, model, knownOrgs = [], requestPrompt = '') {
+  const prompts = await resolveAiPrompts({ requestPrompt });
   return callGeminiJson([{ text: buildBillPrompt(ocrText, knownOrgs, prompts) }], model);
 }
 
@@ -2568,14 +2575,14 @@ function sniffMime(buffer, declaredMime) {
 // reading + extraction in one shot — no Tesseract. Gemini sees the actual
 // layout (columns, table rows, wrapped cents, handwriting) that flattened OCR
 // text throws away.
-async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = [], extractedText = '') {
+async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = [], extractedText = '', requestPrompt = '') {
   if (!buffer || !buffer.length) {
     throw new Error('Empty file: nothing to analyze.');
   }
   const sniffed = sniffMime(buffer, mime);
   const isPdf = sniffed === 'application/pdf';
   const mimeType = isPdf ? 'application/pdf' : (sniffed && sniffed.startsWith('image/') ? sniffed : 'image/jpeg');
-  const prompts = await resolveAiPrompts();
+  const prompts = await resolveAiPrompts({ requestPrompt });
   const parts = [
     { text: buildBillPrompt(extractedText, knownOrgs, { vision: true, ...prompts }) },
     { inlineData: { mimeType, data: buffer.toString('base64') } }
@@ -2887,7 +2894,7 @@ async function extractPdfEmbeddedText(buffer) {
 // via the configured provider. Scanned PDFs and images → Gemini vision directly
 // (no OCR). Returns { bills, method, ocrText } so the caller can surface which
 // path was used. ocrText is '' for the vision path (Gemini reads the file).
-async function analyzeFileToBills({ buffer, mime, knownOrgs = [] }) {
+async function analyzeFileToBills({ buffer, mime, knownOrgs = [], requestPrompt = '' }) {
   if (!buffer || !buffer.length) {
     throw new Error('Empty file: nothing to analyze.');
   }
@@ -2907,13 +2914,13 @@ async function analyzeFileToBills({ buffer, mime, knownOrgs = [] }) {
     } else {
       console.log('[extract] PDF has no usable embedded text — sending PDF to Gemini vision.');
     }
-    const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs, hasText ? embedded : '');
+    const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs, hasText ? embedded : '', requestPrompt);
     return { bills, method: hasText ? 'pdf-vision-hybrid' : 'gemini-vision', ocrText: embedded || '' };
   } else {
     console.log('[extract] image upload — sending to Gemini vision.');
   }
 
-  const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs);
+  const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs, '', requestPrompt);
   return { bills, method: 'gemini-vision', ocrText: '' };
 }
 
@@ -5065,12 +5072,18 @@ function resolveExternalUpload(req) {
   };
 }
 
-// POST /api/ext/process-pdf (legacy name) or /api/ext/process-file
+function getExternalRequestPrompt(req) {
+  const body = req.body || {};
+  const raw = firstPresent(body.aiPrompt, body.ai_prompt, body.prompt);
+  return raw == null ? '' : String(raw).slice(0, 12000);
+}
+
+// POST /api/ext/process-pdf
 // Accepts PDF/images via multipart field "file" or base64 JSON
-// {fileBase64|imageBase64, mimeType|imageMime, fileName}.
+// {fileBase64|imageBase64, mimeType|imageMime, fileName, aiPrompt}.
 // Runs the full extraction + Xero draft bill creation pipeline.
 // Returns { ok, status, message, bills } where status = 'created' | 'partial' | 'ambiguous' | 'empty' | 'error'.
-app.post(['/api/ext/process-pdf', '/api/ext/process-file'], upload.single('file'), async (req, res) => {
+app.post('/api/ext/process-pdf', upload.single('file'), async (req, res) => {
   const account = await resolveExternalAccount(req, res);
   if (!account) return;
 
@@ -5081,6 +5094,7 @@ app.post(['/api/ext/process-pdf', '/api/ext/process-file'], upload.single('file'
     });
   }
   const { buffer, mime, fileName } = uploadData;
+  const requestPrompt = getExternalRequestPrompt(req);
 
   const accountId = account.id;
 
@@ -5096,7 +5110,7 @@ app.post(['/api/ext/process-pdf', '/api/ext/process-file'], upload.single('file'
   let extractionMethod = 'unknown';
   try {
     const out = await xeroAccountCtx.run({ accountId }, () =>
-      analyzeFileToBills({ buffer, mime, knownOrgs })
+      analyzeFileToBills({ buffer, mime, knownOrgs, requestPrompt })
     );
     bills = out.bills;
     extractionMethod = out.method;
@@ -5132,28 +5146,8 @@ app.post(['/api/ext/process-pdf', '/api/ext/process-file'], upload.single('file'
     status: summary.status,
     message: summary.message,
     bills: results,
-    extractionMethod
-  });
-});
-
-// POST /api/ext/prompt
-// Body: { prompt: "..." }  — replaces (or clears) this account's AI prompt addon.
-// The prompt is applied to every subsequent bill extraction for this account.
-app.post('/api/ext/prompt', async (req, res) => {
-  const account = await resolveExternalAccount(req, res);
-  if (!account) return;
-
-  const promptText = (req.body && req.body.prompt != null) ? String(req.body.prompt) : null;
-  if (promptText === null) {
-    return res.status(400).json({ error: 'Missing "prompt" field in request body.' });
-  }
-
-  await accounts.update(account.id, { aiPromptAddon: promptText });
-  return res.json({
-    ok: true,
-    message: promptText.trim()
-      ? 'AI prompt rules updated successfully.'
-      : 'AI prompt rules cleared.'
+    extractionMethod,
+    aiPromptApplied: Boolean(requestPrompt.trim())
   });
 });
 
