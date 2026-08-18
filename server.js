@@ -1405,9 +1405,21 @@ function deriveLineItems(bill, defaults) {
   const taxType = bill.taxType || defaults.taxType || null;
 
   if (!provided.length && normalizeNumber(bill.total) > 0) {
-    const fallbackAmount = taxType && normalizeNumber(bill.subtotal) > 0
-      ? normalizeNumber(bill.subtotal)
-      : normalizeNumber(bill.total);
+    // Lines are sent tax-EXCLUSIVE (LineAmountTypes: 'Exclusive'), so this
+    // synthesized line must be the PRE-tax amount whenever tax is added on top
+    // — whether as a per-line TaxType or as a separate tax line downstream.
+    // Prefer the stated subtotal; derive it from total − tax when absent.
+    // Special case: total == tax (e.g. an LHDNM tax payment, where the whole
+    // bill IS the tax and there is no taxable base) leaves an exclusive amount
+    // of 0 — keep the full total here, and the caller suppresses the otherwise
+    // duplicate tax line.
+    const fbTotal = normalizeNumber(bill.total);
+    const fbTax = normalizeNumber(bill.tax);
+    const fbSubtotal = normalizeNumber(bill.subtotal);
+    const fbExclusive = Number((fbTotal - fbTax).toFixed(2));
+    const fallbackAmount = fbSubtotal > 0
+      ? fbSubtotal
+      : (fbTax > 0 && fbExclusive > 0 ? fbExclusive : fbTotal);
     const lineItem = {
       Description: `Receipt total${bill.invoiceNo ? ` for ${bill.invoiceNo}` : ''}`,
       Quantity: 1,
@@ -1644,7 +1656,19 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
     return code && code !== 'NONE' && code !== 'EXEMPT';
   });
   const billTaxAmount = normalizeNumber(bill.tax);
-  if (billTaxAmount > 0 && !hasAppliedTaxType) {
+  // If the lines ALREADY net to the whole bill total, the stated tax is not an
+  // additional charge on top of them — it is part of (or the entirety of) what
+  // they represent. Appending it again would double the bill. This is the
+  // subtotal-0 / total == tax shape (tax-authority payments such as LHDNM),
+  // where the synthesized fallback line carries the full amount.
+  const linesNetSumForTax = lineItems.reduce(
+    (s, li) => s + (normalizeNumber(li.Quantity, 1) * normalizeNumber(li.UnitAmount, 0)), 0);
+  const linesAlreadyCoverTotal = normalizeNumber(bill.total) > 0
+    && Math.abs(linesNetSumForTax - normalizeNumber(bill.total)) <= 0.01;
+  if (billTaxAmount > 0 && !hasAppliedTaxType && linesAlreadyCoverTotal) {
+    console.log(`[tax] stated tax ${billTaxAmount.toFixed(2)} NOT added as a line — lines already net to the bill total ${normalizeNumber(bill.total).toFixed(2)}.`);
+  }
+  if (billTaxAmount > 0 && !hasAppliedTaxType && !linesAlreadyCoverTotal) {
     // Whole-bill tax/surcharge with no per-line tax tagged. Only apply the
     // matched Xero rate to the lines if it RECONCILES — i.e. rate × the
     // (tax-exclusive) lines ≈ the stated tax, so lines + tax = the invoice
@@ -1663,6 +1687,10 @@ async function createDraftBill({ bill, sourceFile, tenantId, accountId = null })
     } else {
       if (resolvedTaxType && resolvedTaxType !== 'NONE') {
         console.log(`[tax] ${percent.toFixed(2)}% does not reconcile (rate×lines ${expectedTax.toFixed(2)} ≠ stated ${billTaxAmount.toFixed(2)}) — keeping tax as a line item.`);
+      } else {
+        // Previously silent: no matched Xero rate meant this branch logged
+        // nothing at all, so an added tax line left no trace in the log.
+        console.log(`[tax] no matched Xero rate (percent=${percent.toFixed(2)}) — adding stated tax ${billTaxAmount.toFixed(2)} as its own line on top of ${netSum.toFixed(2)}.`);
       }
       const taxLine = {
         Description: `${bill.taxLabel || 'Tax'}${bill.invoiceNo ? ` for ${bill.invoiceNo}` : ''}`,
