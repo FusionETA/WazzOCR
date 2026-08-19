@@ -44,6 +44,11 @@ Branch abbreviations map to these organisations:
 If the invoice says "Ayu Borneo Sri Petaling" or "Ayu Borneo SP" → return "Ayu Borneo (SP) Sdn Bhd". Apply the same branch logic to whichever listed entry carries that branch code.
 Plain "Ayu Borneo Sdn Bhd" with NO branch indicator → match the plain "Ayu Borneo Sdn Bhd" entry only (not a branch entry).
 
+LHDN stamp duty / Letter of Guarantee routing:
+- If the document is an LHDN stamp duty form for "Letter of Guarantee", billedTo is the company named as "Nama Pihak Pertama" or "Company Name" on the Letter of Guarantee.
+- Do NOT choose "Nama Syarikat/Firma/Agensi" as billedTo when it is only the filing applicant/submitter.
+- Example: "Nama Pihak Pertama: AYU BORNEO SDN. BHD." and "Nama Syarikat/Firma/Agensi: AYU BORNEO (MANAGEMENT) SDN. BHD." → billedTo = "Ayu Borneo Sdn Bhd".
+
 "fka" (formerly known as) mappings for this group:
 - "Borneo Oasis Wellness SB fka Ayu Borneo (VC3) Sdn Bhd" — current name Borneo Oasis Wellness Sdn Bhd, formerly Ayu Borneo (VC3) Sdn Bhd.
     * Invoice "Borneo Oasis Wellness Sdn Bhd" → this entry.

@@ -2362,7 +2362,88 @@ function normalizeBillPayload(bill) {
   return normalized;
 }
 
-function normalizeBillPayloads(payload) {
+function extractSingleLineField(text, labelRegex) {
+  const match = String(text || '').match(new RegExp(`${labelRegex.source}\\s*:?\\s*([^\\r\\n]+)`, labelRegex.flags.includes('i') ? labelRegex.flags : `${labelRegex.flags}i`));
+  if (!match) return '';
+  let value = String(match[1] || '').replace(/\s+/g, ' ').trim();
+  const stopLabels = [
+    ' Nama Pihak Kedua',
+    ' Duti Yang',
+    ' Peremitan',
+    ' Penalti Yang',
+    ' Jumlah Besar',
+    ' Dibayar sebelum',
+    ' Perakuan Pemohon',
+    ' Nama Penuh',
+    ' Nama Syarikat/Firma/Agensi',
+    ' Tarikh Dan Masa',
+    ' Terima kasih',
+    ' Address company',
+    ' Phone No',
+    ' IPA/PT Name',
+    ' state under oath'
+  ];
+  const lower = value.toLowerCase();
+  const boundary = stopLabels
+    .map((label) => lower.indexOf(label.toLowerCase()))
+    .filter((idx) => idx > 0)
+    .sort((a, b) => a - b)[0];
+  if (boundary) value = value.slice(0, boundary).trim();
+  if (/^[_\s]+$/.test(value)) return '';
+  return value.replace(/[\s,;\-]+$/, '').trim();
+}
+
+function matchKnownOrgName(name, knownOrgs = []) {
+  if (!name || !Array.isArray(knownOrgs) || !knownOrgs.length) return null;
+  const tenants = knownOrgs.map((tenantName) => ({ tenantId: tenantName, tenantName }));
+  const match = matchTenantByName(name, tenants);
+  return match ? match.tenantName : null;
+}
+
+function extractLhdnLetterGuaranteeChargeTo(sourceText) {
+  const text = String(sourceText || '');
+  if (!/Letter\s+of\s+Guarantee/i.test(text)) return '';
+  if (!/(LHDNM|DUTI\s+SETEM|Nama\s+Pihak\s+Pertama|Nama\s+Surat\s+Cara)/i.test(text)) return '';
+
+  return (
+    extractSingleLineField(text, /Nama\s+Pihak\s+Pertama/i) ||
+    extractSingleLineField(text, /Company\s+Name/i)
+  );
+}
+
+function appendNote(existing, note) {
+  const current = String(existing || '').trim();
+  if (!current) return note;
+  if (current.includes(note)) return current;
+  return `${current} ${note}`;
+}
+
+function applySourceTextBillOverrides(bills, { sourceText = '', knownOrgs = [] } = {}) {
+  if (!Array.isArray(bills) || !bills.length || !sourceText) return bills;
+
+  const letterGuaranteeChargeTo = extractLhdnLetterGuaranteeChargeTo(sourceText);
+  if (!letterGuaranteeChargeTo) return bills;
+
+  const matchedOrg = matchKnownOrgName(letterGuaranteeChargeTo, knownOrgs);
+  const correctedBilledTo = matchedOrg || letterGuaranteeChargeTo;
+
+  return bills.map((bill) => {
+    if (!bill || normalizeCompanyCore(bill.billedTo) === normalizeCompanyCore(correctedBilledTo)) {
+      return bill;
+    }
+    return {
+      ...bill,
+      billedTo: correctedBilledTo,
+      billedToVerbatim: letterGuaranteeChargeTo,
+      notes: appendNote(
+        bill.notes,
+        `BilledTo corrected from LHDN Letter of Guarantee first party/company name; filing applicant was not used as charge-to.`
+      )
+    };
+  });
+}
+
+function normalizeBillPayloads(payload, options = {}) {
   const rawBills = Array.isArray(payload)
     ? payload
     : Array.isArray(payload?.bills)
@@ -2371,7 +2452,7 @@ function normalizeBillPayloads(payload) {
         ? [payload.bill]
         : [payload];
 
-  return rawBills
+  const bills = rawBills
     .map((bill) => normalizeBillPayload(bill))
     .filter((bill) => (
       bill.supplier ||
@@ -2380,6 +2461,7 @@ function normalizeBillPayloads(payload) {
       bill.total > 0 ||
       bill.lineItems.length > 0
     ));
+  return applySourceTextBillOverrides(bills, options);
 }
 
 async function callGroqBillPayload(ocrText, model, knownOrgs = [], requestPrompt = '') {
@@ -2411,7 +2493,10 @@ async function callGroqBillPayload(ocrText, model, knownOrgs = [], requestPrompt
 }
 
 async function callGroqBills(ocrText, model, knownOrgs = [], requestPrompt = '') {
-  return normalizeBillPayloads(await callGroqBillPayload(ocrText, model, knownOrgs, requestPrompt));
+  return normalizeBillPayloads(
+    await callGroqBillPayload(ocrText, model, knownOrgs, requestPrompt),
+    { sourceText: ocrText, knownOrgs }
+  );
 }
 
 async function callGroqBill(ocrText, model, knownOrgs = [], requestPrompt = '') {
@@ -2587,7 +2672,10 @@ async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = [], ext
     { text: buildBillPrompt(extractedText, knownOrgs, { vision: true, ...prompts }) },
     { inlineData: { mimeType, data: buffer.toString('base64') } }
   ];
-  return normalizeBillPayloads(await callGeminiJson(parts, model));
+  return normalizeBillPayloads(
+    await callGeminiJson(parts, model),
+    { sourceText: extractedText, knownOrgs }
+  );
 }
 
 // Second-pass account matcher. Given line item descriptions that the master-COA
@@ -2771,8 +2859,11 @@ async function resolveLineAccountCodes(bill, tenantId) {
   coaDiag(block);
 }
 
-async function callGeminiBills(ocrText, model, knownOrgs = []) {
-  return normalizeBillPayloads(await callGeminiBillPayload(ocrText, model, knownOrgs));
+async function callGeminiBills(ocrText, model, knownOrgs = [], requestPrompt = '') {
+  return normalizeBillPayloads(
+    await callGeminiBillPayload(ocrText, model, knownOrgs, requestPrompt),
+    { sourceText: ocrText, knownOrgs }
+  );
 }
 
 async function callGeminiBill(ocrText, model, knownOrgs = []) {
