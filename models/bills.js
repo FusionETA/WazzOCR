@@ -84,7 +84,7 @@ function failureReasons(accountId) {
 function recent(accountId, limit = 50, status = null) {
   const lim = Math.min(500, Math.max(1, Number(limit) || 50)); // inline (validated) for LIMIT
   const cols = `id, status, failure_reason, supplier, invoice_no, total, currency,
-            document_type, xero_invoice_id, xero_url, xero_tenant_name, source, created_at`;
+            document_type, xero_invoice_id, xero_url, xero_tenant_name, source, chat_id, created_at`;
   if (status) {
     return db.query(
       `SELECT ${cols} FROM bills WHERE account_id = ? AND status = ? ORDER BY created_at DESC LIMIT ${lim}`,

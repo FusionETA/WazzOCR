@@ -230,9 +230,24 @@ router.delete('/connections/:id', async (req, res) => {
 });
 
 // Recent bill attempts for this account. Optional ?status=success|pending|failed.
+// Each row carries the WhatsApp sender it arrived from (bills.chat_id) plus the
+// label that number was given under Settings → Allowed phone numbers, so the
+// dashboard can show who sent each bill.
 router.get('/bills', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;
-  res.json({ bills: await bills.recent(accountId, req.query.limit, req.query.status) });
+  const [rows, phones] = await Promise.all([
+    bills.recent(accountId, req.query.limit, req.query.status),
+    channelPhones.listByAccount(accountId)
+  ]);
+  const labelByPhone = new Map(
+    phones.map(p => [channelPhones.normalizePhone(p.phone), p.label || null])
+  );
+  res.json({
+    bills: rows.map(b => {
+      const phone = channelPhones.normalizePhone(b.chat_id);
+      return { ...b, sender_phone: phone || null, sender_label: (phone && labelByPhone.get(phone)) || null };
+    })
+  });
 });
 
 // Delete an unmatched/pending (or failed) bill. Created (success) bills are protected.

@@ -101,7 +101,7 @@
         ? `<div class="fb-field"><label>Xero org</label><select id="f-org-${key}"><option value="">All orgs</option>${CONNECTIONS.map(c=>`<option value="${esc(c.tenant_name||c.xero_tenant_id)}">${esc(c.tenant_name||c.xero_tenant_id)}</option>`).join('')}</select></div>`
         : '';
       return `<div class="filterbar" id="filterbar-${key}">
-        <div class="fb-field fb-grow"><label>Search</label><input type="search" id="f-search-${key}" placeholder="Supplier, invoice${key==='bills'?' or Xero org':''}…"></div>
+        <div class="fb-field fb-grow"><label>Search</label><input type="search" id="f-search-${key}" placeholder="Supplier, invoice${key==='bills'?', sender or Xero org':''}…"></div>
         ${orgOpts}
         <div class="fb-field"><label>From</label><input type="date" id="f-from-${key}"></div>
         <div class="fb-field"><label>To</label><input type="date" id="f-to-${key}"></div>
@@ -110,7 +110,7 @@
     function filteredItems(cfg){
       let arr = cfg.items;
       const s = (cfg.search||'').toLowerCase().trim();
-      if (s) arr = arr.filter(b => [b.supplier,b.invoice_no,b.xero_tenant_name].some(x=>String(x||'').toLowerCase().includes(s)));
+      if (s) arr = arr.filter(b => [b.supplier,b.invoice_no,b.xero_tenant_name,b.sender_label,b.sender_phone].some(x=>String(x||'').toLowerCase().includes(s)));
       if (cfg.org) arr = arr.filter(b => (b.xero_tenant_name||'') === cfg.org);
       if (cfg.from){ const f=new Date(cfg.from+'T00:00:00'); arr = arr.filter(b=> new Date(b.created_at) >= f); }
       if (cfg.to){ const t=new Date(cfg.to+'T23:59:59'); arr = arr.filter(b=> new Date(b.created_at) <= t); }
@@ -129,11 +129,20 @@
       document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+name));
       history.replaceState(null, '', '#'+name);  // remember tab across refresh
     }
+    // Which WhatsApp number a bill came in from. Shows the label given to that
+    // number under Settings → Allowed phone numbers, falling back to the number
+    // itself; the full number is always in the tooltip.
+    function senderCell(b){
+      const phone = b.sender_phone ? '+' + b.sender_phone : '';
+      if (!phone) return '<td class="muted">—</td>';
+      const label = b.sender_label || '';
+      return `<td title="${esc(label ? label + ' — ' + phone : phone)}">${esc(label || phone)}</td>`;
+    }
     function billRow(b, withXero){
       return `<tr id="row-${b.id}"><td class="num-cell" style="color:var(--muted)">${dt(b.created_at)}</td>
         <td title="${esc(b.supplier||'')}">${esc(b.supplier||'-')}</td><td title="${esc(b.invoice_no||'')}">${esc(b.invoice_no||'-')}</td>
         <td class="num-cell">${money(b)}</td>
-        ${withXero ? `<td title="${esc(b.xero_tenant_name||'')}">${esc(b.xero_tenant_name||'—')}</td><td>${b.xero_url?`<a href="${esc(b.xero_url)}" target="_blank" rel="noopener">Open ↗</a>`:'-'}</td>`
+        ${withXero ? `${senderCell(b)}<td title="${esc(b.xero_tenant_name||'')}">${esc(b.xero_tenant_name||'—')}</td><td>${b.xero_url?`<a href="${esc(b.xero_url)}" target="_blank" rel="noopener">Open ↗</a>`:'-'}</td>`
                    : `<td title="${esc(b.failure_reason||'')}"><span class="muted">${esc(b.failure_reason||'-')}</span></td><td style="text-align:right;white-space:nowrap;"><button class="linkbtn" onclick="openResolve(event,${b.id})">Resolve →</button> &nbsp; <button class="linkbtn danger" onclick="deletePending(event,${b.id})">Delete</button></td>`}</tr>`;
     }
     const PAGE_SIZE = 15;
@@ -161,10 +170,10 @@
       const start = (cfg.page-1)*PAGE_SIZE;
       const slice = items.slice(start, start+PAGE_SIZE);
       const head = cfg.withXero
-        ? '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Xero org</th><th>Xero</th>'
+        ? '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Sent from</th><th>Xero org</th><th>Xero</th>'
         : '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Reason</th><th></th>';
       const cols = cfg.withXero
-        ? '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col><col style="width:84px">'
+        ? '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col style="width:150px"><col><col style="width:84px">'
         : '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col><col style="width:168px">';
       const pager = pages > 1 ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.82rem;color:var(--muted);">
           <span>Showing ${start+1}–${start+slice.length} of ${items.length}</span>
