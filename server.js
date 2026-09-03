@@ -23,6 +23,7 @@ const BILLS_FILE = path.join(DATA_DIR, 'bills.json');
 const PENDING_FILE = path.join(DATA_DIR, 'pending-bills.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
 const BILL_STATUS_CRON_LOG_FILE = path.join(DATA_DIR, 'bill-status-cron.log');
+const BILL_STATUS_RUN_STATE_FILE = path.join(DATA_DIR, 'bill-status-last-run.json');
 const WHATSAPP_STATE_FILE = path.join(DATA_DIR, 'whatsapp-state.json');
 const XERO_IDENTITY_BASE = 'https://login.xero.com/identity/connect';
 const XERO_API_BASE = 'https://api.xero.com/api.xro/2.0';
@@ -458,17 +459,33 @@ function formatXeroError(payload, fallbackStatus) {
 
 // A Xero response with no JSON body still carries the reason — in the status and
 // the rate-limit headers. Turn it into a message a human can act on.
+function humanizeSeconds(seconds) {
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total <= 0) return null;
+  const h = Math.floor(total / 3600);
+  const m = Math.round((total % 3600) / 60);
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${Math.max(m, 1)}m`;
+}
+
 function describeNonJsonXeroResponse(response, text, method, pathname) {
   const body = String(text || '').trim().replace(/\s+/g, ' ').slice(0, 200);
   if (response.status === 429) {
     const problem = response.headers.get('x-rate-limit-problem') || 'unknown';
     const retryAfter = response.headers.get('retry-after');
     const scope = /day/i.test(problem) ? 'daily' : /minute/i.test(problem) ? 'per-minute' : problem;
-    return `Xero rate limit reached (${scope} limit)${retryAfter ? ` — retry in ${retryAfter}s` : ''}. The bill was not created; try again later.`;
+    const wait = humanizeSeconds(retryAfter);
+    // Say only what is certain: a 429 is refused before Xero processes it, so
+    // nothing changed there. Don't mention "the bill" — this same message is
+    // raised by reads (the status scan) where no bill was being created.
+    return `Xero ${scope} API limit reached for this organisation${wait ? ` — resets in ${wait}` : ''}. The request was refused, so nothing changed in Xero.`;
   }
   if (response.status === 401) return 'Xero authorization failed. Please reconnect Xero.';
   if (response.status >= 500) {
-    return `Xero is temporarily unavailable (${response.status}). The bill was not created; try again shortly.`;
+    // A 5xx can land either side of Xero applying the change, so do NOT claim
+    // it was not applied — say what is actually known and let the caller check.
+    return `Xero is temporarily unavailable (${response.status}, no response body). Try again shortly and check Xero before re-sending.`;
   }
   return `Xero returned a ${response.status} with ${body ? `a non-JSON body: ${body}` : 'an empty body'} (${method} ${pathname}).`;
 }
@@ -1989,11 +2006,61 @@ function markBillMissing(record, checkedAt, reason = 'Invoice not found in Xero'
   };
 }
 
+// ── Once-a-day scheduling ───────────────────────────────────────────────────
+// The scan spends one Xero GET per stored bill, and the external cron fires it
+// every 30 minutes. At 1159 stored bills that is ~55k calls a day; per org it
+// put Ayu Borneo (Management) at ~8000/day against Xero's 5000-per-org-per-day
+// cap, so real bill pushes into that org came back 429 (empty body — see
+// describeNonJsonXeroResponse). The scan now runs ONCE PER CALENDAR DAY: the
+// first cron tick after local midnight does the work, every later tick that day
+// returns immediately without touching Xero. `?force=1` overrides.
+function localDayKey(date = new Date()) {
+  // Server runs on Asia/Kuala_Lumpur, so the local date is the org's date.
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+async function loadBillStatusRunState() {
+  return (await readJson(BILL_STATUS_RUN_STATE_FILE, {})) || {};
+}
+
+async function saveBillStatusRunState(state) {
+  await writeJson(BILL_STATUS_RUN_STATE_FILE, state);
+}
+
+// Xero's OTHER limit is 60 calls per minute per org. A once-a-day scan checks an
+// org's whole list back-to-back, so pace each org to stay under it — the run is
+// fire-and-forget (nginx already 504s on it) and correctness beats speed here.
+const TENANT_CALLS_PER_MINUTE = 50;
+
+function makeTenantPacer(limitPerMinute = TENANT_CALLS_PER_MINUTE) {
+  const windows = new Map(); // tenantId -> timestamps of calls in the last 60s
+  return async function pace(tenantId) {
+    const now = Date.now();
+    const recent = (windows.get(tenantId) || []).filter((t) => now - t < 60000);
+    if (recent.length >= limitPerMinute) {
+      const waitMs = 60000 - (now - recent[0]) + 100;
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      return pace(tenantId);
+    }
+    recent.push(Date.now());
+    windows.set(tenantId, recent);
+  };
+}
+
 async function refreshStoredBillStatuses({ tenantId = null } = {}) {
   const checkedAt = isoNow();
   const bills = await loadBills();
+  const pace = makeTenantPacer();
+  // An org that has run out of daily quota returns 429 for EVERY remaining bill.
+  // Stop calling it for the rest of this run instead of spending the whole list
+  // learning the same thing.
+  const rateLimitedTenants = new Set();
   let checked = 0;
   let updated = 0;
+  let skipped = 0;
   const errors = [];
 
   const nextBills = [];
@@ -2006,9 +2073,15 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
       nextBills.push(record);
       continue;
     }
+    if (rateLimitedTenants.has(record.tenantId)) {
+      skipped += 1;
+      nextBills.push(record);
+      continue;
+    }
 
     checked += 1;
     try {
+      await pace(record.tenantId);
       const invoice = await fetchXeroBill(record.invoiceId, record.tenantId);
       const next = invoice
         ? applyXeroBillStatus(record, invoice, checkedAt)
@@ -2022,6 +2095,8 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
         nextBills.push(next);
         continue;
       }
+
+      if (error.statusCode === 429) rateLimitedTenants.add(record.tenantId);
 
       errors.push({
         id: record.id,
@@ -2052,6 +2127,8 @@ async function refreshStoredBillStatuses({ tenantId = null } = {}) {
   return {
     ok: errors.length === 0,
     checked,
+    skipped,
+    rateLimitedTenants: [...rateLimitedTenants],
     updated,
     archived: nextBills.filter(isArchivedBillRecord).length,
     active: nextBills.filter((bill) => !isArchivedBillRecord(bill)).length,
@@ -5017,9 +5094,53 @@ app.all(['/api/cron/check-bill-statuses', '/api/webhook/check-bill-statuses'], a
       }
     }
 
-    const result = await refreshStoredBillStatuses({
-      tenantId: req.query.tenantId || null
-    });
+    // Once per calendar day. The external cron still ticks every 30 min; every
+    // tick after the day's run returns here without spending a single Xero call.
+    // A ?tenantId= run only touches one org's bills, so it is never day-gated.
+    const force = ['1', 'true', 'yes'].includes(String(req.query.force || '').toLowerCase())
+      || Boolean(req.query.tenantId);
+    const today = localDayKey();
+    const runState = await loadBillStatusRunState();
+    if (!force && runState.lastRunDay === today) {
+      return res.json({
+        ok: true,
+        skippedRun: 'already-ran-today',
+        lastRunDay: runState.lastRunDay,
+        lastRunAt: runState.lastRunAt || null,
+        message: 'Bill statuses are refreshed once a day. Pass ?force=1 to run now.'
+      });
+    }
+
+    // Only a full scan owns the day. A ?tenantId= or ?force=1 run must not
+    // consume it, or a one-org refresh would suppress that day's real scan.
+    const ownsTheDay = !req.query.tenantId;
+    // Claim the day BEFORE the scan starts: it takes minutes, and the cron ticks
+    // again at +30 min. Without this, a slow run would be started twice over.
+    if (ownsTheDay) {
+      await saveBillStatusRunState({ lastRunDay: today, lastRunAt: isoNow(), status: 'running' });
+    }
+
+    let result;
+    try {
+      result = await refreshStoredBillStatuses({
+        tenantId: req.query.tenantId || null
+      });
+    } catch (error) {
+      // Release the day so the next tick retries — per-bill failures are already
+      // collected into result.errors, so reaching here means the run itself broke.
+      if (ownsTheDay) await saveBillStatusRunState({ ...runState, lastFailedAt: isoNow() });
+      throw error;
+    }
+
+    if (ownsTheDay) {
+      await saveBillStatusRunState({
+        lastRunDay: today,
+        lastRunAt: isoNow(),
+        status: 'done',
+        checked: result.checked,
+        errors: (result.errors || []).length
+      });
+    }
     await logBillStatusCron({
       timestamp: isoNow(),
       tenantId: req.query.tenantId || null,
