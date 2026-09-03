@@ -456,6 +456,37 @@ function formatXeroError(payload, fallbackStatus) {
   );
 }
 
+// A Xero response with no JSON body still carries the reason — in the status and
+// the rate-limit headers. Turn it into a message a human can act on.
+function describeNonJsonXeroResponse(response, text, method, pathname) {
+  const body = String(text || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  if (response.status === 429) {
+    const problem = response.headers.get('x-rate-limit-problem') || 'unknown';
+    const retryAfter = response.headers.get('retry-after');
+    const scope = /day/i.test(problem) ? 'daily' : /minute/i.test(problem) ? 'per-minute' : problem;
+    return `Xero rate limit reached (${scope} limit)${retryAfter ? ` — retry in ${retryAfter}s` : ''}. The bill was not created; try again later.`;
+  }
+  if (response.status === 401) return 'Xero authorization failed. Please reconnect Xero.';
+  if (response.status >= 500) {
+    return `Xero is temporarily unavailable (${response.status}). The bill was not created; try again shortly.`;
+  }
+  return `Xero returned a ${response.status} with ${body ? `a non-JSON body: ${body}` : 'an empty body'} (${method} ${pathname}).`;
+}
+
+// Append the full non-JSON Xero reply to xero-diag.log so the next occurrence is
+// diagnosable after the fact (status + rate-limit headers + body snippet).
+function xeroDiag(response, text, method, pathname, tenantId) {
+  try {
+    const headers = ['x-rate-limit-problem', 'retry-after', 'x-daylimit-remaining', 'x-minlimit-remaining', 'x-apilimit-remaining', 'content-type']
+      .map((h) => `${h}=${response.headers.get(h) ?? '-'}`)
+      .join(' ');
+    const body = String(text || '').replace(/\s+/g, ' ').slice(0, 500);
+    const line = `[xero-diag] ${new Date().toISOString()} ${response.status} ${method} ${pathname} tenant=${tenantId || '-'} ${headers} body=${body || '(empty)'}`;
+    console.error(line);
+    fs.appendFileSync(path.join(APP_ROOT, 'xero-diag.log'), line + '\n');
+  } catch (_) { /* diagnostics must never break the request */ }
+}
+
 function isInvalidInvoiceModificationStatusError(error) {
   const text = [
     error?.message,
@@ -1131,7 +1162,7 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
         const errorPayload = JSON.parse(text);
         message = formatXeroError(errorPayload, response.status);
       } catch {
-        message = text || `Xero request failed (${response.status})`;
+        message = describeNonJsonXeroResponse(response, text, method, pathname);
       }
       const error = new Error(message);
       error.statusCode = response.status;
@@ -1140,14 +1171,40 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
     return response;
   }
 
-  const payload = await response.json();
+  // Read the body ONCE as text, then parse. response.json() used to run BEFORE
+  // the response.ok check, so any Xero reply without a JSON body (429 rate limit
+  // — Xero sends an EMPTY body and puts the reason in headers — 502/503 HTML from
+  // the edge, plain-text 401) surfaced to the user as the useless
+  // "Unexpected end of JSON input" instead of the real status.
+  const text = await response.text();
+  let payload = null;
+  let parsed = false;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+      parsed = true;
+    } catch (_) { /* handled below */ }
+  }
+
   if (!response.ok) {
-    const message = formatXeroError(payload, response.status);
+    const message = parsed
+      ? formatXeroError(payload, response.status)
+      : describeNonJsonXeroResponse(response, text, method, pathname);
+    if (!parsed) xeroDiag(response, text, method, pathname, tenantId);
     const error = new Error(message);
     error.statusCode = response.status;
     error.payload = payload;
     throw error;
   }
+
+  if (!parsed) {
+    // 2xx with an empty/non-JSON body — nothing usable to return.
+    xeroDiag(response, text, method, pathname, tenantId);
+    const error = new Error(describeNonJsonXeroResponse(response, text, method, pathname));
+    error.statusCode = response.status;
+    throw error;
+  }
+
   return payload;
 }
 
