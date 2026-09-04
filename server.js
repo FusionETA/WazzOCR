@@ -1530,6 +1530,20 @@ function deriveLineItems(bill, defaults) {
     }
 
     const description = String(firstPresent(item.description, item.Description, item.name) || `Line item ${index + 1}`).trim();
+
+    // Xero rejects a negative Quantity outright ("Quantity must not be less
+    // than zero"), so a credit/return line has to carry its sign on the unit
+    // price instead: qty=-3 x unit=10 becomes qty=3 x unit=-10. Same line
+    // amount, in the shape Xero accepts.
+    //
+    // The consistency repair above launders most negative-qty lines by chance
+    // (qty x unit != amount -> rewritten to qty=1), so only an internally
+    // consistent one — a return line with a clean unit price — reaches here.
+    if (quantity < 0) {
+      console.warn(`[lineItems] Item ${index + 1} "${description}" has negative qty=${quantity}. Flipping the sign onto the unit price: qty=${-quantity}, unit=${-unitPrice}.`);
+      quantity = -quantity;
+      unitPrice = -unitPrice;
+    }
     const resolvedAccount = item.accountCode || accountCode;
     const taxRateValue = firstPresent(item.taxRate, item.taxPercent, item.serviceTaxRate, item.sstRate);
     const taxAmountValue = firstPresent(item.taxAmount, item.TaxAmount, item.tax);
