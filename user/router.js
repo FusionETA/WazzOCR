@@ -229,24 +229,42 @@ router.delete('/connections/:id', async (req, res) => {
   }
 });
 
-// Recent bill attempts for this account. Optional ?status=success|pending|failed.
+// One page of this account's bills. Optional ?status=success|pending|failed,
+// ?q= (supplier/invoice/org/sender), ?org=, ?from=/&to= (ISO timestamps),
+// ?page=, ?pageSize=. Filtering happens in SQL so older months stay reachable.
 // Each row carries the WhatsApp sender it arrived from (bills.chat_id) plus the
 // label that number was given under Settings → Allowed phone numbers, so the
 // dashboard can show who sent each bill.
 router.get('/bills', async (req, res) => {
   const accountId = needAccount(req, res); if (!accountId) return;
-  const [rows, phones] = await Promise.all([
-    bills.recent(accountId, req.query.limit, req.query.status),
-    channelPhones.listByAccount(accountId)
-  ]);
+  const parseDate = (v) => { const d = v ? new Date(String(v)) : null; return d && !isNaN(d) ? d : null; };
+  const status = req.query.status || null;
+  const q = String(req.query.q || '').trim();
+  const org = String(req.query.org || '');
+  const from = parseDate(req.query.from);
+  const to = parseDate(req.query.to);
+  const phones = await channelPhones.listByAccount(accountId);
   const labelByPhone = new Map(
     phones.map(p => [channelPhones.normalizePhone(p.phone), p.label || null])
   );
+  const needle = q.toLowerCase();
+  const senderPhones = needle
+    ? [...labelByPhone].filter(([phone, label]) => phone && label && label.toLowerCase().includes(needle)).map(([phone]) => phone)
+    : [];
+  const filtered = Boolean(q || org || from || to);
+  const [result, unfiltered] = await Promise.all([
+    bills.search(accountId, { status, q, org, from, to, senderPhones, page: req.query.page, pageSize: req.query.pageSize }),
+    filtered ? bills.search(accountId, { status, pageSize: 1 }) : null
+  ]);
   res.json({
-    bills: rows.map(b => {
+    bills: result.rows.map(b => {
       const phone = channelPhones.normalizePhone(b.chat_id);
       return { ...b, sender_phone: phone || null, sender_label: (phone && labelByPhone.get(phone)) || null };
-    })
+    }),
+    total: result.total,
+    grandTotal: unfiltered ? unfiltered.total : result.total,
+    page: result.page,
+    pages: result.pages
   });
 });
 

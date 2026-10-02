@@ -107,22 +107,18 @@
         <div class="fb-field"><label>To</label><input type="date" id="f-to-${key}"></div>
         <button class="btn btn-ghost btn-sm" type="button" id="f-clear-${key}">Clear</button></div>`;
     }
-    function filteredItems(cfg){
-      let arr = cfg.items;
-      const s = (cfg.search||'').toLowerCase().trim();
-      if (s) arr = arr.filter(b => [b.supplier,b.invoice_no,b.xero_tenant_name,b.sender_label,b.sender_phone].some(x=>String(x||'').toLowerCase().includes(s)));
-      if (cfg.org) arr = arr.filter(b => (b.xero_tenant_name||'') === cfg.org);
-      if (cfg.from){ const f=new Date(cfg.from+'T00:00:00'); arr = arr.filter(b=> new Date(b.created_at) >= f); }
-      if (cfg.to){ const t=new Date(cfg.to+'T23:59:59'); arr = arr.filter(b=> new Date(b.created_at) <= t); }
-      return arr;
-    }
+    // Filters run server-side (the browser only ever holds one page), so every
+    // month stays reachable however many bills the account has.
     function wireFilters(key){
       const cfg=PG[key];
       const s=document.getElementById('f-search-'+key), fr=document.getElementById('f-from-'+key), to=document.getElementById('f-to-'+key), cl=document.getElementById('f-clear-'+key), org=document.getElementById('f-org-'+key);
       if(!s) return;
-      const apply=()=>{ cfg.search=s.value; cfg.from=fr.value; cfg.to=to.value; if(org) cfg.org=org.value; cfg.page=1; renderTab(key); };
-      s.oninput=apply; fr.onchange=apply; to.onchange=apply; if(org) org.onchange=apply;
-      cl.onclick=()=>{ s.value='';fr.value='';to.value=''; if(org) org.value=''; cfg.search='';cfg.from='';cfg.to='';cfg.org=''; cfg.page=1; renderTab(key); };
+      s.value=cfg.search; fr.value=cfg.from; to.value=cfg.to; if(org) org.value=cfg.org;
+      let timer;
+      const apply=()=>{ cfg.search=s.value; cfg.from=fr.value; cfg.to=to.value; if(org) cfg.org=org.value; cfg.page=1; loadTab(key); };
+      s.oninput=()=>{ clearTimeout(timer); timer=setTimeout(apply, 300); };
+      fr.onchange=apply; to.onchange=apply; if(org) org.onchange=apply;
+      cl.onclick=()=>{ s.value='';fr.value='';to.value=''; if(org) org.value=''; cfg.search='';cfg.from='';cfg.to='';cfg.org=''; cfg.page=1; loadTab(key); };
     }
     function switchTab(name){
       document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
@@ -147,28 +143,38 @@
     }
     const PAGE_SIZE = 15;
     const PG = {
-      bills:   { items: [], page: 1, withXero: true,  container: 'billsList',   empty: 'No created bills yet.', search:'', from:'', to:'', org:'' },
-      pending: { items: [], page: 1, withXero: false, container: 'pendingList', empty: 'Nothing pending 🎉', search:'', from:'', to:'', org:'' }
+      bills:   { status: 'success', items: [], total: 0, grandTotal: 0, page: 1, pages: 1, seq: 0, withXero: true,  container: 'billsList',   empty: 'No created bills yet.', search:'', from:'', to:'', org:'' },
+      pending: { status: 'pending', items: [], total: 0, grandTotal: 0, page: 1, pages: 1, seq: 0, withXero: false, container: 'pendingList', empty: 'Nothing pending 🎉', search:'', from:'', to:'', org:'' }
     };
-    async function loadBills(){ await loadTab('bills', 'success'); }
-    async function loadPending(){ await loadTab('pending', 'pending'); }
-    async function loadTab(key, status){
+    async function loadBills(){ await loadTab('bills'); }
+    async function loadPending(){ await loadTab('pending'); }
+    async function loadTab(key){
+      const cfg = PG[key];
+      const p = new URLSearchParams({ status: cfg.status, page: cfg.page, pageSize: PAGE_SIZE });
+      if (cfg.search.trim()) p.set('q', cfg.search.trim());
+      if (cfg.org) p.set('org', cfg.org);
+      // date inputs are the viewer's local days; send their exact edges as UTC instants
+      if (cfg.from) p.set('from', new Date(cfg.from+'T00:00:00').toISOString());
+      if (cfg.to) p.set('to', new Date(cfg.to+'T23:59:59.999').toISOString());
+      const seq = ++cfg.seq;
       try {
-        const { bills } = await (await fetch('/api/me/bills?status='+status+'&limit=500')).json();
-        PG[key].items = bills || []; PG[key].page = 1; renderTab(key);
+        const d = await (await fetch('/api/me/bills?'+p)).json();
+        if (seq !== cfg.seq) return; // a newer filter/page request superseded this one
+        cfg.items = d.bills || []; cfg.total = d.total||0; cfg.grandTotal = d.grandTotal||0;
+        cfg.page = d.page||1; cfg.pages = d.pages||1;
+        renderTab(key);
       } catch {}
     }
     function renderTab(key){
       const cfg = PG[key]; const el = document.getElementById(cfg.container);
-      const items = filteredItems(cfg);
-      const active = !!(cfg.search || cfg.from || cfg.to);
+      const items = cfg.items;
+      const active = !!(cfg.search || cfg.from || cfg.to || cfg.org);
       const cnt = document.getElementById('count-'+key);
-      if (cnt) cnt.textContent = active ? `${items.length} / ${cfg.items.length}` : `${cfg.items.length}`;
+      if (cnt) cnt.textContent = active ? `${cfg.total} / ${cfg.grandTotal}` : `${cfg.total}`;
       if (!items.length) { el.innerHTML = '<div class="empty">'+(active?'No bills match your filters.':cfg.empty)+'</div>'; return; }
-      const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-      if (cfg.page > pages) cfg.page = pages;
+      const pages = cfg.pages;
       const start = (cfg.page-1)*PAGE_SIZE;
-      const slice = items.slice(start, start+PAGE_SIZE);
+      const slice = items;
       const head = cfg.withXero
         ? '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Sent from</th><th>Xero org</th><th>Xero</th>'
         : '<th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Reason</th><th></th>';
@@ -176,13 +182,13 @@
         ? '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col style="width:150px"><col><col style="width:84px">'
         : '<col style="width:104px"><col><col style="width:150px"><col style="width:118px"><col><col style="width:168px">';
       const pager = pages > 1 ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.82rem;color:var(--muted);">
-          <span>Showing ${start+1}–${start+slice.length} of ${items.length}</span>
+          <span>Showing ${start+1}–${start+slice.length} of ${cfg.total}</span>
           <span><button class="btn btn-ghost btn-sm" ${cfg.page===1?'disabled':''} onclick="goPage('${key}',${cfg.page-1})">‹ Prev</button>
           <span style="margin:0 .6rem;">${cfg.page} / ${pages}</span>
           <button class="btn btn-ghost btn-sm" ${cfg.page===pages?'disabled':''} onclick="goPage('${key}',${cfg.page+1})">Next ›</button></span></div>` : '';
       el.innerHTML = `<table class="table fixed"><colgroup>${cols}</colgroup><thead><tr>${head}</tr></thead><tbody>${slice.map(b=>billRow(b,cfg.withXero)).join('')}</tbody></table>${pager}`;
     }
-    window.goPage = (key, p) => { PG[key].page = p; renderTab(key); };
+    window.goPage = (key, p) => { PG[key].page = p; loadTab(key); };
 
     // Resolve an unmatched bill: choose a Xero org → create the draft.
     window.openResolve = (e, id) => {
@@ -206,9 +212,8 @@
       try {
         const r = await fetch('/api/me/bills/'+id, { method:'DELETE' });
         const d = await r.json(); if (!r.ok) throw new Error(d.error||'Delete failed.');
-        // drop locally and re-render so the count updates without a full refetch
-        PG.pending.items = PG.pending.items.filter(b => b.id !== id);
-        renderTab('pending');
+        // refetch the current page so the next bill slides in and the count updates
+        loadPending();
       } catch (err) { alert(err.message); }
     };
     window.doResolve = async (id) => {
