@@ -1183,6 +1183,7 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
       }
       const error = new Error(message);
       error.statusCode = response.status;
+      error.xeroResponse = { status: response.status, method, pathname, body: text };
       throw error;
     }
     return response;
@@ -1211,6 +1212,7 @@ async function xeroApi(pathname, { method = 'GET', body, headers = {}, raw = fal
     const error = new Error(message);
     error.statusCode = response.status;
     error.payload = payload;
+    error.xeroResponse = { status: response.status, method, pathname, body: text };
     throw error;
   }
 
@@ -1675,7 +1677,56 @@ async function ensureCurrency(requestedCode, tenantId) {
   }
 }
 
-async function createDraftBill({ bill, sourceFile, tenantId, accountId = null }) {
+// Every Xero bill-create path goes through here, so a failure is posted to the
+// Bitrix alerts chat once, with Xero's full raw reply (that usually says exactly
+// what was wrong). A 409 duplicate is "already in Xero", not a failure — skipped.
+async function createDraftBill(args) {
+  try {
+    return await createDraftBillInner(args);
+  } catch (error) {
+    if (!(error && error.statusCode === 409 && error.payload && error.payload.duplicate)) {
+      alertXeroCreateFailure(error, args).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function alertXeroCreateFailure(error, { bill = {}, tenantId, accountId = null } = {}) {
+  const { postToBitrix } = require('./lib/errorNotify');
+  const ctx = xeroAccountCtx.getStore();
+  const acctId = accountId || (ctx && ctx.accountId) || null;
+  let accountName = null;
+  let tenantName = null;
+  try { if (acctId) accountName = (await require('./models/accounts').getById(acctId))?.name || null; } catch { /* non-fatal */ }
+  try {
+    if (acctId) {
+      const rows = await require('./models/xeroConnections').listByAccount(acctId);
+      tenantName = (rows.find((r) => r.xero_tenant_id === tenantId) || {}).tenant_name || null;
+    }
+  } catch { /* non-fatal */ }
+
+  const xr = error && error.xeroResponse;
+  let body = xr ? String(xr.body || '') : '';
+  try { if (body) body = JSON.stringify(JSON.parse(body), null, 1); } catch { /* not JSON — send as-is */ }
+  if (body.length > 15000) body = body.slice(0, 15000) + '\n… (truncated)';
+
+  const lines = ['❌ WazzOCR — Xero bill create FAILED'];
+  if (accountName || acctId) lines.push(`account: ${accountName || ''}${acctId ? ` (#${acctId})` : ''}`);
+  lines.push(`org: ${tenantName || tenantId || '?'}`);
+  lines.push(`supplier: ${bill.supplier || '?'} | invoice: ${bill.invoiceNo || '?'} | total: ${bill.currency || ''} ${bill.total ?? '?'}`);
+  lines.push('');
+  lines.push(`Error: ${(error && error.message) || error}`);
+  if (xr) {
+    lines.push(`Xero reply: HTTP ${xr.status} (${xr.method} ${xr.pathname})`);
+    lines.push(body ? `[CODE]${body}[/CODE]` : '(empty body)');
+  } else {
+    lines.push('(failed before/after the Xero call — no Xero reply attached)');
+    if (error && error.stack) lines.push(`[CODE]${String(error.stack).split('\n').slice(0, 6).join('\n')}[/CODE]`);
+  }
+  await postToBitrix(lines.join('\n'));
+}
+
+async function createDraftBillInner({ bill, sourceFile, tenantId, accountId = null }) {
   if (!tenantId) {
     throw new Error('tenantId is required.');
   }

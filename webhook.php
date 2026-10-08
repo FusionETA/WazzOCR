@@ -329,11 +329,12 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
     wazzup_send($chatId, $chatType, "🔍 Reading your {$typeLabel}...");
 
     wlog("WAZZOCR DOWNLOAD: starting — $fileUrl");
-    $file = download_file($fileUrl);
+    $dlFailure = null;
+    $file = download_file($fileUrl, $dlFailure);
 
     if ($file === null) {
-        wlog("WAZZOCR ERROR: download failed for $fileUrl");
-        wazzup_send($chatId, $chatType, client_error_message('download', "Download failed for $fileUrl", $chatId, $channelId));
+        wlog("WAZZOCR ERROR: download failed for $fileUrl ($dlFailure)");
+        wazzup_send($chatId, $chatType, client_error_message('download', "Download failed from Wazzup file store after 5 attempts — last reply: " . ($dlFailure ?: 'unknown') . " — $fileUrl", $chatId, $channelId));
         return;
     }
 
@@ -1033,7 +1034,7 @@ function normalize_download_url(string $url): string
     ) ?? $url;
 }
 
-function download_file(string $url): ?array
+function download_file(string $url, ?string &$failure = null): ?array
 {
     $url = normalize_download_url($url);
 
@@ -1095,6 +1096,11 @@ function download_file(string $url): ?array
             if (is_string($bytes) && $byteCount > 0 && $byteCount < 1000) {
                 wlog("WAZZOCR DOWNLOAD BODY sample: " . substr(str_replace(["\r", "\n"], ' ', $bytes), 0, 300));
             }
+
+            // Last attempt's outcome, for the ticket / Bitrix alert.
+            $failure = $curlErr !== ''
+                ? "curl error: $curlErr"
+                : "HTTP $httpCode" . ($byteCount > 0 ? ' — body: ' . substr(str_replace(["\r", "\n"], ' ', (string)$bytes), 0, 300) : ' (empty body)');
         }
 
         if ($attempt < 5) {
