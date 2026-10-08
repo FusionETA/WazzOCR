@@ -1680,19 +1680,31 @@ async function ensureCurrency(requestedCode, tenantId) {
 // Every Xero bill-create path goes through here, so a failure is posted to the
 // Bitrix alerts chat once, with Xero's full raw reply (that usually says exactly
 // what was wrong). A 409 duplicate is "already in Xero", not a failure — skipped.
+//
+// The failure also gets a support ticket, and its code is appended to the error
+// message — that message is what the client's WhatsApp reply, the picker reply,
+// the dashboard and bills.failure_reason all show, so they all carry the code.
 async function createDraftBill(args) {
   try {
     return await createDraftBillInner(args);
   } catch (error) {
-    if (!(error && error.statusCode === 409 && error.payload && error.payload.duplicate)) {
-      alertXeroCreateFailure(error, args).catch(() => {});
+    if (error && !(error.statusCode === 409 && error.payload && error.payload.duplicate) && !error.ticketCode) {
+      try {
+        const code = await alertXeroCreateFailure(error, args);
+        if (code) {
+          error.ticketCode = code;
+          error.message = `${error.message} (Ref: ${code})`;
+        }
+      } catch (e) {
+        console.error('[xero-alert] failed:', e && e.message);
+      }
     }
     throw error;
   }
 }
 
 async function alertXeroCreateFailure(error, { bill = {}, tenantId, accountId = null } = {}) {
-  const { postToBitrix } = require('./lib/errorNotify');
+  const errorNotify = require('./lib/errorNotify');
   const ctx = xeroAccountCtx.getStore();
   const acctId = accountId || (ctx && ctx.accountId) || null;
   let accountName = null;
@@ -1710,7 +1722,8 @@ async function alertXeroCreateFailure(error, { bill = {}, tenantId, accountId = 
   try { if (body) body = JSON.stringify(JSON.parse(body), null, 1); } catch { /* not JSON — send as-is */ }
   if (body.length > 15000) body = body.slice(0, 15000) + '\n… (truncated)';
 
-  const lines = ['❌ WazzOCR — Xero bill create FAILED'];
+  const header = (code) => `❌ WazzOCR — Xero bill create FAILED — ${code || '(no ticket)'}`;
+  const lines = [];
   if (accountName || acctId) lines.push(`account: ${accountName || ''}${acctId ? ` (#${acctId})` : ''}`);
   lines.push(`org: ${tenantName || tenantId || '?'}`);
   lines.push(`supplier: ${bill.supplier || '?'} | invoice: ${bill.invoiceNo || '?'} | total: ${bill.currency || ''} ${bill.total ?? '?'}`);
@@ -1723,7 +1736,13 @@ async function alertXeroCreateFailure(error, { bill = {}, tenantId, accountId = 
     lines.push('(failed before/after the Xero call — no Xero reply attached)');
     if (error && error.stack) lines.push(`[CODE]${String(error.stack).split('\n').slice(0, 6).join('\n')}[/CODE]`);
   }
-  await postToBitrix(lines.join('\n'));
+  const { code } = await errorNotify.reportError({
+    stage: 'xero-create',
+    error,
+    context: { accountId: acctId, accountName, fileName: bill.invoiceNo ? `${bill.supplier || '?'} / ${bill.invoiceNo}` : null },
+    bitrixText: (c) => [header(c), ...lines].join('\n')
+  });
+  return code;
 }
 
 async function createDraftBillInner({ bill, sourceFile, tenantId, accountId = null }) {
