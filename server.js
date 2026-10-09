@@ -822,6 +822,26 @@ function extractParentheticalAbbrev(normalized) {
   return { core: m[1].trim(), abbrev: m[2].toLowerCase() };
 }
 
+// Branch tag = the first "( ... )" group, care-of stripped and "fka" groups
+// ignored: "AYU BORNEO (SABAH) SDN BHD C/O EMJ" → "sabah". The core form
+// drops these groups, so without this every branch of a group scores the same.
+function branchTagOf(value) {
+  const s = stripCareOf(normalizeName(value));
+  const re = /\(([^)]*)\)/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const tag = m[1].replace(/\s+/g, ' ').trim();
+    if (tag && !/^(fka|formerly)\b/.test(tag)) return tag;
+  }
+  return null;
+}
+
+function branchTagsEqual(a, b) {
+  if (a === b) return true;
+  // "(sp)" ↔ "(sri petaling)"
+  return initialsOf(a) === b || initialsOf(b) === a;
+}
+
 function scoreMatch(billRaw, tenantRaw) {
   const billNorm = normalizeName(billRaw);
   const tenantNorm = normalizeName(tenantRaw);
@@ -832,6 +852,14 @@ function scoreMatch(billRaw, tenantRaw) {
 
   // Strongest signals first on the "core" identity (suffixes stripped).
   if (billCore && tenantCore && billCore === tenantCore) {
+    const billTag = branchTagOf(billRaw);
+    const tenantTag = branchTagOf(tenantRaw);
+    if (billTag && tenantTag && !branchTagsEqual(billTag, tenantTag)) {
+      return { score: 40, reason: 'branch-mismatch' };
+    }
+    if (!billTag !== !tenantTag) {
+      return { score: 90, reason: 'exact-core-untagged' };
+    }
     return { score: 100, reason: 'exact-core' };
   }
   if (billNorm === tenantNorm) {
