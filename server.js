@@ -101,6 +101,7 @@ loadMasterCoa();
 // Account-agnostic base extraction prompt. Used as the fallback when the DB has
 // no general prompt configured; the admin-editable DB value overrides it.
 const { DEFAULT_GENERAL_PROMPT } = require('./lib/defaultPrompts');
+const premisesRegister = require('./lib/premisesRegister');
 
 function ensureConfig() {
   const missing = ['XERO_CLIENT_ID', 'XERO_CLIENT_SECRET'].filter((key) => !process.env[key]);
@@ -2365,6 +2366,11 @@ function buildBillPrompt(ocrText, knownOrgs = [], { vision = false, generalPromp
           ? '"EXACT name copied from the CONNECTED XERO ORGANISATIONS list, or null if no entry fits"'
           : '"Customer / recipient company name (look for BILL TO, TO, SOLD TO, INVOICE TO sections). Full name as written; if c/o present, only the entity BEFORE c/o."') + ',\n'
     + (hasOrgList ? '      "billedToVerbatim": "Original BILL TO text from the invoice (for human verification) or null",\n' : '')
+    // Every address-like block, not the one the model thinks is the premises.
+    // Bills Hub's register decides which it recognises; asking the model to
+    // choose is asking it to be wrong occasionally in the worst way — a real
+    // bill filed against the wrong company.
+    + '      "addresses": ["EVERY address-like block on the page, each VERBATIM — the supplier\'s own address, the billing address and the service/premises address. Do not decide which is which. Do not merge or tidy them. Keep the postcode and any unit or lot number. Do NOT expand or abbreviate: leave Jln as Jln. Empty array if there are none"],\n'
     + '      "invoiceNo": "The document\'s reference number, whatever it is labelled (Invoice/Tax Invoice/Bill/Quotation/Quote/Ref/Doc No, or a bare code by the title like QT260618210). null only if there is truly none",\n'
     + '      "date": "Date string or null",\n'
     + '      "dueDate": "Due date string or null",\n'
@@ -3412,6 +3418,39 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
     console.error('Could not refresh Xero connections:', err.message);
   }
 
+  // Bills Hub's premises register, first and above everything below.
+  //
+  // Everything that follows works out which organisation a bill belongs to
+  // by reading the name printed on it. That is inference. A row in the
+  // register is somebody in finance stating it outright — this account, at
+  // this building, is paid by that company under that contact — so where it
+  // has an answer there is nothing to infer.
+  //
+  // It also answers for bills the name matching cannot: a utility bill
+  // addressed to a landlord, or to a group company that does not pay it.
+  let registerHit = null;
+  if (premisesRegister.isConfigured() && connections.length) {
+    const addresses = Array.isArray(bill.addresses) ? bill.addresses : [];
+    const found = await premisesRegister.lookup({ addresses, supplier: bill.supplier });
+    if (found.found) {
+      // Only if the account actually has that organisation connected. A
+      // register pointing at an org this WazzOCR account cannot reach is a
+      // mapping to act on later, not now.
+      const conn = connections.find((c) => c.tenantId === found.tenantId);
+      if (conn) {
+        registerHit = { ...found, conn };
+        console.log(`[register] ${found.premisesAddress} → ${conn.tenantName}, contact "${found.contactName}"`);
+      } else {
+        console.warn(`[register] matched ${found.premisesAddress} → tenant ${found.tenantId}, which is not connected here; falling back to name matching`);
+      }
+    } else if (found.unavailable) {
+      // Not the same as "nobody mapped it". Said loudly, because the bill
+      // below is about to be filed by name matching instead, and if that is
+      // wrong this line is the only record of why.
+      console.error(`[register] could not be asked (${found.reason}); falling back to name matching`);
+    }
+  }
+
   // Trust the AI when it returns a billedTo that EXACTLY matches a connected
   // org name — the AI was given the org list in its prompt, so an exact-name
   // hit is authoritative. Falls back to fuzzy matchTenantByName for legacy /
@@ -3454,6 +3493,25 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       }
     }
   }
+  // The register decided, so the name matching above was only ever a
+  // fallback. Applied here rather than earlier so its reasoning still shows
+  // in the log when the two disagree — which is worth seeing.
+  if (registerHit) {
+    if (matchedTenant && matchedTenant.tenantId !== registerHit.tenantId) {
+      console.log(`[register] overriding name match ${matchedTenant.tenantName} → ${registerHit.conn.tenantName}`);
+    }
+    matchedTenant = registerHit.conn;
+    bill.billedTo = registerHit.conn.tenantName;
+    // findOrCreateContact files the bill under bill.supplier, so naming the
+    // register's contact here is what puts it under the right one. The name
+    // printed on the bill is kept, because it is what was actually read.
+    if (registerHit.contactName && registerHit.contactName !== bill.supplier) {
+      bill.supplierAsPrinted = bill.supplier || null;
+      bill.supplier = registerHit.contactName;
+    }
+    bill.premisesAddress = registerHit.premisesAddress || null;
+  }
+
   const candidatesList = connections.map((c) => ({
     tenantId: c.tenantId,
     tenantName: c.tenantName

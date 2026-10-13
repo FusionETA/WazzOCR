@@ -136,6 +136,27 @@ APP_ENCRYPTION_KEY=<64-hex-char key — MUST match the value used locally>
 > AES-encrypted in the shared DB. The server must use the **same key** that
 > encrypted them, or it can't decrypt. Copy it verbatim from local `.env`.
 
+**Bills Hub premises register (optional):**
+```
+BILLHUB_URL=https://billhub.fusioneta.com.my
+BILLHUB_TOKEN=<must match BILLHUB_SERVICE_TOKEN in Bills Hub's .env>
+BILLHUB_TIMEOUT_MS=8000
+```
+> Before creating a bill, WazzOCR sends every address block it read to Bills
+> Hub and asks which Xero organisation pays that premises and which contact
+> to file it under — a mapping the finance team maintains on Bills Hub's
+> **Recharge → Address rules** tab. A row in it beats the name matching,
+> which is inference from what is printed on the bill.
+>
+> **Leave `BILLHUB_URL` unset and nothing changes.** The lookup is skipped
+> and bills are routed by name matching exactly as before, so this can be
+> deployed before Bills Hub is ready for it.
+>
+> A premises nobody has mapped, and a Bills Hub that cannot be reached, both
+> fall back to name matching — but they are logged differently (`[register]`
+> lines), because the second one means a bill may have been routed by a
+> guess during an outage and the log is the only record of it.
+
 **Error alerting (optional but recommended):**
 ```
 WAZZUP_ERROR_NOTIFY_PHONES=60123456789,60198765432
