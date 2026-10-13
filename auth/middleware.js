@@ -46,18 +46,31 @@ function requireSuperAdmin(req, res, next) {
   next();
 }
 
+// SESSION_COOKIE_DOMAIN widens the cookie to a parent domain — set it to
+// ".fusioneta.com.my" and the browser sends this session to Bills Hub on
+// billhub.fusioneta.com.my too, which is how somebody signed in here is
+// signed in there without a second password existing at all.
+//
+// Unset, the cookie stays host-only exactly as before. Only widen it to a
+// domain whose subdomains you control: every one of them can then read it.
+const COOKIE_DOMAIN = String(process.env.SESSION_COOKIE_DOMAIN || '').trim() || undefined;
+
 function setSessionCookie(req, res, rawToken) {
   res.cookie(sessions.COOKIE_NAME, rawToken, {
     httpOnly: true,
     secure: req.secure || process.env.NODE_ENV === 'production',
     sameSite: 'lax',
+    domain: COOKIE_DOMAIN,
     maxAge: sessions.TTL_DAYS * 86400000,
     path: '/'
   });
 }
 
 function clearSessionCookie(res) {
-  res.clearCookie(sessions.COOKIE_NAME, { path: '/' });
+  // Must carry the same domain, or the browser treats it as a different
+  // cookie and clears nothing — leaving somebody signed in after they
+  // pressed sign out.
+  res.clearCookie(sessions.COOKIE_NAME, { path: '/', domain: COOKIE_DOMAIN });
 }
 
 module.exports = {

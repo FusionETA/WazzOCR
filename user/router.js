@@ -1,5 +1,6 @@
 // User-facing (non-admin) API. Scoped to the logged-in user's own account.
-//   GET /api/me/summary  -> { user, account, successCount }
+//   GET /api/me/summary      -> { user, account, successCount }
+//   GET /api/me/billhub-link -> { url } for the Bills Hub button, or null
 const express = require('express');
 const router = express.Router();
 
@@ -23,6 +24,17 @@ function needAccount(req, res) {
   if (!req.user.account_id) { res.status(400).json({ error: 'This user has no account.' }); return null; }
   return req.user.account_id;
 }
+
+// Where the Bills Hub button points, or null when this deployment has no
+// Bills Hub. Served rather than hardcoded in the page so the button simply
+// does not appear where there is nothing to open.
+//
+// No token and nothing to hand over: Bills Hub reads the same session
+// cookie this request arrived with, so the button is only a link.
+router.get('/billhub-link', (req, res) => {
+  const url = String(process.env.BILLHUB_URL || '').trim().replace(/\/+$/, '');
+  res.json({ url: url || null });
+});
 
 router.get('/summary', async (req, res) => {
   const u = req.user;

@@ -11,7 +11,7 @@
 <body>
   <div class="topbar">
     <span class="brand"><img class="brand-logo" src="/assets/fusioneta-logo.png" alt="FusionETA"><span class="brand-divider"></span><span class="brand-name">WazzOCR</span></span>
-    <div class="right"><span class="who" id="whoLabel"></span><button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button></div>
+    <div class="right"><span class="who" id="whoLabel"></span><a class="btn btn-ghost btn-sm" id="billhubLink" href="#" hidden>Bills Hub</a><button class="btn btn-ghost btn-sm" id="logoutBtn">Sign out</button></div>
   </div>
   <div class="container" id="content"><div class="card">Loading…</div></div>
   <script>
@@ -22,6 +22,22 @@
     function money(b){ return b.total!=null ? esc(b.currency||'')+' '+Number(b.total).toFixed(2) : '-'; }
     function dt(s){ return new Date(s).toLocaleDateString(); }
     document.getElementById('logoutBtn').onclick = async () => { await fetch('/auth/logout',{method:'POST'}); location.href='/login.html'; };
+
+    // Bills Hub reads this session's cookie, so there is nothing to hand
+    // over — the link is just a link. Shown only when the server says a
+    // Bills Hub is configured, so a deployment without one has no button
+    // leading nowhere.
+    (async () => {
+      try {
+        const r = await fetch('/api/me/billhub-link');
+        if (!r.ok) return;
+        const { url } = await r.json();
+        if (!url) return;
+        const a = document.getElementById('billhubLink');
+        a.href = url;
+        a.hidden = false;
+      } catch { /* no Bills Hub configured; leave the button hidden */ }
+    })();
 
     async function load() {
       let data;

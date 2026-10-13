@@ -157,6 +157,25 @@ BILLHUB_TIMEOUT_MS=8000
 > lines), because the second one means a bill may have been routed by a
 > guess during an outage and the log is the only record of it.
 
+**Signing in to Bills Hub with this session (optional):**
+```
+SESSION_COOKIE_DOMAIN=.fusioneta.com.my
+```
+> Widens the `wz_session` cookie to the parent domain, so the browser sends
+> it to Bills Hub on `billhub.fusioneta.com.my` as well. Bills Hub, running
+> with `AUTH_SOURCE=wazzocr`, reads that cookie and this app's `users` table
+> — so whoever signs in here is signed in there, with no second password.
+>
+> The **Bills Hub** button on the account page appears whenever `BILLHUB_URL`
+> is set. It is only a link: there is no token and nothing is handed over.
+>
+> Only widen the cookie to a domain whose subdomains you control — every one
+> of them can read it. Unset, the cookie stays host-only exactly as before
+> and Bills Hub keeps its own sign-in.
+>
+> `is_super_admin` on **this** app's users decides who can read Bills Hub's
+> Activity log once that mode is on.
+
 **Error alerting (optional but recommended):**
 ```
 WAZZUP_ERROR_NOTIFY_PHONES=60123456789,60198765432
