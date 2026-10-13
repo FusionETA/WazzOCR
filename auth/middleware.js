@@ -67,10 +67,19 @@ function setSessionCookie(req, res, rawToken) {
 }
 
 function clearSessionCookie(res) {
-  // Must carry the same domain, or the browser treats it as a different
-  // cookie and clears nothing — leaving somebody signed in after they
-  // pressed sign out.
-  res.clearCookie(sessions.COOKIE_NAME, { path: '/', domain: COOKIE_DOMAIN });
+  // Both variants, and this is not belt-and-braces.
+  //
+  // A cookie is keyed by name AND domain, so a host-only `wz_session` and a
+  // `.fusioneta.com.my` one are two different cookies. Clearing with the
+  // domain set leaves a host-only one behind — which is exactly what every
+  // session issued before SESSION_COOKIE_DOMAIN was introduced is. Signing
+  // out would appear to work, the stale cookie would still be sent, and the
+  // next sign-in would leave the browser holding two of them with no way to
+  // say which the server should believe.
+  res.clearCookie(sessions.COOKIE_NAME, { path: '/' });
+  if (COOKIE_DOMAIN) {
+    res.clearCookie(sessions.COOKIE_NAME, { path: '/', domain: COOKIE_DOMAIN });
+  }
 }
 
 module.exports = {

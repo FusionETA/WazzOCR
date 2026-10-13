@@ -175,6 +175,16 @@ SESSION_COOKIE_DOMAIN=.fusioneta.com.my
 >
 > `is_super_admin` on **this** app's users decides who can read Bills Hub's
 > Activity log once that mode is on.
+>
+> **Everyone already signed in must sign out and in again.** Widening the
+> cookie changes nothing about the ones already in people's browsers: those
+> stay host-only to this app and are never sent to Bills Hub, so the button
+> lands on a login page. A fresh sign-in issues the widened one.
+>
+> If somebody signed out *before* this app was redeployed with the fix that
+> clears both variants, their browser may be holding a stale host-only
+> cookie alongside the new one. Clear site data for both hosts and sign in
+> once more.
 
 **Error alerting (optional but recommended):**
 ```
