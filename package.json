@@ -5,7 +5,8 @@
   "description": "Unified WhatsApp OCR, AI bill analysis, and Xero draft bill creator",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "register-check": "node scripts/register-check.js"
   },
   "engines": {
     "node": ">=18"
