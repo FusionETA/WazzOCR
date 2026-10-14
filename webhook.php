@@ -399,15 +399,21 @@ function handle_file(string $chatId, string $chatType, array $msg, string $type)
     }
 
     $output = format_bridge_outcome($result);
+    wazzup_send($chatId, $chatType, $output);
 
-    // If pending → also send picker
-    if ($status === 'pending' && !empty($result['candidates'])) {
-        wazzup_send($chatId, $chatType, $output);
-        send_org_picker($chatId, $chatType, $result['candidates'], $result['bill']['billedTo'] ?? '');
+    // The bridge keeps a per-chat queue of bills that still need an organisation
+    // and hands back the ONE question that is due now — which may belong to any
+    // bill in this batch, not just the first. Anything else in the queue is asked
+    // after this one is answered. (Older bridges don't send pickerPrompt; the
+    // fallback below keeps them working.)
+    $prompt = trim((string)($result['pickerPrompt'] ?? ''));
+    if ($prompt !== '') {
+        wazzup_send($chatId, $chatType, $prompt);
         return;
     }
-
-    wazzup_send($chatId, $chatType, $output);
+    if (!isset($result['pickerPrompt']) && $status === 'pending' && !empty($result['candidates'])) {
+        send_org_picker($chatId, $chatType, $result['candidates'], $result['bill']['billedTo'] ?? '');
+    }
 }
 
 // Ask the bridge whether this sender may use this channel. Fails OPEN (returns

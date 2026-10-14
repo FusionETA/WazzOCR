@@ -3277,33 +3277,65 @@ async function saveWhatsappState(state) {
   await writeJson(WHATSAPP_STATE_FILE, state);
 }
 
-async function getChatState(chatId) {
+// ── Pending-decision queue (one question at a time per chat) ───────────────
+// Several bills in one batch can each need the user to pick a Xero org. They
+// join a FIFO queue and are asked one at a time, in arrival order: ask head →
+// user answers → create → ask the next. Bills that matched an org are untouched;
+// they are already in Xero by then. The transitions live in lib/pickerQueue so
+// they can be tested on their own.
+
+const pickerQueue = require('./lib/pickerQueue');
+
+// Read-modify-write the queue under the state-file lock. `fn(queue)` returns
+// { queue, result }. Every queue operation goes through here, so concurrent
+// uploads from the same sender serialise instead of racing.
+async function withPickerQueue(chatId, fn) {
+  return withJsonLock(WHATSAPP_STATE_FILE, async () => {
+    const all = await loadWhatsappState();
+    const entry = { ...(all[chatId] || {}) };
+    const { queue: next, result } = fn(pickerQueue.read(entry));
+    delete entry.awaitingPicker;                    // migrated into pickerQueue
+    if (next && next.length) entry.pickerQueue = next;
+    else delete entry.pickerQueue;
+    entry.updatedAt = isoNow();
+    // Drop the chat entry entirely once nothing but the timestamp is left.
+    if (Object.keys(entry).length <= 1) delete all[chatId];
+    else all[chatId] = entry;
+    await saveWhatsappState(all);
+    return result;
+  });
+}
+
+// Queue a bill that needs an org. Returns the question to ask NOW, or null when
+// another bill's question is already open.
+async function enqueuePicker(chatId, item) {
+  if (!chatId || !item || !item.pendingBillId) return null;
+  return withPickerQueue(chatId, (queue) => {
+    const { queue: next, ask } = pickerQueue.enqueue(queue, item, isoNow());
+    return { queue: next, result: ask };
+  });
+}
+
+// Drop the answered/cancelled entry and hand back the next question to ask.
+async function advancePickerQueue(chatId, pendingBillId = null) {
+  if (!chatId) return null;
+  return withPickerQueue(chatId, (queue) => {
+    const { queue: remaining, next: question } = pickerQueue.advance(queue, pendingBillId);
+    return { queue: remaining, result: question };
+  });
+}
+
+// The question currently open for this chat. Read-only on purpose: it runs on
+// every inbound text, and expired entries are pruned by the next mutation.
+async function peekPicker(chatId) {
+  if (!chatId) return null;
   const all = await loadWhatsappState();
-  return all[chatId] || null;
+  return pickerQueue.head(pickerQueue.read(all[chatId]));
 }
 
-async function setChatState(chatId, patch) {
-  return withJsonLock(WHATSAPP_STATE_FILE, async () => {
-    const all = await loadWhatsappState();
-    const current = all[chatId] || {};
-    all[chatId] = { ...current, ...patch, updatedAt: isoNow() };
-    await saveWhatsappState(all);
-    return all[chatId];
-  });
-}
-
-async function clearChatState(chatId, key = null) {
-  return withJsonLock(WHATSAPP_STATE_FILE, async () => {
-    const all = await loadWhatsappState();
-    if (!all[chatId]) return;
-    if (key) {
-      delete all[chatId][key];
-      all[chatId].updatedAt = isoNow();
-    } else {
-      delete all[chatId];
-    }
-    await saveWhatsappState(all);
-  });
+async function clearPickerQueue(chatId) {
+  if (!chatId) return null;
+  return withPickerQueue(chatId, () => ({ queue: [], result: null }));
 }
 
 // ── General chat for non-bill WhatsApp messages ────────────────────────────
@@ -3559,8 +3591,8 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       if (attachment) {
         await deleteUploadedFile(attachment.filename);
       }
-      // Matched → clear any picker state for this chat
-      if (chatId) await clearChatState(chatId, 'awaitingPicker');
+      // NOTE: deliberately does NOT touch the picker queue. This bill matched on
+      // its own; another bill in the same batch may be waiting on an answer.
       return {
         status: 'created',
         bill,
@@ -3573,7 +3605,6 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       // pending; the org was matched correctly and the bill already exists.
       if (xeroError.statusCode === 409 && xeroError.payload?.duplicate) {
         if (attachment) await deleteUploadedFile(attachment.filename);
-        if (chatId) await clearChatState(chatId, 'awaitingPicker');
         return {
           status: 'duplicate',
           bill,
@@ -3597,7 +3628,7 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
         source,
         createdAt: isoNow()
       });
-      // Note: NOT setting awaitingPicker — the org is correct, the data is the problem.
+      // Note: NOT queueing a question — the org is correct, the data is the problem.
       return {
         status: 'xero-error',
         bill,
@@ -3621,17 +3652,24 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       source,
       createdAt: isoNow()
     });
-    if (chatId) {
-      await setChatState(chatId, {
-        awaitingPicker: { pendingBillId: pending.id, candidates: candidatesList }
-      });
-    }
+    // Join the per-chat question queue. `ask` comes back non-null only for the
+    // bill whose question may be sent right now — the rest wait their turn.
+    const ask = await enqueuePicker(chatId, {
+      pendingBillId: pending.id,
+      candidates: candidatesList,
+      supplier: bill.supplier || null,
+      invoiceNo: bill.invoiceNo || null,
+      billedTo: bill.billedTo || null,
+      total: (bill.total != null ? bill.total : null),
+      currency: bill.currency || null
+    });
     return {
       status: 'pending',
       bill,
       matchedTenant: null,
       pending: { id: pending.id, reason: pending.reason, candidates: candidatesList },
-      candidates: candidatesList
+      candidates: candidatesList,
+      pickerAsk: ask || null
     };
   }
 
@@ -3644,11 +3682,14 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
   };
 }
 
+// Answer the question at the head of the chat's queue. On success the entry is
+// dropped and the NEXT question (if any) comes back as `next`, so the caller can
+// ask it in the same breath.
 async function resolvePickerForChat(chatId, choice) {
-  const state = await getChatState(chatId);
-  if (!state?.awaitingPicker?.pendingBillId) return null;
+  const head = await peekPicker(chatId);
+  if (!head?.pendingBillId) return null;
 
-  const { pendingBillId, candidates } = state.awaitingPicker;
+  const { pendingBillId, candidates } = head;
   let tenantId = null;
 
   // Numbered choice (1-based)
@@ -3672,13 +3713,17 @@ async function resolvePickerForChat(chatId, choice) {
 
   const pending = await getPendingBill(pendingBillId);
   if (!pending) {
-    await clearChatState(chatId, 'awaitingPicker');
-    return { resolved: false, reason: 'Pending bill no longer exists' };
+    // Already dealt with elsewhere (e.g. from the dashboard) — move the queue on
+    // rather than stalling every question behind it.
+    const next = await advancePickerQueue(chatId, pendingBillId);
+    return { resolved: false, reason: 'Pending bill no longer exists', next };
   }
 
   const { connections } = await getValidConnections();
   const tenant = connections.find((c) => c.tenantId === tenantId);
-  if (!tenant) return { resolved: false, reason: 'Tenant not connected anymore' };
+  // Keep the question open — the org they picked is gone, but another one on the
+  // list may still be right.
+  if (!tenant) return { resolved: false, reason: 'That organisation is no longer connected', keepState: true };
 
   let sourceFile = null;
   if (pending.attachedFile) {
@@ -3722,13 +3767,14 @@ async function resolvePickerForChat(chatId, choice) {
   }));
   await removePendingBill(pendingBillId);
   if (pending.attachedFile) await deleteUploadedFile(pending.attachedFile.filename);
-  await clearChatState(chatId, 'awaitingPicker');
+  const next = await advancePickerQueue(chatId, pendingBillId);
 
   return {
     resolved: true,
     tenant: { tenantId: tenant.tenantId, tenantName: tenant.tenantName },
     xero: { ...result, tenantId: tenant.tenantId, tenantName: tenant.tenantName },
-    bill: pending.bill
+    bill: pending.bill,
+    next
   };
 }
 
@@ -4236,12 +4282,26 @@ function formatLateOutcome(payload, typeLabel = 'file') {
 
 // Mirrors send_org_picker() in webhook.php. The picker state already lives in the
 // bridge, so a picker sent from here resolves through the normal reply path.
-function formatOrgPicker(candidates, billedTo = '') {
+// The question for one queued bill. Naming the supplier and invoice is what
+// makes "reply 2" unambiguous once a batch has more than one question open.
+function formatPickerQuestion(item) {
+  if (!item || !Array.isArray(item.candidates) || !item.candidates.length) return '';
   const lines = ['👉 *Which Xero organisation should this go to?*'];
-  if (billedTo) lines.push(`Bill says: _${billedTo}_`);
+  const desc = [item.supplier, item.invoiceNo].filter(Boolean).join(' · ');
+  if (desc) lines.push(`*${desc}*`);
+  if (item.total != null && !Number.isNaN(Number(item.total))) {
+    lines.push(`${item.currency || ''} ${formatMoney(item.total)}`.trim());
+  }
+  if (item.billedTo) lines.push(`Bill says: _${item.billedTo}_`);
   lines.push('');
-  candidates.forEach((c, i) => lines.push(`${i + 1}. ${c.tenantName || '(unnamed)'}`));
-  lines.push('', '_Reply with the number (e.g. *1*), or type *cancel* to skip._');
+  item.candidates.forEach((c, i) => lines.push(`${i + 1}. ${c.tenantName || '(unnamed)'}`));
+  lines.push('', '_Reply with the number (e.g. *1*), or type *cancel* to skip this one._');
+  const waiting = Number(item.remaining || 0) - 1;
+  if (waiting > 0) {
+    lines.push(waiting === 1
+      ? '_After this, 1 more bill still needs an organisation._'
+      : `_After this, ${waiting} more bills still need an organisation._`);
+  }
   return lines.join('\n');
 }
 
@@ -4271,8 +4331,10 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       // Logged because a false here is the one way the customer still ends up
       // never hearing the outcome — the exact failure this path exists to prevent.
       console.error(`[late] delivered=${ok} status=${(payload && payload.status) || 'error'} chat=${chatId}`);
-      if (payload && payload.status === 'pending' && Array.isArray(payload.candidates) && payload.candidates.length) {
-        await sendChatText({ channelId, chatId, text: formatOrgPicker(payload.candidates, (payload.bill || {}).billedTo || '') });
+      // The question for whichever queued bill is next in line (may belong to a
+      // different bill in this batch than the primary outcome).
+      if (payload && payload.pickerPrompt) {
+        await sendChatText({ channelId, chatId, text: payload.pickerPrompt });
       }
     };
 
@@ -4402,6 +4464,15 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
     console.error(`[timing] process-file total ${Math.round((Date.now() - startedAt) / 1000)}s — ${typeLabel} ${fileName || '(unnamed)'}, ${outcomes.length} outcome(s)`);
 
     const primary = outcomes[0] || { status: 'empty', bill: bills[0] || normalizeBillPayload({}) };
+    // At most one question is asked per request: whichever bill in this batch was
+    // cleared to ask (the queue head). Any others wait until this one is answered.
+    let askItem = outcomes.map((o) => o && o.pickerAsk).find(Boolean) || null;
+    if (askItem) {
+      // Re-read the head: bills later in this same batch joined the queue after
+      // the ask was decided, so `remaining` would otherwise undercount them.
+      const head = await peekPicker(chatId);
+      if (head && head.pendingBillId === askItem.pendingBillId) askItem = head;
+    }
     return respond({
       ok: true,
       ocrText,
@@ -4409,7 +4480,8 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
       multiBillCount: bills.length,
       bills,
       outcomes,
-      ...primary
+      ...primary,
+      pickerPrompt: askItem ? formatPickerQuestion(askItem) : null
     });
   } catch (error) {
     const b = req.body || {};
@@ -4463,13 +4535,33 @@ app.post('/api/whatsapp/chat', async (req, res) => {
       } catch (err) { console.error('[chat] channel resolve failed:', err.message); }
     }
     const runChat = async () => {
-    // 1) Picker resolution
-    const state = await getChatState(chatId);
-    if (state?.awaitingPicker?.pendingBillId) {
+    // 1) Picker resolution — answers the question at the head of this chat's
+    //    queue, then immediately asks the next one in the same reply.
+    const openQuestion = await peekPicker(chatId);
+    if (openQuestion?.pendingBillId) {
+      // Tack the next pending question onto a reply, so a batch keeps moving
+      // without the user having to prompt it.
+      const withNext = (text, next) => {
+        const q = next ? formatPickerQuestion(next) : '';
+        return q ? `${text}\n\n${q}` : text;
+      };
       const lower = message.toLowerCase();
+      if (['cancel all', 'cancelall', 'skip all', 'stop all'].includes(lower)) {
+        const waiting = Number(openQuestion.remaining || 1);
+        await clearPickerQueue(chatId);
+        return res.json({
+          ok: true,
+          kind: 'picker-cancelled',
+          reply: `👍 Skipped all ${waiting} bill${waiting === 1 ? '' : 's'}. They stay in *Pending* — open the dashboard to assign them later.`
+        });
+      }
       if (['cancel', 'batal', 'skip', 'stop'].includes(lower)) {
-        await clearChatState(chatId, 'awaitingPicker');
-        return res.json({ ok: true, kind: 'picker-cancelled', reply: '👍 Cancelled. The bill is still in *Pending* — open the dashboard to assign it later.' });
+        const next = await advancePickerQueue(chatId, openQuestion.pendingBillId);
+        return res.json({
+          ok: true,
+          kind: 'picker-cancelled',
+          reply: withNext('👍 Skipped. That bill stays in *Pending* — open the dashboard to assign it later.', next)
+        });
       }
       const result = await resolvePickerForChat(chatId, message);
       if (result?.resolved) {
@@ -4483,12 +4575,17 @@ app.post('/api/whatsapp/chat', async (req, res) => {
           lines.push(`Total: ${result.bill.currency || ''} ${Number(result.xero.total).toFixed(2)}`.trim());
         }
         lines.push(`View: https://go.xero.com/AccountsPayable/View.aspx?InvoiceID=${result.xero.invoiceId}`);
-        return res.json({ ok: true, kind: 'picker-resolved', reply: lines.join('\n'), xero: result.xero });
+        return res.json({
+          ok: true,
+          kind: 'picker-resolved',
+          reply: withNext(lines.join('\n'), result.next),
+          xero: result.xero
+        });
       }
       // Picker resolver returned an error.
       if (result && !result.resolved) {
-        // Xero-side error (e.g. line totals don't match) — keep state so the
-        // user can try another org or cancel. Surface the actual reason.
+        // Xero-side error (e.g. line totals don't match) — keep the question open
+        // so the user can try another org or cancel. Surface the actual reason.
         if (result.keepState) {
           return res.json({
             ok: true,
@@ -4498,13 +4595,17 @@ app.post('/api/whatsapp/chat', async (req, res) => {
               `Reply with a *different number*, or type *cancel* to skip and assign it from the dashboard.`
           });
         }
-        // Hard error (pending bill gone, tenant disconnected, etc.) — clear state.
+        // Hard error (pending bill gone, tenant disconnected, etc.) — the entry is
+        // already off the queue; move straight on to the next question.
         if (result.reason !== 'No matching choice') {
-          await clearChatState(chatId, 'awaitingPicker');
-          return res.json({ ok: true, kind: 'picker-error', reply: `⚠️ ${result.reason}. The pick has been cancelled.` });
+          return res.json({
+            ok: true,
+            kind: 'picker-error',
+            reply: withNext(`⚠️ ${result.reason}. That one has been skipped.`, result.next)
+          });
         }
       }
-      // Reply did not look like a choice — keep picker state and fall through to chat
+      // Reply did not look like a choice — keep the question open and fall through to chat
     }
 
     // 2) Commands
