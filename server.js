@@ -3429,7 +3429,14 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
   // It also answers for bills the name matching cannot: a utility bill
   // addressed to a landlord, or to a group company that does not pay it.
   let registerHit = null;
-  if (premisesRegister.isConfigured() && connections.length) {
+  if (!premisesRegister.isConfigured()) {
+    // Said once, not per bill. Without this the register being switched off
+    // looked exactly like the register having no row: the bill is filed by
+    // name matching and nothing anywhere says the register was never asked.
+    premisesRegister.warnNotConfigured();
+  } else if (!connections.length) {
+    console.warn('[register] no Xero organisation is connected here, so the register was not asked');
+  } else {
     const addresses = Array.isArray(bill.addresses) ? bill.addresses : [];
     const found = await premisesRegister.lookup({ addresses, supplier: bill.supplier });
     if (found.found) {
@@ -3448,6 +3455,12 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       // below is about to be filed by name matching instead, and if that is
       // wrong this line is the only record of why.
       console.error(`[register] could not be asked (${found.reason}); falling back to name matching`);
+    } else {
+      // A real answer, and the one most likely to be a surprise: either the
+      // AI returned no address to look up, or no row matches the ones it
+      // did. Both used to pass in silence.
+      console.log(`[register] no row matches this bill (${found.reason || 'the register knows none of its addresses'});`
+        + ` ${addresses.length} address(es) offered; filing by name matching`);
     }
   }
 
