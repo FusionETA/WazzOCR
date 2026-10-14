@@ -2602,7 +2602,23 @@ function normalizeBillPayload(bill) {
     taxLabel: bill?.taxLabel || 'Tax',
     discount: normalizeNumber(bill?.discount),
     total: normalizeNumber(bill?.total),
-    notes: bill?.notes || null
+    notes: bill?.notes || null,
+    // Every address-like block the model read, kept verbatim for the
+    // premises register to match against.
+    //
+    // This object is an allow-list: a field the schema asks the model for
+    // but that is not named here is discarded before anything downstream
+    // sees it. "addresses" was missing, so the register was asked about
+    // every bill with nothing to look up and answered, correctly, that it
+    // knew none of them — and the bill was then filed by name matching.
+    //
+    // Deduplicated and capped because a model repeats itself, and the
+    // register only reads the first dozen anyway.
+    addresses: Array.isArray(bill?.addresses)
+      ? [...new Set(bill.addresses
+          .map((a) => String(a == null ? '' : a).trim())
+          .filter(Boolean))].slice(0, 12)
+      : []
   };
 
   if (!normalized.total && normalized.lineItems.length) {
