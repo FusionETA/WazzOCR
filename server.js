@@ -2794,7 +2794,7 @@ function logGeminiDiag(diag) {
 
 // Shared Gemini generateContent call → parsed JSON. `parts` is the array of
 // content parts: text and/or inlineData (base64 image/PDF) for the vision path.
-async function callGeminiJson(parts, model, purpose = 'extraction') {
+async function callGeminiJson(parts, model, purpose = 'extraction', attempt = 1) {
   if (!GEMINI_API_KEY) {
     throw new Error('Missing GEMINI_API_KEY in .env.');
   }
@@ -2809,7 +2809,9 @@ async function callGeminiJson(parts, model, purpose = 'extraction') {
     body: JSON.stringify({
       contents: [{ role: 'user', parts }],
       generationConfig: {
-        temperature: 0.1,
+        // A retry after a runaway (see MAX_TOKENS below) runs warmer: at 0.1
+        // the model tends to fall back into the same loop.
+        temperature: attempt > 1 ? 0.4 : 0.1,
         // Ask for the model's full ceiling rather than a flat 8192: a 700-line
         // invoice ran past that old cap and came back truncated mid-array, and
         // a truncated bill can't be repaired back into a correct one (ticket
@@ -2856,7 +2858,16 @@ async function callGeminiJson(parts, model, purpose = 'extraction') {
   // all. Refuse it and name the remedy instead of parsing a stump (WZ-7GN7NQ).
   if (candidate?.finishReason === 'MAX_TOKENS') {
     const cap = geminiOutputLimit(useModel);
-    logGeminiDiag(`[gemini-diag] TRUNCATED finishReason=MAX_TOKENS model=${useModel} cap=${cap} purpose=${purpose} rawLen=${text.length}`);
+    logGeminiDiag(`[gemini-diag] TRUNCATED finishReason=MAX_TOKENS model=${useModel} cap=${cap} purpose=${purpose} attempt=${attempt} rawLen=${text.length}`
+      + `\n[gemini-diag] tail: ${JSON.stringify(text.slice(-400))}`);
+    // Most hits are not long documents but a runaway: the model starts
+    // repeating one value or line until the cap. WZ-HYXH45 was a 4-page phone
+    // bill with 8 lines that came back as 188KB; six reruns of the same PDF
+    // were all clean. The loop doesn't reproduce, so one retry clears it.
+    if (attempt === 1) {
+      console.error(`[gemini-diag] retrying ${purpose} after MAX_TOKENS`);
+      return callGeminiJson(parts, model, purpose, attempt + 1);
+    }
     throw new Error(
       `This document is too long for ${useModel} — the extraction was cut off at its ${cap}-token output limit, `
       + `so some line items are missing. `
