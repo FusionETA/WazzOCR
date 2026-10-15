@@ -1408,26 +1408,59 @@ async function resolveBillTaxTypes(bill, tenantId, fallbackTaxType) {
   return resolved;
 }
 
+// A batch of bills from one supplier arrives within the same second and is
+// processed in parallel, so every bill looks the contact up, finds none, and
+// tries to create it; all but the first get Xero's "contact name ... is already
+// assigned" 400 (ticket WZ-E8XQR5, a run of TNB bills). Lookups for the same
+// tenant + name share one in-flight promise. pm2 runs a single process, so an
+// in-memory map is enough.
+const contactLookupsInFlight = new Map();
+
 async function findOrCreateContact(bill, tenantId) {
   const supplierName = String(bill.supplier || FALLBACK_SUPPLIER_NAME).trim() || FALLBACK_SUPPLIER_NAME;
+  const key = `${tenantId}|${supplierName.toUpperCase()}`;
+  if (contactLookupsInFlight.has(key)) {
+    return contactLookupsInFlight.get(key);
+  }
+  const pending = findOrCreateContactUnlocked(supplierName, tenantId)
+    .finally(() => contactLookupsInFlight.delete(key));
+  contactLookupsInFlight.set(key, pending);
+  return pending;
+}
 
+async function findActiveContactByName(supplierName, tenantId) {
   const exactWhere = buildWhereClause([
     `Name=="${escapeXeroString(supplierName)}"`,
     'ContactStatus=="ACTIVE"'
   ]);
   const contactsPayload = await xeroApi(`/Contacts?where=${encodeURIComponent(exactWhere)}`, {}, tenantId);
-  const existing = getFirstItem(contactsPayload, 'Contacts');
+  return getFirstItem(contactsPayload, 'Contacts');
+}
+
+async function findOrCreateContactUnlocked(supplierName, tenantId) {
+  const existing = await findActiveContactByName(supplierName, tenantId);
   if (existing?.ContactID) {
     return existing;
   }
 
-  const createdPayload = await xeroApi('/Contacts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      Contacts: [{ Name: supplierName }]
-    })
-  }, tenantId);
+  let createdPayload;
+  try {
+    createdPayload = await xeroApi('/Contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        Contacts: [{ Name: supplierName }]
+      })
+    }, tenantId);
+  } catch (err) {
+    // Someone else (another process, a person in Xero) created it between our
+    // lookup and our create. Use theirs.
+    if (/is already assigned to another contact/i.test(err.message || '')) {
+      const raced = await findActiveContactByName(supplierName, tenantId);
+      if (raced?.ContactID) return raced;
+    }
+    throw err;
+  }
 
   const created = getFirstItem(createdPayload, 'Contacts');
   if (!created?.ContactID) {
