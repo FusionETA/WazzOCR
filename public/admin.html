@@ -492,7 +492,9 @@
   window.delAcctPhone = async (id,pid) => { try { await api('DELETE','/admin/accounts/'+id+'/phones/'+pid); loadAcctPhones(id); } catch(e){ alert(e.message); } };
   window.invite = async (id) => { const m=document.getElementById('invMsg');
     try { const r=await api('POST','/admin/accounts/'+id+'/invite',{ email:document.getElementById('invEmail').value.trim(), phone:document.getElementById('invPhone').value.trim(), name:document.getElementById('invName').value.trim() });
-      m.className='msg ok'; m.textContent = r.sent?'Invite sent via WhatsApp.':('WhatsApp send failed. Share this link: '+r.link); openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
+      // openAccount re-renders the panel, so write the result into the fresh invMsg afterwards.
+      await openAccount(id); const m2=document.getElementById('invMsg')||m;
+      m2.className = r.sent?'msg ok':'msg err'; m2.textContent = r.sent?'Invite sent via WhatsApp.':('WhatsApp send failed. Share this link: '+r.link); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.addChannel = async (id) => { const m=document.getElementById('chMsg');
     try { await api('POST','/admin/accounts/'+id+'/channels',{ channelId:document.getElementById('chId').value.trim(), label:document.getElementById('chLabel').value.trim(), apiKey:document.getElementById('chKey').value.trim()||undefined }); openAccount(id); } catch(e){ m.className='msg err'; m.textContent=e.message; } };
   window.delChannel = async (id,cid) => { try { await api('DELETE','/admin/accounts/'+id+'/channels/'+cid); openAccount(id); } catch(e){ alert(e.message); } };

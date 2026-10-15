@@ -270,7 +270,10 @@ router.get('/accounts/:id/coa.csv', async (req, res) => {
 // Invite a user to an account: create (or reuse) the user, then WhatsApp the link.
 router.post('/accounts/:id/invite', async (req, res) => {
   const accountId = Number(req.params.id);
-  const { email, phone, name } = req.body || {};
+  const { email, name } = req.body || {};
+  // Wazzup needs the international form, so a local 01x number becomes 601x.
+  let phone = channelPhones.normalizePhone(req.body && req.body.phone);
+  if (phone.startsWith('0')) phone = '6' + phone;
   if (!email || !phone) return res.status(400).json({ error: 'Email and phone are required.' });
   const account = await accounts.getById(accountId);
   if (!account) return res.status(404).json({ error: 'Account not found.' });
@@ -279,6 +282,7 @@ router.post('/accounts/:id/invite', async (req, res) => {
   let userId;
   if (user) {
     userId = user.id; // reuse existing (e.g. re-invite)
+    if (user.phone_number !== phone) await users.setPhone(userId, phone); // re-invite corrects a wrong number
   } else {
     userId = await users.createInvited({ accountId, email, phone, name });
   }
