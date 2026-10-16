@@ -35,7 +35,12 @@ const {
   XERO_CLIENT_SECRET,
   XERO_REDIRECT_URI = `http://localhost:${PORT}/api/xero/callback`,
   PUBLIC_APP_URL = '',
-  XERO_SCOPES = 'openid profile email offline_access accounting.invoices accounting.contacts accounting.settings accounting.attachments',
+  // accounting.payments is for Bills Hub, which records a bank-file batch as
+  // a payment on this same grant. Xero refuses a scope it was not consented
+  // for with "AuthorizationUnsuccessful", which reads like a token problem
+  // and is not one — invoices, contacts and attachments all work, because
+  // those scopes are here. Adding it needs a reconnect to take effect.
+  XERO_SCOPES = 'openid profile email offline_access accounting.invoices accounting.contacts accounting.settings accounting.attachments accounting.payments',
   XERO_DEFAULT_ACCOUNT_CODE = '',
   XERO_DEFAULT_TAX_TYPE = 'NONE',
   XERO_DEFAULT_CURRENCY = 'MYR',
