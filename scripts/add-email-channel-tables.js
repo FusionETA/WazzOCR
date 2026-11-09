@@ -4,6 +4,18 @@
 require('dotenv').config({ path: __dirname + '/../.env' });
 const db = require('../db');
 
+// MySQL 8 has no ADD COLUMN IF NOT EXISTS, so check first.
+async function addColumn(table, column, definition) {
+  const rows = await db.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+  if (rows.length) return;
+  await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  console.log(`Added ${table}.${column}.`);
+}
+
 (async () => {
   // Per-account email channel settings. The Gmail mailbox itself is read by an
   // Apps Script running inside that Gmail account, so no mailbox password is
@@ -101,6 +113,33 @@ const db = require('../db');
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
 
-  console.log('Email channel tables ready: email_settings, email_messages, email_attachments, email_script_runs.');
+  // A copy of every bill file received (email or WhatsApp) waiting for the
+  // Gmail script to save it to that Gmail's Google Drive, filed by month and
+  // result. The local copy is deleted once Drive has it.
+  await db.execute(
+    `CREATE TABLE IF NOT EXISTS drive_archive (
+      id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      account_id    BIGINT UNSIGNED NOT NULL,
+      channel       ENUM('email','whatsapp') NOT NULL,
+      file_name     VARCHAR(255) NOT NULL,
+      mime          VARCHAR(100) NULL,
+      stored_file   VARCHAR(255) NULL,
+      sender        VARCHAR(255) NULL,
+      received_at   DATETIME NOT NULL,
+      result        ENUM('created','review','duplicate','failed') NULL,
+      supplier      VARCHAR(255) NULL,
+      invoice_no    VARCHAR(128) NULL,
+      ready         TINYINT(1) NOT NULL DEFAULT 0,
+      archived_at   DATETIME NULL,
+      drive_file_id VARCHAR(128) NULL,
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_drive_archive_todo (account_id, ready, archived_at),
+      CONSTRAINT fk_drive_archive_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+  await addColumn('email_settings', 'drive_archive', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER notify_failures');
+  await addColumn('email_attachments', 'archive_id', 'BIGINT UNSIGNED NULL AFTER bill_index');
+
+  console.log('Email channel tables ready: email_settings, email_messages, email_attachments, email_script_runs, drive_archive.');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -10,7 +10,44 @@ get the actual values from the project's local `.env`.
 
 ---
 
-## 0d. Latest update — Gmail script run time (server checklist)
+## 0e. Latest update — every bill file saved to Google Drive (server checklist)
+
+Every PDF or photo WazzOCR receives — by **email or WhatsApp**, whether it was
+created, needs review, was a duplicate or could not be read — is saved to the
+account's email-channel Gmail Drive under
+`WazzOCR Bills / <month> / Created | Needs review | Duplicate | Failed`,
+named like `2026-11-10 KSL PROPERTIES SDN BHD KSLP-R-IV-000232 - email #42.pdf`.
+
+How: WazzOCR copies each file to `data/archive/` as it arrives (new table
+`drive_archive`), labels it once processed, and the Gmail script collects up to
+5 waiting files per run, saves them to Drive and tells WazzOCR to delete its
+copy. Only accounts whose Gmail script is checking in are captured; files not
+collected within 30 days are dropped. Switch: Settings → Email channel →
+*Save a copy of every bill to this Gmail's Google Drive* (on by default).
+
+Changed: new `lib/driveArchive.js`; `lib/emailIntake.js`, `models/emailInbox.js`,
+`public/email-inbox.js`, `public/account.html`, `integrations/gmail-intake/Code.gs`,
+migration + schema. **`server.js` gains one line** at the top of the
+`/api/whatsapp/process-file` handler (`captureWhatsapp(req, res)`), which copies
+the file and reads the handler's reply; the WhatsApp processing is unchanged.
+
+1. Pull `main`, run the migration again (adds `drive_archive`,
+   `email_settings.drive_archive`, `email_attachments.archive_id`):
+   ```bash
+   node scripts/add-email-channel-tables.js
+   ```
+2. Restart the Node app.
+3. Settings shows **script out of date**. Download the Gmail script again, paste
+   it over the old one in the Apps Script project, Save, then **run `setup`
+   once** — it now asks for **Google Drive** permission. Allow it. (Until then
+   files wait on the server; the trigger keeps running.)
+4. Check: send a bill by email and one by WhatsApp. Within a few minutes both
+   are in Drive under `WazzOCR Bills / <this month> / …`, and Settings says
+   "N saved in the last 24h".
+
+---
+
+## 0d. Gmail script run time (server checklist)
 
 Settings → Email channel now shows how much of Google's daily trigger allowance
 (about 90 min/day on a free Gmail) the Gmail script used in the last 24 hours,

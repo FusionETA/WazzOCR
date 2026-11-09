@@ -4372,6 +4372,9 @@ app.post('/api/whatsapp/process-file', upload.single('file'), async (req, res) =
   let clientGone = false;
   res.on('close', () => { if (!res.writableEnded) clientGone = true; });
   const startedAt = Date.now();
+  // Copy the file for the Google Drive archive (lib/driveArchive.js). Reads the
+  // result from this handler's reply; changes nothing below.
+  require('./lib/driveArchive').captureWhatsapp(req, res);
 
   try {
     const body = req.body || {};
