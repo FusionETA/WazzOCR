@@ -10,7 +10,60 @@ get the actual values from the project's local `.env`.
 
 ---
 
-## 0b. Latest update — plans & phone restriction (server checklist)
+## 0c. Latest update — email channel (server checklist)
+
+Adds a second intake door: supplier bills **emailed** to an account's Gmail
+mailbox (Ayu Borneo: `ayuborneowazzocr@gmail.com`). Same method as Signum
+Unidash — a Google Apps Script inside that Gmail posts every PDF/photo to
+WazzOCR with the account's external API key. Processing reuses the WhatsApp
+pipeline unchanged (same AI prompt, COA, org matching, Xero draft, `bills` rows
+with `source = 'email'`), so the monthly count and billing include email.
+
+**The WhatsApp code is not changed.** New files only, plus small hooks:
+
+| File | Change |
+|---|---|
+| `lib/emailIntake.js` | **New.** Intake API, background processing, WhatsApp org picker, Email tab/Settings API. |
+| `models/emailInbox.js` | **New.** Email tables access. |
+| `scripts/add-email-channel-tables.js` | **New.** Migration (3 tables). |
+| `integrations/gmail-intake/Code.gs` | **New.** The Apps Script (downloaded pre-filled from Settings). |
+| `public/email-inbox.js` | **New.** Email tab + Settings → Email channel card. |
+| `server.js` | **One block added** just above `app.listen(...)`: `require('./lib/emailIntake').mount(app, {...})`. |
+| `public/account.html` | Email tab, Settings card slot, **Channel** column on Unmatched, email sender in Bills "Sent from". |
+| `db/schema.sql` | The 3 new tables appended (reference). |
+
+If the server's copy of `server.js` / `account.html` is newer than this folder,
+**apply the hooks by hand rather than overwriting** — they are small and marked.
+
+1. Upload the files above, then run the migration (idempotent):
+   ```bash
+   node scripts/add-email-channel-tables.js
+   ```
+   No new env vars. `PUBLIC_APP_URL` (already set) is used to fill in the script.
+2. Restart the Node app.
+3. As Ayu Borneo (or admin logged in as them): **Settings → Email channel**
+   - Gmail address `ayuborneowazzocr@gmail.com`, the Gmail password (shown to
+     everyone on the account with a show/hide eye; stored encrypted with
+     `APP_ENCRYPTION_KEY`, not used by the intake), WhatsApp number for org
+     questions (e.g. `60125011057`), Save.
+   - Already ran the migration for an earlier build? Run it again — it adds the
+     `email_settings.gmail_password` column.
+   - If their WhatsApp channel is **restricted**, that number must also be under
+     *Allowed phone numbers*, or its replies to the org question are ignored.
+   - **Download Gmail script** (fills in the address + API key; generates the key
+     if the account had none).
+4. Signed in to `ayuborneowazzocr@gmail.com`: script.google.com → New project →
+   paste → Save → run `setup` (allow permissions) → optionally `seedProcessed`
+   (skip old mail) → `installTrigger`. Settings shows **connected** within a minute.
+
+Verify: email a PDF bill to the Gmail. Within ~1–2 min it appears under
+**Email** tab; a matched bill is in Xero and the Bills tab (Sent from = sender
+email); an unclear one is in **Unmatched** with Channel = Email and the WhatsApp
+number gets the numbered org question.
+
+---
+
+## 0b. Plans & phone restriction (server checklist)
 
 Adds a **plan** per account (`trial` / `paid`) and a per-channel **phone
 restriction** (only listed sender numbers may use a channel; others are silently
