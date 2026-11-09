@@ -383,6 +383,35 @@
     return `<div class="card" id="emailCard"><h2>Email channel</h2><div id="emailCardBody" class="muted">Loading…</div></div>`;
   }
 
+  // Google's daily trigger allowance, as used by the Gmail script over the last
+  // 24 hours (each run reports its duration on the next heartbeat).
+  function usageHtml(u) {
+    if (!u) return '';
+    if (!u.runs) {
+      return `<p class="muted" style="font-size:.78rem;margin:.4rem 0 0">Daily Google run time appears here once the updated Gmail script has run a few times.</p>`;
+    }
+    const limit = u.dailyLimitMinutes || 90;
+    const used = u.totalMs / 60000;
+    const avgSec = u.totalMs / u.runs / 1000;
+    // A new or recently changed script has less than a day of runs; project the
+    // average over a full day of every-minute runs as well.
+    const projected = avgSec * 1440 / 60;
+    const worst = Math.max(used, u.runs < 1300 ? projected : 0);
+    const pct = Math.min(100, worst / limit * 100);
+    const tone = pct >= 90 ? 'var(--bad)' : pct >= 70 ? 'var(--warn)' : 'var(--ok)';
+    const fmt = (n) => (n < 10 ? n.toFixed(1) : Math.round(n));
+    const advice = pct >= 90
+      ? ' <b style="color:var(--bad)">Close to Google\'s limit — switch the trigger to every 5 minutes.</b>'
+      : pct >= 70 ? ' <b style="color:var(--warn)">Getting close — consider every 5 minutes.</b>' : '';
+    return `<div style="margin-top:.7rem" title="Google allows a free Gmail about ${limit} minutes of trigger run time a day. Measured inside the script, so Google's own count runs slightly higher.">
+      <div style="display:flex;justify-content:space-between;font-size:.8rem;margin-bottom:.3rem">
+        <span><b>Google run time, last 24h:</b> ${fmt(used)} of ${limit} min</span>
+        <span class="muted">${u.runs.toLocaleString()} runs · average ${avgSec.toFixed(1)} s</span></div>
+      <div class="ib-bar"><div style="width:${Math.min(100, used / limit * 100).toFixed(1)}%;background:${tone}"></div></div>
+      <p class="muted" style="font-size:.76rem;margin:.35rem 0 0">${u.runs < 1300 ? `At this pace a full day of every-minute runs uses about ${fmt(projected)} min.` : 'A full day of runs is counted.'}${advice}</p>
+    </div>`;
+  }
+
   async function wireSettings() {
     const body = document.getElementById('emailCardBody');
     if (!body) return;
@@ -410,6 +439,7 @@
         ${connected ? `<span class="badge success">connected</span><span class="muted" style="font-size:.8rem">Mailbox checked ${esc(ago(s.lastHeartbeatAt))}</span>` : `<span class="badge pending">waiting for the Gmail script</span>`}
         ${outdated ? `<span class="badge failed" title="Running ${esc(s.scriptVersion || 'an old version')}, expected ${esc(s.expectedScriptVersion)}">script out of date</span>` : ''}
       </div>
+      ${connected ? usageHtml(s.scriptUsage) : ''}
       <div style="margin-top:.8rem;padding:.8rem .9rem;border:1px solid var(--line);border-radius:9px;background:#FAFBFE;font-size:.84rem">
         <b>Connect the mailbox</b> (once, signed in to that Gmail):
         <ol style="margin:.4rem 0 .6rem 1.1rem;padding:0;line-height:1.6">

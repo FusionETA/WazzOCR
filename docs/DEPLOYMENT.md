@@ -10,7 +10,27 @@ get the actual values from the project's local `.env`.
 
 ---
 
-## 0c. Latest update — email channel (server checklist)
+## 0d. Latest update — Gmail script run time (server checklist)
+
+Settings → Email channel now shows how much of Google's daily trigger allowance
+(about 90 min/day on a free Gmail) the Gmail script used in the last 24 hours,
+turning orange at 70% and red at 90%. Each script run reports its duration on
+the next heartbeat; rows go in the new `email_script_runs` table (kept 3 days).
+
+1. Pull `main` on the server and run the migration again (idempotent; adds
+   `email_script_runs`):
+   ```bash
+   node scripts/add-email-channel-tables.js
+   ```
+2. Restart the Node app.
+3. Settings → Email channel shows **script out of date**. Download the Gmail
+   script again, paste it over the old one in the Apps Script project, Save.
+   The trigger keeps running; no need to run `installTrigger` again. The run
+   time line fills in after a few minutes.
+
+---
+
+## 0c. Email channel (server checklist)
 
 Adds a second intake door: supplier bills **emailed** to an account's Gmail
 mailbox (Ayu Borneo: `ayuborneowazzocr@gmail.com`). Same method as Signum

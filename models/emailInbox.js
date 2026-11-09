@@ -43,6 +43,29 @@ async function heartbeat(accountId, version) {
   );
 }
 
+// ── Script run time ─────────────────────────────────────────────────────────
+
+// One Gmail script run. INSERT IGNORE: the same run can be reported twice
+// (setup() also sends a heartbeat).
+async function recordRun(accountId, runAt, durationMs) {
+  await db.execute(
+    'INSERT IGNORE INTO email_script_runs (account_id, run_at, duration_ms) VALUES (?,?,?)',
+    [accountId, runAt, Math.max(0, Math.min(Math.round(durationMs), 30 * 60 * 1000))]
+  );
+}
+
+// Runs in the last 24 hours, for the usage line in Settings. Also drops rows
+// older than 3 days, so the table stays small (about 1,440 rows a day).
+async function runUsage(accountId) {
+  await db.execute('DELETE FROM email_script_runs WHERE account_id = ? AND run_at < UTC_TIMESTAMP() - INTERVAL 3 DAY', [accountId]);
+  const row = await db.getOne(
+    `SELECT COUNT(*) AS runs, COALESCE(SUM(duration_ms), 0) AS total_ms, COALESCE(MAX(duration_ms), 0) AS max_ms
+     FROM email_script_runs WHERE account_id = ? AND run_at >= UTC_TIMESTAMP() - INTERVAL 1 DAY`,
+    [accountId]
+  );
+  return { runs: Number(row.runs), totalMs: Number(row.total_ms), maxMs: Number(row.max_ms) };
+}
+
 // ── Messages ────────────────────────────────────────────────────────────────
 
 // Insert-or-get by Gmail message id, so the script can report the same email
@@ -162,7 +185,7 @@ async function monthStats(accountId) {
 }
 
 module.exports = {
-  getSettings, saveSettings, heartbeat,
+  getSettings, saveSettings, heartbeat, recordRun, runUsage,
   upsertMessage, queueAttachment, addSiblingBill, getAttachment, getAttachmentForAccount, updateAttachment,
   unfinished, allPending, inbox, monthStats
 };

@@ -272,3 +272,13 @@ CREATE TABLE IF NOT EXISTS email_attachments (
   CONSTRAINT fk_email_att_msg FOREIGN KEY (email_message_id) REFERENCES email_messages(id),
   CONSTRAINT fk_email_att_account FOREIGN KEY (account_id) REFERENCES accounts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- How long each Gmail script run took (reported on the next heartbeat), summed
+-- over 24 hours against Google's daily trigger allowance. Pruned after 3 days.
+CREATE TABLE IF NOT EXISTS email_script_runs (
+  account_id  BIGINT UNSIGNED NOT NULL,
+  run_at      DATETIME NOT NULL,
+  duration_ms INT UNSIGNED NOT NULL,
+  PRIMARY KEY (account_id, run_at),                 -- a run reported twice is stored once
+  CONSTRAINT fk_email_runs_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
