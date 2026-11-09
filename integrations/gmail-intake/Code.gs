@@ -12,6 +12,11 @@
  * WazzOCR answers straight away and processes in the background, so a slow AI
  * read never hits Apps Script's time limit.
  *
+ * DRIVE COPY: every bill file WazzOCR receives (email or WhatsApp, created,
+ * duplicate, needing review or failed) is also saved to THIS Gmail's Drive
+ * under WazzOCR Bills / <month> / <result>. WazzOCR keeps each file until this
+ * script collects it, a few per run. Needs Drive permission: run `setup` once.
+ *
  * ANYONE can email the mailbox — there is no sender list. Emails with no PDF or
  * photo are still reported, so they show in the Email tab as "nothing to bill".
  *
@@ -37,7 +42,7 @@
  * heartbeat so WazzOCR's Settings card can say whether the pasted copy is
  * current. Keep identical to EXPECTED_SCRIPT_VERSION in lib/emailIntake.js.
  */
-var SCRIPT_VERSION = '2026-11-10b';
+var SCRIPT_VERSION = '2026-11-10c';
 
 var CONFIG = {
   WAZZOCR_API_BASE: '__WAZZOCR_API_BASE__',   // e.g. https://wazzocr.fusioneta.com.my (no trailing slash)
@@ -55,6 +60,10 @@ var CONFIG = {
   MAX_BYTES: 14 * 1024 * 1024,
   MAX_THREADS_PER_RUN: 20,
   SCAN_DAYS: 3,               // only threads active in the last N days (Gmail quota saver)
+
+  // Every bill file WazzOCR receives (email or WhatsApp, whatever the result)
+  // is saved to this Gmail's Drive under DRIVE_ROOT / <month> / <result>.
+  DRIVE_ROOT: 'WazzOCR Bills',
 };
 
 /**
@@ -134,6 +143,62 @@ function run_() {
       thread.removeLabel(errored);
     }
   });
+
+  // Save waiting bill files to Drive. A Drive problem never stops intake.
+  if (hb && hb.archiveWaiting > 0) {
+    try { archiveToDrive_(); }
+    catch (err) { Logger.log('Drive archive failed: %s', err); }
+  }
+}
+
+/**
+ * Collect up to 5 waiting bill files from WazzOCR and save each to
+ * DRIVE_ROOT / 2026-11 / Created | Needs review | Duplicate | Failed.
+ * WazzOCR deletes its copy once told the file is in Drive; anything not
+ * confirmed is offered again next run.
+ */
+function archiveToDrive_() {
+  var list = get_('/api/email/archive');
+  if (list.code !== 200) { Logger.log('Archive list → HTTP %s', list.code); return; }
+  var items = (JSON.parse(list.raw) || {}).items || [];
+  items.forEach(function (it) {
+    var file = get_('/api/email/archive/' + it.id + '/file');
+    if (file.code !== 200) { Logger.log('Archive file %s → HTTP %s', it.id, file.code); return; }
+    var folder = folderPath_([CONFIG.DRIVE_ROOT, it.month, it.folder]);
+    var saved = folder.createFile(file.blob.setName(it.name).setContentType(it.mime));
+    var done = post_('/api/email/archive/' + it.id + '/done', { driveFileId: saved.getId() });
+    Logger.log('Saved to Drive: %s/%s/%s → HTTP %s', it.month, it.folder, it.name, done.code);
+  });
+}
+
+/** GET with the API key. Returns { code, raw, blob }. */
+function get_(path) {
+  var res = UrlFetchApp.fetch(CONFIG.WAZZOCR_API_BASE + path, {
+    method: 'get', muteHttpExceptions: true, headers: { 'X-Api-Key': CONFIG.WAZZOCR_API_KEY },
+  });
+  return { code: res.getResponseCode(), raw: res.getContentText(), blob: res.getBlob() };
+}
+
+/**
+ * Find or create nested folders from My Drive. The root folder's id is kept so
+ * renaming or moving it in Drive does not create a second one.
+ */
+function folderPath_(names) {
+  var props = PropertiesService.getScriptProperties();
+  var root = null;
+  var rootId = props.getProperty('driveRootId');
+  if (rootId) { try { root = DriveApp.getFolderById(rootId); if (root.isTrashed()) root = null; } catch (e) { root = null; } }
+  if (!root) {
+    var found = DriveApp.getRootFolder().getFoldersByName(names[0]);
+    root = found.hasNext() ? found.next() : DriveApp.getRootFolder().createFolder(names[0]);
+    props.setProperty('driveRootId', root.getId());
+  }
+  var folder = root;
+  for (var i = 1; i < names.length; i++) {
+    var sub = folder.getFoldersByName(names[i]);
+    folder = sub.hasNext() ? sub.next() : folder.createFolder(names[i]);
+  }
+  return folder;
 }
 
 /**
@@ -244,6 +309,7 @@ function resetProcessed() {
 /** Create the labels and grant permissions. Run once. */
 function setup() {
   ensureLabels_();
+  DriveApp.getRootFolder();              // asks for Drive permission (bill archive)
   var hb = heartbeat_();
   Logger.log(hb ? 'Connected to WazzOCR. Now run installTrigger.'
                 : 'Labels ready, but WazzOCR did not answer — check WAZZOCR_API_BASE and WAZZOCR_API_KEY.');

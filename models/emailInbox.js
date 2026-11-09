@@ -12,7 +12,7 @@ async function getSettings(accountId) {
   if (!row) {
     return {
       account_id: accountId, enabled: 1, gmail_address: null, gmail_password: null, notify_phone: null,
-      notify_failures: 1, script_version: null, last_heartbeat_at: null
+      notify_failures: 1, drive_archive: 1, script_version: null, last_heartbeat_at: null
     };
   }
   let password = null;
@@ -23,15 +23,15 @@ async function getSettings(accountId) {
   return { ...row, gmail_password: password };
 }
 
-async function saveSettings(accountId, { enabled, gmailAddress, gmailPassword, notifyPhone, notifyFailures }) {
+async function saveSettings(accountId, { enabled, gmailAddress, gmailPassword, notifyPhone, notifyFailures, driveArchive }) {
   await db.execute(
-    `INSERT INTO email_settings (account_id, enabled, gmail_address, gmail_password, notify_phone, notify_failures)
-     VALUES (?,?,?,?,?,?)
+    `INSERT INTO email_settings (account_id, enabled, gmail_address, gmail_password, notify_phone, notify_failures, drive_archive)
+     VALUES (?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), gmail_address = VALUES(gmail_address),
        gmail_password = VALUES(gmail_password), notify_phone = VALUES(notify_phone),
-       notify_failures = VALUES(notify_failures)`,
+       notify_failures = VALUES(notify_failures), drive_archive = VALUES(drive_archive)`,
     [accountId, enabled ? 1 : 0, gmailAddress || null, gmailPassword ? encrypt(gmailPassword) : null,
-     notifyPhone || null, notifyFailures ? 1 : 0]
+     notifyPhone || null, notifyFailures ? 1 : 0, driveArchive === false ? 0 : 1]
   );
 }
 
@@ -118,7 +118,7 @@ function getAttachmentForAccount(id, accountId) {
   return db.getOne('SELECT * FROM email_attachments WHERE id = ? AND account_id = ?', [id, accountId]);
 }
 
-const UPDATABLE = ['status', 'message', 'bill_id', 'pending_uuid', 'supplier', 'invoice_no', 'total', 'currency',
+const UPDATABLE = ['archive_id', 'status', 'message', 'bill_id', 'pending_uuid', 'supplier', 'invoice_no', 'total', 'currency',
   'xero_tenant_name', 'xero_url', 'stored_file', 'resolved_by_user', 'resolved_at'];
 
 async function updateAttachment(id, fields) {

@@ -412,6 +412,22 @@
     </div>`;
   }
 
+  // Where the Drive copy stands: waiting files, last save, and what to do when
+  // the pasted script is too old to save to Drive.
+  function driveHtml(s) {
+    const d = s.driveStats;
+    if (!s.driveArchive || !d) return '';
+    if (s.scriptVersion && s.scriptVersion < '2026-11-10c') {
+      return `<p class="muted" style="font-size:.78rem;margin:.4rem 0 0"><b style="color:var(--warn)">Paste the updated Gmail script and run setup once</b> to allow Drive. Until then files wait here (${d.waiting} so far).</p>`;
+    }
+    const parts = [];
+    parts.push(d.savedDay ? `${d.savedDay} saved in the last 24h` : 'Nothing saved in the last 24h');
+    if (d.waiting) parts.push(`${d.waiting} waiting for the next run`);
+    if (d.processing) parts.push(`${d.processing} still being read`);
+    if (d.lastSavedAt) parts.push(`last saved ${ago(d.lastSavedAt)}`);
+    return `<p class="muted" style="font-size:.78rem;margin:.4rem 0 0">${esc(parts.join(' · '))}</p>`;
+  }
+
   async function wireSettings() {
     const body = document.getElementById('emailCardBody');
     if (!body) return;
@@ -457,6 +473,11 @@
       <label style="display:flex;gap:.55rem;align-items:center;margin-top:.8rem;font-size:.88rem;cursor:pointer">
         <input type="checkbox" id="emFailures" ${s.notifyFailures ? 'checked' : ''} style="width:16px;height:16px;padding:0;accent-color:var(--navy)">
         Also WhatsApp this number when an emailed bill fails</label>
+      <h3>Google Drive copy</h3>
+      <label style="display:flex;gap:.55rem;align-items:flex-start;font-size:.88rem;cursor:pointer">
+        <input type="checkbox" id="emDrive" ${s.driveArchive ? 'checked' : ''} style="width:16px;height:16px;padding:0;margin-top:2px;accent-color:var(--navy)">
+        <span>Save a copy of every bill to this Gmail's Google Drive<br><span class="muted" style="font-size:.78rem">Email and WhatsApp, including duplicates and ones WazzOCR could not read. Filed under <b>WazzOCR Bills / month / Created, Needs review, Duplicate or Failed</b>.</span></span></label>
+      ${driveHtml(s)}
       <div style="display:flex;justify-content:flex-end;margin-top:1rem"><button class="btn btn-primary" id="emSave" type="button">Save</button></div>
       <div class="msg" id="emMsg"></div>`;
     const pw = document.getElementById('emGmailPw');
@@ -478,7 +499,8 @@
           gmailAddress: document.getElementById('emGmail').value.trim(),
           gmailPassword: pw.value,
           notifyPhone: document.getElementById('emPhone').value.trim(),
-          notifyFailures: document.getElementById('emFailures').checked
+          notifyFailures: document.getElementById('emFailures').checked,
+          driveArchive: document.getElementById('emDrive').checked
         }) });
         const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Save failed.');
         m.className = 'msg ok'; m.textContent = 'Saved.';

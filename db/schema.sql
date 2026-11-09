@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS email_settings (
   gmail_password    VARBINARY(512) NULL,           -- encrypted (lib/crypto); shown to the team in Settings, never used by the intake
   notify_phone      VARCHAR(32) NULL,               -- gets the WhatsApp org picker for emailed bills
   notify_failures   TINYINT(1) NOT NULL DEFAULT 1,
+  drive_archive     TINYINT(1) NOT NULL DEFAULT 1,  -- save a copy of every bill file to this Gmail's Drive
   script_version    VARCHAR(32) NULL,               -- reported by the Apps Script heartbeat
   last_heartbeat_at DATETIME NULL,
   updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -252,6 +253,7 @@ CREATE TABLE IF NOT EXISTS email_attachments (
   mime             VARCHAR(100) NULL,
   size             INT UNSIGNED NOT NULL DEFAULT 0,
   bill_index       SMALLINT UNSIGNED NOT NULL DEFAULT 0, -- > 0 when one file holds several bills
+  archive_id       BIGINT UNSIGNED NULL,            -- drive_archive.id of this file's Drive copy
   stored_file      VARCHAR(255) NULL,               -- kept under data/email until no longer needed
   status           ENUM('queued','processing','created','pending','failed','duplicate','dismissed') NOT NULL DEFAULT 'queued',
   message          VARCHAR(1024) NULL,
@@ -281,4 +283,27 @@ CREATE TABLE IF NOT EXISTS email_script_runs (
   duration_ms INT UNSIGNED NOT NULL,
   PRIMARY KEY (account_id, run_at),                 -- a run reported twice is stored once
   CONSTRAINT fk_email_runs_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- A copy of every bill file received (email or WhatsApp), waiting for the Gmail
+-- script to save it to that Gmail's Drive under WazzOCR Bills/<month>/<result>.
+-- See lib/driveArchive.js. The local copy is deleted once Drive has it.
+CREATE TABLE IF NOT EXISTS drive_archive (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  account_id    BIGINT UNSIGNED NOT NULL,
+  channel       ENUM('email','whatsapp') NOT NULL,
+  file_name     VARCHAR(255) NOT NULL,
+  mime          VARCHAR(100) NULL,
+  stored_file   VARCHAR(255) NULL,
+  sender        VARCHAR(255) NULL,
+  received_at   DATETIME NOT NULL,
+  result        ENUM('created','review','duplicate','failed') NULL,
+  supplier      VARCHAR(255) NULL,
+  invoice_no    VARCHAR(128) NULL,
+  ready         TINYINT(1) NOT NULL DEFAULT 0,
+  archived_at   DATETIME NULL,
+  drive_file_id VARCHAR(128) NULL,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_drive_archive_todo (account_id, ready, archived_at),
+  CONSTRAINT fk_drive_archive_account FOREIGN KEY (account_id) REFERENCES accounts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
