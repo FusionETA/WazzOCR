@@ -213,3 +213,62 @@ CREATE TABLE IF NOT EXISTS whatsapp_chat_state (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_chatstate_account FOREIGN KEY (account_id) REFERENCES accounts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Email channel (Gmail Apps Script → /api/email/intake). See
+-- scripts/add-email-channel-tables.js and lib/emailIntake.js.
+CREATE TABLE IF NOT EXISTS email_settings (
+  account_id        BIGINT UNSIGNED PRIMARY KEY,
+  enabled           TINYINT(1) NOT NULL DEFAULT 1,
+  gmail_address     VARCHAR(255) NULL,
+  gmail_password    VARBINARY(512) NULL,           -- encrypted (lib/crypto); shown to the team in Settings, never used by the intake
+  notify_phone      VARCHAR(32) NULL,               -- gets the WhatsApp org picker for emailed bills
+  notify_failures   TINYINT(1) NOT NULL DEFAULT 1,
+  script_version    VARCHAR(32) NULL,               -- reported by the Apps Script heartbeat
+  last_heartbeat_at DATETIME NULL,
+  updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_email_settings_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS email_messages (
+  id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  account_id       BIGINT UNSIGNED NOT NULL,
+  gmail_message_id VARCHAR(64) NOT NULL,
+  from_name        VARCHAR(255) NULL,
+  from_email       VARCHAR(255) NULL,
+  subject          VARCHAR(512) NULL,
+  received_at      DATETIME NULL,
+  skip_reason      VARCHAR(512) NULL,               -- set when the email had no PDF or photo
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_email_msg (account_id, gmail_message_id),
+  INDEX idx_email_msg_acct_received (account_id, received_at),
+  CONSTRAINT fk_email_msg_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS email_attachments (
+  id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  account_id       BIGINT UNSIGNED NOT NULL,
+  email_message_id BIGINT UNSIGNED NOT NULL,
+  file_name        VARCHAR(255) NOT NULL,
+  mime             VARCHAR(100) NULL,
+  size             INT UNSIGNED NOT NULL DEFAULT 0,
+  bill_index       SMALLINT UNSIGNED NOT NULL DEFAULT 0, -- > 0 when one file holds several bills
+  stored_file      VARCHAR(255) NULL,               -- kept under data/email until no longer needed
+  status           ENUM('queued','processing','created','pending','failed','duplicate','dismissed') NOT NULL DEFAULT 'queued',
+  message          VARCHAR(1024) NULL,
+  bill_id          BIGINT UNSIGNED NULL,            -- bills.id (Unmatched tab, monthly count)
+  pending_uuid     VARCHAR(64) NULL,                -- pending-bills store id (WhatsApp org picker)
+  supplier         VARCHAR(255) NULL,
+  invoice_no       VARCHAR(128) NULL,
+  total            DECIMAL(14,2) NULL,
+  currency         VARCHAR(8) NULL,
+  xero_tenant_name VARCHAR(255) NULL,
+  xero_url         VARCHAR(512) NULL,
+  resolved_by_user TINYINT(1) NOT NULL DEFAULT 0,
+  resolved_at      DATETIME NULL,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_email_att (email_message_id, file_name, size, bill_index),
+  INDEX idx_email_att_acct_status (account_id, status),
+  CONSTRAINT fk_email_att_msg FOREIGN KEY (email_message_id) REFERENCES email_messages(id),
+  CONSTRAINT fk_email_att_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

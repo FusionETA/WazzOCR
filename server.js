@@ -5766,6 +5766,16 @@ app.post('/api/ext/process-pdf', upload.single('file'), async (req, res) => {
 
 // ────────────────────────────────────────────────────────────────────────────
 
+// Email channel (Gmail Apps Script → /api/email/intake). Everything lives in
+// lib/emailIntake.js; it is handed the existing pipeline functions below and
+// does not change how any of them behave.
+require('./lib/emailIntake').mount(app, {
+  analyzeFileToBills, processBillForChat, xeroAccountCtx, getValidConnections,
+  saveUploadedBuffer, deleteUploadedFile, sendChatText, formatPickerQuestion, peekPicker,
+  advancePickerQueue, getPendingBill, removePendingBill, loadBills, ticketReply, sniffMime,
+  resolveExternalAccount, hasCreatedXeroBill
+});
+
 app.listen(PORT, () => {
   console.log(`FusionETA OCR + Xero app running at http://localhost:${PORT}`);
 });
