@@ -37,7 +37,7 @@
  * heartbeat so WazzOCR's Settings card can say whether the pasted copy is
  * current. Keep identical to EXPECTED_SCRIPT_VERSION in lib/emailIntake.js.
  */
-var SCRIPT_VERSION = '2026-11-10';
+var SCRIPT_VERSION = '2026-11-10b';
 
 var CONFIG = {
   WAZZOCR_API_BASE: '__WAZZOCR_API_BASE__',   // e.g. https://wazzocr.fusioneta.com.my (no trailing slash)
@@ -57,8 +57,23 @@ var CONFIG = {
   SCAN_DAYS: 3,               // only threads active in the last N days (Gmail quota saver)
 };
 
-/** Entry point for the time trigger. */
+/**
+ * Entry point for the time trigger. Times itself so WazzOCR can show how much of
+ * Google's daily trigger allowance (90 min/day on a free Gmail) is being used:
+ * each run reports the PREVIOUS run's duration on its heartbeat.
+ */
 function run() {
+  var started = Date.now();
+  try {
+    run_();
+  } finally {
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty('lastRunMs', String(Date.now() - started));
+    props.setProperty('lastRunAt', new Date(started).toISOString());
+  }
+}
+
+function run_() {
   ensureLabels_();
   var processed = GmailApp.getUserLabelByName(CONFIG.PROCESSED_LABEL);
   var errored   = GmailApp.getUserLabelByName(CONFIG.ERROR_LABEL);
@@ -173,10 +188,18 @@ function post_(path, body) {
   return { code: res.getResponseCode(), json: json, raw: raw };
 }
 
-/** Tell WazzOCR the script ran (and which version). Returns its reply, or null. */
+/**
+ * Tell WazzOCR the script ran, which version it is, and how long the previous
+ * run took. Returns its reply, or null.
+ */
 function heartbeat_() {
   try {
-    var r = post_('/api/email/heartbeat', { version: SCRIPT_VERSION });
+    var props = PropertiesService.getScriptProperties();
+    var r = post_('/api/email/heartbeat', {
+      version:   SCRIPT_VERSION,
+      lastRunMs: Number(props.getProperty('lastRunMs') || 0),
+      lastRunAt: props.getProperty('lastRunAt') || '',
+    });
     if (r.code !== 200) Logger.log('Heartbeat → HTTP %s %s', r.code, r.raw.slice(0, 200));
     return r.code === 200 ? r.json : null;
   } catch (e) {

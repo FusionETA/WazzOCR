@@ -88,6 +88,19 @@ const db = require('../db');
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
   );
 
-  console.log('Email channel tables ready: email_settings, email_messages, email_attachments.');
+  // How long each Gmail script run took, as reported on its next heartbeat.
+  // Summed over 24 hours against Google's daily trigger allowance; rows older
+  // than 3 days are pruned by the app.
+  await db.execute(
+    `CREATE TABLE IF NOT EXISTS email_script_runs (
+      account_id  BIGINT UNSIGNED NOT NULL,
+      run_at      DATETIME NOT NULL,
+      duration_ms INT UNSIGNED NOT NULL,
+      PRIMARY KEY (account_id, run_at),
+      CONSTRAINT fk_email_runs_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+  );
+
+  console.log('Email channel tables ready: email_settings, email_messages, email_attachments, email_script_runs.');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
