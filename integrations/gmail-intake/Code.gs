@@ -26,6 +26,12 @@
  * ANYONE can email the mailbox — there is no sender list. Emails with nothing
  * to send are still reported, so they show in the Email tab as "nothing to bill".
  *
+ * GMAIL QUOTA: a free Gmail allows about 20,000 Gmail calls a day and this runs
+ * 1,440 times a day, so each run only looks at mail that arrived since the
+ * last good run (search "after:<time>") and skips any message already handled
+ * (done_<id> in Script Properties) before touching its attachments. A quiet
+ * minute costs one Gmail search.
+ *
  * DEDUPE: every attachment WazzOCR accepted is recorded in Script Properties by
  * (message id + size + name) and never sent twice. A network or server error is
  * not recorded, so it is retried on the next run. WazzOCR ignores a repeat of
@@ -48,7 +54,7 @@
  * heartbeat so WazzOCR's Settings card can say whether the pasted copy is
  * current. Keep identical to EXPECTED_SCRIPT_VERSION in lib/emailIntake.js.
  */
-var SCRIPT_VERSION = '2026-11-12';
+var SCRIPT_VERSION = '2026-11-12b';
 
 var CONFIG = {
   WAZZOCR_API_BASE: '__WAZZOCR_API_BASE__',   // e.g. https://wazzocr.fusioneta.com.my (no trailing slash)
@@ -98,10 +104,7 @@ function run() {
 }
 
 function run_() {
-  ensureLabels_();
-  var processed = GmailApp.getUserLabelByName(CONFIG.PROCESSED_LABEL);
-  var errored   = GmailApp.getUserLabelByName(CONFIG.ERROR_LABEL);
-  var props     = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getScriptProperties();
 
   var hb = heartbeat_();                 // liveness, even on quiet minutes
   if (hb && hb.enabled === false) {      // turned off in WazzOCR Settings
@@ -109,52 +112,77 @@ function run_() {
     return;
   }
 
-  var threads = GmailApp.search(searchQuery_(), 0, CONFIG.MAX_THREADS_PER_RUN);
+  // Only mail since the last good run (2 minutes of overlap so nothing falls
+  // between runs). Messages already handled are skipped below, so the overlap
+  // costs nothing.
+  var scanStart = Math.floor(Date.now() / 1000);
+  var since = Number(props.getProperty('lastScanAt') || 0);
+  var threads = GmailApp.search(searchQuery_(since), 0, CONFIG.MAX_THREADS_PER_RUN);
   if (threads.length) Logger.log('Scanning %s thread(s)', threads.length);
 
+  var runFailed = false;
+  var labels = null;                     // fetched only when a thread needs labelling
   threads.forEach(function (thread) {
-    var anyFailed = false;
+    var anyFailed = false, anyNew = false;
     thread.getMessages().forEach(function (msg) {
+      var doneKey = 'done_' + msg.getId();
+      if (props.getProperty(doneKey)) return;          // handled on an earlier run
+      anyNew = true;
+      var msgFailed = false;
       var pick = pickAttachments_(msg);
       var sendable = pick.send;
       var ignoredNote = pick.ignored.length ? 'Ignored: ' + pick.ignored.join('; ') : '';
 
       if (!sendable.length) {
         var mkey = 'msg_' + msg.getId();
-        if (props.getProperty(mkey)) return;
-        var reason = ignoredNote ? 'Nothing to process. ' + ignoredNote + '.' : 'No attachment.';
-        var r = post_('/api/email/intake', meta_(msg, { skipped: true, reason: reason }));
-        if (r.code === 200) props.setProperty(mkey, String(Date.now()));
-        else anyFailed = true;
-        return;
-      }
-
-      sendable.forEach(function (att) {
-        var key = 'att_' + msg.getId() + '_' + att.getSize() + '_' + (att.getName() || '');
-        if (props.getProperty(key)) return;
-        try {
-          var r = post_('/api/email/intake', meta_(msg, {
-            fileName:   att.getName() || 'attachment',
-            mimeType:   att.getContentType(),
-            fileBase64: Utilities.base64Encode(att.getBytes()),
-            ignored:    ignoredNote,
-          }));
-          // 200/202 = WazzOCR has it (queued, already received, or not a bill type).
-          if (r.code === 200 || r.code === 202) props.setProperty(key, String(Date.now()));
-          else { anyFailed = true; Logger.log('"%s" → HTTP %s %s', att.getName(), r.code, r.raw.slice(0, 200)); }
-        } catch (err) {
-          anyFailed = true;
-          Logger.log('Send failed for "%s": %s', att.getName(), err);
+        if (!props.getProperty(mkey)) {
+          var reason = ignoredNote ? 'Nothing to process. ' + ignoredNote + '.' : 'No attachment.';
+          var r0 = post_('/api/email/intake', meta_(msg, { skipped: true, reason: reason }));
+          if (r0.code === 200) props.setProperty(mkey, String(Date.now()));
+          else msgFailed = true;
         }
-      });
+      } else {
+        sendable.forEach(function (att) {
+          var key = 'att_' + msg.getId() + '_' + att.getSize() + '_' + (att.getName() || '');
+          if (props.getProperty(key)) return;
+          try {
+            var r = post_('/api/email/intake', meta_(msg, {
+              fileName:   att.getName() || 'attachment',
+              mimeType:   att.getContentType(),
+              fileBase64: Utilities.base64Encode(att.getBytes()),
+              ignored:    ignoredNote,
+            }));
+            // 200/202 = WazzOCR has it (queued, already received, or refused with a reason).
+            if (r.code === 200 || r.code === 202) props.setProperty(key, String(Date.now()));
+            else { msgFailed = true; Logger.log('"%s" → HTTP %s %s', att.getName(), r.code, r.raw.slice(0, 200)); }
+          } catch (err) {
+            msgFailed = true;
+            Logger.log('Send failed for "%s": %s', att.getName(), err);
+          }
+        });
+      }
+      if (msgFailed) anyFailed = true;
+      else props.setProperty(doneKey, String(Date.now()));
     });
+
+    // Labels only change when something new was handled in this thread.
+    if (!anyNew) return;
+    if (!labels) labels = ensureLabels_();
     if (anyFailed) {
-      thread.addLabel(errored);
+      runFailed = true;
+      thread.addLabel(labels.errored);
     } else {
-      thread.addLabel(processed);
-      thread.removeLabel(errored);
+      thread.addLabel(labels.processed);
+      if (thread.getLabels().some(function (l) { return l.getName() === CONFIG.ERROR_LABEL; })) thread.removeLabel(labels.errored);
     }
   });
+
+  // Move the window on only after a clean run that saw everything; a failure
+  // or a full page means the same window is searched again next time.
+  if (!runFailed && threads.length < CONFIG.MAX_THREADS_PER_RUN) {
+    props.setProperty('lastScanAt', String(scanStart - 120));
+  }
+  pruneRecords_(props);
 
   // Save waiting bill files to Drive. A Drive problem never stops intake.
   if (hb && hb.archiveWaiting > 0) {
@@ -218,9 +246,24 @@ function folderPath_(names) {
  * in WazzOCR's Email tab, saying why. A later reply in a processed thread is still picked
  * up, because the per-message records — not the label — decide what was sent.
  */
-function searchQuery_() {
+function searchQuery_(since) {
   var scope = CONFIG.SOURCE_LABEL ? 'label:' + CONFIG.SOURCE_LABEL : 'in:inbox';
-  return scope + ' newer_than:' + CONFIG.SCAN_DAYS + 'd';
+  return scope + (since ? ' after:' + since : ' newer_than:' + CONFIG.SCAN_DAYS + 'd');
+}
+
+/**
+ * Forget handled-message records older than 30 days, once a day, so Script
+ * Properties (500 KB limit) never fill up. Uses no Gmail calls.
+ */
+function pruneRecords_(props) {
+  var day = 24 * 60 * 60 * 1000;
+  if (Date.now() - Number(props.getProperty('lastPruneAt') || 0) < day) return;
+  var cutoff = Date.now() - 30 * day;
+  var all = props.getProperties();
+  Object.keys(all).forEach(function (k) {
+    if (/^(done|att|msg)_/.test(k) && Number(all[k]) && Number(all[k]) < cutoff) props.deleteProperty(k);
+  });
+  props.setProperty('lastPruneAt', String(Date.now()));
 }
 
 /**
@@ -343,20 +386,22 @@ function heartbeat_() {
  * this are processed normally.
  */
 function seedProcessed() {
-  ensureLabels_();
+  var processed = ensureLabels_().processed;
   var props = PropertiesService.getScriptProperties();
-  var processed = GmailApp.getUserLabelByName(CONFIG.PROCESSED_LABEL);
+  var now = String(Date.now());
   var n = 0;
-  GmailApp.search(searchQuery_(), 0, 200).forEach(function (thread) {
+  GmailApp.search(searchQuery_(0), 0, 200).forEach(function (thread) {
     thread.getMessages().forEach(function (msg) {
-      props.setProperty('msg_' + msg.getId(), 'seed');
+      props.setProperty('done_' + msg.getId(), now);
+      props.setProperty('msg_' + msg.getId(), now);
       msg.getAttachments({ includeInlineImages: false }).forEach(function (att) {
-        props.setProperty('att_' + msg.getId() + '_' + att.getSize() + '_' + (att.getName() || ''), 'seed');
+        props.setProperty('att_' + msg.getId() + '_' + att.getSize() + '_' + (att.getName() || ''), now);
         n++;
       });
     });
     thread.addLabel(processed);
   });
+  props.setProperty('lastScanAt', String(Math.floor(Date.now() / 1000)));
   Logger.log('Marked %s existing attachment(s) as done. Send a NEW email to test.', n);
 }
 
@@ -365,7 +410,7 @@ function resetProcessed() {
   var props = PropertiesService.getScriptProperties();
   var n = 0;
   props.getKeys().forEach(function (k) {
-    if (k.indexOf('att_') === 0 || k.indexOf('msg_') === 0) { props.deleteProperty(k); n++; }
+    if (/^(att|msg|done)_/.test(k) || k === 'lastScanAt') { props.deleteProperty(k); n++; }
   });
   Logger.log('Cleared %s record(s). WazzOCR still ignores files it already received.', n);
 }
@@ -379,11 +424,16 @@ function setup() {
                 : 'Labels ready, but WazzOCR did not answer — check WAZZOCR_API_BASE and WAZZOCR_API_KEY.');
 }
 
+/** Make sure the labels exist; returns { processed, errored }. */
 function ensureLabels_() {
+  var out = {};
   [CONFIG.SOURCE_LABEL, CONFIG.PROCESSED_LABEL, CONFIG.ERROR_LABEL].forEach(function (n) {
     if (!n) return;
-    if (!GmailApp.getUserLabelByName(n)) GmailApp.createLabel(n);
+    var l = GmailApp.getUserLabelByName(n) || GmailApp.createLabel(n);
+    if (n === CONFIG.PROCESSED_LABEL) out.processed = l;
+    if (n === CONFIG.ERROR_LABEL) out.errored = l;
   });
+  return out;
 }
 
 /** Check the mailbox every minute (the fastest Apps Script allows). Run once. */

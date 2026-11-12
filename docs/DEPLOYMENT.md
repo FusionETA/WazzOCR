@@ -10,7 +10,31 @@ get the actual values from the project's local `.env`.
 
 ---
 
-## 0f. Latest update — email: real PDF/JPG/PNG attachments only (server checklist)
+## 0g. Latest update — Gmail script stays inside Google's daily Gmail quota
+
+Symptom: every Apps Script run failed with **"Service invoked too many times for
+one day: gmail."** The script re-read every email of the last 3 days each minute
+(search, open each thread, list attachments, download raw MIME, re-label), about
+120,000 Gmail calls a day against a free account's ~20,000.
+
+Gmail script `2026-11-12b`:
+- searches only mail since the last good run (`after:<time>`, 2 min overlap);
+- skips a message already handled (`done_<id>` in Script Properties) before
+  touching its attachments;
+- labels a thread only when something new in it was handled;
+- prunes handled-message records older than 30 days once a day.
+A quiet minute is now **one** Gmail call (~1,500/day).
+
+No server migration. Steps:
+1. Pull `main` and restart the Node app (Settings then expects `2026-11-12b`).
+2. Download the Gmail script from Settings, paste over the old one, Save.
+3. Google resets the Gmail quota about 24 hours after it was used up; runs keep
+   failing until then. The first run afterwards catches up on the last 3 days
+   (emails that arrived meanwhile are not lost), then runs are ~1 s.
+
+---
+
+## 0f. Email: real PDF/JPG/PNG attachments only (server checklist)
 
 Fixes bills invented from e-bill emails' logos and icons (TNB e-bills sent their
 layout pictures as image parts; each was read as a "bill"). Now:
