@@ -181,8 +181,15 @@ Common keys:
 ```txt
 GROQ_API_KEY=...
 GEMINI_API_KEY=...
+ANTHROPIC_API_KEY=...        # Claude — optional, only needed if an account uses a claude-* model
 DEFAULT_AI_PROVIDER=groq
 ```
+
+Which model an account's bills go to is set per account in the admin page
+(Account → AI model). The provider is derived from the model id, so picking
+`claude-opus-5-5` routes that account to Claude and `gemini-2.5-flash` to Gemini.
+Accounts with nothing set fall back to `data/ai-settings.json`, then to
+`DEFAULT_AI_PROVIDER`.
 
 Xero keys and tokens are also handled by the Node server so the browser does not directly access Xero secrets.
 

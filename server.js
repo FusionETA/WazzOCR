@@ -9,6 +9,9 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+// Claude transport (reads ANTHROPIC_API_KEY lazily, so it must load after dotenv).
+const claudeApi = require('./lib/claude');
+
 const app = express();
 app.set('trust proxy', true);
 const upload = multer({ storage: multer.memoryStorage() });
@@ -46,32 +49,28 @@ const {
   BILL_STATUS_CRON_SECRET = ''
 } = process.env;
 
-const AI_PROVIDERS = {
-  groq: {
-    label: 'Groq',
-    defaultModel: 'llama-3.3-70b-versatile',
-    helpText: 'Groq uses the OpenAI-compatible chat completions API.',
-    models: [
-      'llama-3.3-70b-versatile',
-      'openai/gpt-oss-120b',
-      'openai/gpt-oss-20b',
-      'llama-3.1-8b-instant'
-    ],
-    hasKey: () => Boolean(GROQ_API_KEY)
-  },
-  gemini: {
-    label: 'Gemini',
-    defaultModel: 'gemini-2.5-flash',
-    helpText: 'Gemini uses Google\'s generateContent API.',
-    models: [
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
-      'gemini-2.5-pro',
-      'gemini-2.0-flash'
-    ],
-    hasKey: () => Boolean(GEMINI_API_KEY)
-  }
+// Provider catalogue (lib/aiModels) + this process's API-key checks. Shared with
+// admin/router.js so the admin dropdown and the router agree on what exists.
+const { PROVIDERS: AI_MODEL_CATALOGUE, providerForModel } = require('./lib/aiModels');
+
+const API_KEYS = {
+  GROQ_API_KEY,
+  GEMINI_API_KEY,
+  get ANTHROPIC_API_KEY() { return process.env.ANTHROPIC_API_KEY || ''; }
 };
+
+const AI_PROVIDERS = Object.fromEntries(
+  Object.entries(AI_MODEL_CATALOGUE).map(([key, provider]) => [
+    key,
+    { ...provider, hasKey: () => Boolean(API_KEYS[provider.envKey]) }
+  ])
+);
+
+// True when at least one provider has an API key — the second-pass coders skip
+// silently rather than erroring when nothing is configured.
+function anyAiKey() {
+  return Object.values(AI_PROVIDERS).some((p) => p.hasKey());
+}
 
 // ── Master Chart of Accounts (expense + COGS) ───────────────────────────────
 // Loaded from master-coa.json at the repo root. These are the standardised
@@ -682,6 +681,26 @@ async function loadAiSettings() {
   }
   const fallback = AI_PROVIDERS[DEFAULT_AI_PROVIDER] ? DEFAULT_AI_PROVIDER : 'gemini';
   return { provider: fallback, model: AI_PROVIDERS[fallback].defaultModel };
+}
+
+// The settings an AI call should run under, most specific first:
+//   1. the account's own ai_model (set per account in the admin page)
+//   2. the global data/ai-settings.json
+//   3. DEFAULT_AI_PROVIDER from .env
+// The account row stores the model; its provider is derived, so the two can
+// never disagree. An account pointing at a provider with no API key configured
+// falls back to the global setting rather than failing every one of its bills.
+async function resolveAiSettings() {
+  const fallback = await loadAiSettings();
+  const store = xeroAccountCtx.getStore();
+  if (!store || !store.accountId) return fallback;
+  let account = null;
+  try { account = await require('./models/accounts').getById(store.accountId); }
+  catch (err) { console.error('[ai] could not read account settings:', err.message); }
+  const model = account && account.ai_model;
+  const provider = providerForModel(model);
+  if (!provider || !AI_PROVIDERS[provider].hasKey()) return fallback;
+  return { provider, model };
 }
 
 async function saveAiSettings({ provider, model }) {
@@ -2909,16 +2928,23 @@ async function callGeminiJson(parts, model, purpose = 'extraction', attempt = 1)
         : `Please send the invoice in smaller parts.`)
     );
   }
+  return parseModelJson(text, { label: 'gemini', finishReason: candidate?.finishReason });
+}
+
+// Model output → JSON, shared by every provider. Strict parse first; on failure
+// log the bytes that broke it (a ticket code quoted over WhatsApp is traced back
+// through this) and retry once with the aggressive repair.
+function parseModelJson(text, { label = 'ai', finishReason = null } = {}) {
   try {
     return JSON.parse(extractJsonText(text));
   } catch (err) {
     const extracted = (() => { try { return extractJsonText(text); } catch { return text; } })();
     const pos = Number((/position (\d+)/.exec(err.message || '') || [])[1]);
     const diag = [
-      `[gemini-diag] finishReason=${candidate?.finishReason} rawLen=${text.length} extractedLen=${extracted.length}`,
+      `[${label}-diag] finishReason=${finishReason} rawLen=${text.length} extractedLen=${extracted.length}`,
       Number.isFinite(pos)
-        ? `[gemini-diag] window@${pos}: ${JSON.stringify(extracted.slice(Math.max(0, pos - 50), pos + 20))}`
-        : `[gemini-diag] tail: ${JSON.stringify(extracted.slice(-80))}`
+        ? `[${label}-diag] window@${pos}: ${JSON.stringify(extracted.slice(Math.max(0, pos - 50), pos + 20))}`
+        : `[${label}-diag] tail: ${JSON.stringify(extracted.slice(-80))}`
     ].join('\n');
     logGeminiDiag(diag);
     // Fallback: aggressively repair (truncation, double/trailing commas, etc.)
@@ -2926,16 +2952,46 @@ async function callGeminiJson(parts, model, purpose = 'extraction', attempt = 1)
     // can only recover bills that would otherwise be lost — never breaks a good one.
     try {
       const recovered = JSON.parse(repairJson(text));
-      console.error('[gemini-diag] recovered via repairJson fallback');
+      console.error(`[${label}-diag] recovered via repairJson fallback`);
       return recovered;
     } catch { /* repair didn't help — surface the original parse error */ }
     throw err;
   }
 }
 
-async function callGeminiBillPayload(ocrText, model, knownOrgs = [], requestPrompt = '') {
+// Same contract as callGeminiJson, over Claude. `parts` is the Gemini-shaped
+// array; lib/claude translates it.
+async function callClaudeJson(parts, model, purpose = 'extraction') {
+  const result = await claudeApi.generate({ parts, model });
+  const store = xeroAccountCtx.getStore();
+  require('./models/aiUsage').record({
+    accountId: (store && store.accountId) || null,
+    model: result.model, purpose,
+    promptTokens: result.usage.promptTokens,
+    outputTokens: result.usage.outputTokens,
+    totalTokens: result.usage.promptTokens + result.usage.outputTokens
+  });
+  if (!result.text.trim()) {
+    throw new Error(`Claude returned an empty response (stop_reason=${result.stopReason}).`);
+  }
+  return parseModelJson(result.text, { label: 'claude', finishReason: result.stopReason });
+}
+
+// The one entry point for structured AI extraction. Routes to whichever provider
+// this account is configured for; everything above it is provider-agnostic.
+async function callAiJson(parts, model, purpose = 'extraction') {
+  const settings = await resolveAiSettings();
+  const useModel = model || settings.model;
+  const provider = providerForModel(useModel) || settings.provider;
+  if (provider === 'claude') return callClaudeJson(parts, useModel, purpose);
+  // Groq has no vision/JSON-extraction path here, so it lands on Gemini with
+  // Gemini's own default model — the behaviour this code has always had.
+  return callGeminiJson(parts, provider === 'gemini' ? useModel : undefined, purpose);
+}
+
+async function callAiBillPayload(ocrText, model, knownOrgs = [], requestPrompt = '') {
   const prompts = await resolveAiPrompts({ requestPrompt });
-  return callGeminiJson([{ text: buildBillPrompt(ocrText, knownOrgs, prompts) }], model);
+  return callAiJson([{ text: buildBillPrompt(ocrText, knownOrgs, prompts) }], model);
 }
 
 // Resolve the real file type from the leading magic bytes, falling back to the
@@ -2968,11 +3024,11 @@ function sniffMime(buffer, declaredMime) {
   return declaredMime || 'application/octet-stream';
 }
 
-// Vision path: send the raw image/PDF bytes straight to Gemini so it does the
-// reading + extraction in one shot — no Tesseract. Gemini sees the actual
+// Vision path: send the raw image/PDF bytes straight to the model so it does
+// the reading + extraction in one shot — no Tesseract. The model sees the actual
 // layout (columns, table rows, wrapped cents, handwriting) that flattened OCR
-// text throws away.
-async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = [], extractedText = '', requestPrompt = '') {
+// text throws away. Gemini and Claude both read the bytes natively.
+async function callAiBillsFromDocument(buffer, mime, model, knownOrgs = [], extractedText = '', requestPrompt = '') {
   if (!buffer || !buffer.length) {
     throw new Error('Empty file: nothing to analyze.');
   }
@@ -2985,17 +3041,17 @@ async function callGeminiBillsFromImage(buffer, mime, model, knownOrgs = [], ext
     { inlineData: { mimeType, data: buffer.toString('base64') } }
   ];
   return normalizeBillPayloads(
-    await callGeminiJson(parts, model),
+    await callAiJson(parts, model),
     { sourceText: extractedText, knownOrgs }
   );
 }
 
 // Second-pass account matcher. Given line item descriptions that the master-COA
-// pass couldn't code, and the tenant's actual Xero expense accounts, ask Gemini
-// to assign the best account code per line (or null). Best-effort — any failure
-// returns an empty map and the lines just stay uncoded.
-async function callGeminiAssignAccounts(lines, accounts, model, accountAddon = '') {
-  if (!GEMINI_API_KEY || !lines.length || !accounts.length) return {};
+// pass couldn't code, and the tenant's actual Xero expense accounts, ask the
+// account's AI to assign the best account code per line (or null). Best-effort —
+// any failure returns an empty map and the lines just stay uncoded.
+async function callAiAssignAccounts(lines, accounts, model, accountAddon = '') {
+  if (!anyAiKey() || !lines.length || !accounts.length) return {};
   const accountList = accounts.map((a) => `${a.code}  ${a.name}`).join('\n');
   const lineList = lines.map((l) => `${l.index}: ${l.description}`).join('\n');
   const addonSection = accountAddon && accountAddon.trim()
@@ -3014,7 +3070,7 @@ ${lineList}
 
 Return ONLY valid JSON: { "assignments": [ { "index": <number>, "accountCode": "<code from list or null>" } ] }`;
   try {
-    const parsed = await callGeminiJson([{ text: prompt }], model, 'coa');
+    const parsed = await callAiJson([{ text: prompt }], model, 'coa');
     const map = {};
     const valid = new Set(accounts.map((a) => a.code));
     for (const a of (parsed?.assignments || [])) {
@@ -3029,9 +3085,9 @@ Return ONLY valid JSON: { "assignments": [ { "index": <number>, "accountCode": "
 }
 
 // Second-pass item code matcher. Given line item descriptions and the tenant's
-// Xero Items list, ask Gemini to assign the best item code per line (or null).
-async function callGeminiAssignItems(lines, items, model) {
-  if (!GEMINI_API_KEY || !lines.length || !items.length) return {};
+// Xero Items list, ask the account's AI for the best item code per line (or null).
+async function callAiAssignItems(lines, items, model) {
+  if (!anyAiKey() || !lines.length || !items.length) return {};
   const itemList = items.map((i) => `${i.code}  ${i.name}${i.description ? ' — ' + i.description : ''}`).join('\n');
   const lineList = lines.map((l) => `${l.index}: ${l.description}`).join('\n');
   const prompt = `You are matching bill line items to Xero item codes.
@@ -3046,7 +3102,7 @@ ${lineList}
 
 Return ONLY valid JSON: { "assignments": [ { "index": <number>, "itemCode": "<code from list or null>" } ] }`;
   try {
-    const parsed = await callGeminiJson([{ text: prompt }], model, 'items');
+    const parsed = await callAiJson([{ text: prompt }], model, 'items');
     const map = {};
     const valid = new Set(items.map((i) => i.code));
     for (const a of (parsed?.assignments || [])) {
@@ -3071,7 +3127,7 @@ async function resolveLineItemCodes(bill, tenantId) {
     .map((item, index) => ({ index, description: String(item.description || '').trim() }))
     .filter((l) => l.description);
   if (!lines.length) return;
-  const assignments = await callGeminiAssignItems(lines, tenantItems);
+  const assignments = await callAiAssignItems(lines, tenantItems);
   for (const [idx, code] of Object.entries(assignments)) {
     const i = Number(idx);
     if (items[i]) items[i].itemCode = code;
@@ -3141,7 +3197,7 @@ async function resolveLineAccountCodes(bill, tenantId) {
   let secondPassRan = false;
   if (unresolved.length) {
     secondPassRan = true;
-    const assignments = await callGeminiAssignAccounts(unresolved, tenantAccounts, undefined, addonRules);
+    const assignments = await callAiAssignAccounts(unresolved, tenantAccounts, undefined, addonRules);
     for (const o of outcomes) {
       if (!o.needs2nd) continue;
       const assigned = assignments[o.index];
@@ -3171,15 +3227,27 @@ async function resolveLineAccountCodes(bill, tenantId) {
   coaDiag(block);
 }
 
-async function callGeminiBills(ocrText, model, knownOrgs = [], requestPrompt = '') {
+async function callAiBills(ocrText, model, knownOrgs = [], requestPrompt = '') {
   return normalizeBillPayloads(
-    await callGeminiBillPayload(ocrText, model, knownOrgs, requestPrompt),
+    await callAiBillPayload(ocrText, model, knownOrgs, requestPrompt),
     { sourceText: ocrText, knownOrgs }
   );
 }
 
-async function callGeminiBill(ocrText, model, knownOrgs = []) {
-  return callGeminiBills(ocrText, model, knownOrgs).then((bills) => bills[0] || normalizeBillPayload({}));
+async function callAiBill(ocrText, model, knownOrgs = []) {
+  return callAiBills(ocrText, model, knownOrgs).then((bills) => bills[0] || normalizeBillPayload({}));
+}
+
+// Which provider + model a text analysis should run under. An explicit argument
+// (the /api/ai/analyze-bill route lets a caller pass one) wins; otherwise the
+// account's own setting, then the global one.
+async function pickTextAnalysis(provider, model) {
+  const settings = await resolveAiSettings();
+  const useModel = model || settings.model;
+  const useProvider = (provider && AI_PROVIDERS[provider])
+    ? provider
+    : (providerForModel(useModel) || settings.provider);
+  return { provider: useProvider, model: useModel };
 }
 
 async function analyzeBillText({ text, provider, model, knownOrgs = [] }) {
@@ -3187,15 +3255,11 @@ async function analyzeBillText({ text, provider, model, knownOrgs = [] }) {
   if (!trimmed) {
     throw new Error('OCR text is required for AI analysis.');
   }
-  const settings = await loadAiSettings();
-  const useProvider = provider || settings.provider;
-  const useModel = model || settings.model;
-
-  const selectedProvider = AI_PROVIDERS[useProvider] ? useProvider : settings.provider;
-  if (selectedProvider === 'gemini') {
-    return callGeminiBill(trimmed, useModel, knownOrgs);
+  const picked = await pickTextAnalysis(provider, model);
+  if (picked.provider === 'groq') {
+    return callGroqBill(trimmed, picked.model, knownOrgs);
   }
-  return callGroqBill(trimmed, useModel, knownOrgs);
+  return callAiBill(trimmed, picked.model, knownOrgs);
 }
 
 async function analyzeBillsText({ text, provider, model, knownOrgs = [] }) {
@@ -3203,14 +3267,10 @@ async function analyzeBillsText({ text, provider, model, knownOrgs = [] }) {
   if (!trimmed) {
     throw new Error('OCR text is required for AI analysis.');
   }
-  const settings = await loadAiSettings();
-  const useProvider = provider || settings.provider;
-  const useModel = model || settings.model;
-
-  const selectedProvider = AI_PROVIDERS[useProvider] ? useProvider : settings.provider;
-  const bills = selectedProvider === 'gemini'
-    ? await callGeminiBills(trimmed, useModel, knownOrgs)
-    : await callGroqBills(trimmed, useModel, knownOrgs);
+  const picked = await pickTextAnalysis(provider, model);
+  const bills = picked.provider === 'groq'
+    ? await callGroqBills(trimmed, picked.model, knownOrgs)
+    : await callAiBills(trimmed, picked.model, knownOrgs);
 
   return bills.length ? bills : [normalizeBillPayload({})];
 }
@@ -3219,7 +3279,7 @@ async function analyzeBillsText({ text, provider, model, knownOrgs = [] }) {
 //
 // Digital PDFs: extract embedded text (free, exact) and structure via the
 // configured AI provider. Scanned PDFs and photos/images: send the raw bytes
-// straight to Gemini vision — it reads the actual layout, no OCR step.
+// straight to that provider's vision — it reads the actual layout, no OCR step.
 
 function resetPdfJsGlobalWorker() {
   try {
@@ -3312,19 +3372,20 @@ async function analyzeFileToBills({ buffer, mime, knownOrgs = [], requestPrompt 
     // the PDF bytes so Gemini can use it as an accurate reference for numbers
     // while reading logos/images visually.
     const hasText = embedded && embedded.replace(/\s+/g, ' ').length >= 50;
+    const vision = (await resolveAiSettings()).provider;
     if (hasText) {
-      console.log(`[extract] PDF has embedded text (${embedded.length} chars) — sending to Gemini vision with text hint for logo detection.`);
+      console.log(`[extract] PDF has embedded text (${embedded.length} chars) — sending to ${vision} vision with text hint for logo detection.`);
     } else {
-      console.log('[extract] PDF has no usable embedded text — sending PDF to Gemini vision.');
+      console.log(`[extract] PDF has no usable embedded text — sending PDF to ${vision} vision.`);
     }
-    const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs, hasText ? embedded : '', requestPrompt);
-    return { bills, method: hasText ? 'pdf-vision-hybrid' : 'gemini-vision', ocrText: embedded || '' };
-  } else {
-    console.log('[extract] image upload — sending to Gemini vision.');
+    const bills = await callAiBillsFromDocument(buffer, mime, null, knownOrgs, hasText ? embedded : '', requestPrompt);
+    return { bills, method: hasText ? 'pdf-vision-hybrid' : `${vision}-vision`, ocrText: embedded || '' };
   }
 
-  const bills = await callGeminiBillsFromImage(buffer, mime, null, knownOrgs, '', requestPrompt);
-  return { bills, method: 'gemini-vision', ocrText: '' };
+  const vision = (await resolveAiSettings()).provider;
+  console.log(`[extract] image upload — sending to ${vision} vision.`);
+  const bills = await callAiBillsFromDocument(buffer, mime, null, knownOrgs, '', requestPrompt);
+  return { bills, method: `${vision}-vision`, ocrText: '' };
 }
 
 // ── WhatsApp conversation state (per-chat picker / context) ─────────────────
@@ -3485,10 +3546,29 @@ async function callGeminiChat(userMessage, history = []) {
   return text.trim();
 }
 
+// Plain conversational reply (no bill attached), on whichever provider this
+// account uses.
+async function callClaudeChat(userMessage, history = []) {
+  const settings = await resolveAiSettings();
+  const result = await claudeApi.generate({
+    model: settings.provider === 'claude' ? settings.model : undefined,
+    system: WAZZOCR_CHAT_SYSTEM_PROMPT,
+    maxTokens: 600,
+    effort: 'low',                      // chat replies are short; don't pay for depth
+    history: history.slice(-6),
+    allowTruncation: true,              // a clipped chat reply still reads fine
+    parts: [{ text: userMessage }]
+  });
+  return result.text.trim();
+}
+
 async function callAiChat(userMessage, history = []) {
-  const settings = await loadAiSettings();
+  const settings = await resolveAiSettings();
   if (settings.provider === 'groq') {
     return callGroqChat(userMessage, history);
+  }
+  if (settings.provider === 'claude') {
+    return callClaudeChat(userMessage, history);
   }
   return callGeminiChat(userMessage, history);
 }

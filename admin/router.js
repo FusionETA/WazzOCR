@@ -121,7 +121,14 @@ router.get('/accounts/:id', async (req, res) => {
 router.put('/accounts/:id', async (req, res) => {
   const accountId = Number(req.params.id);
   if (!(await accounts.getById(accountId))) return res.status(404).json({ error: 'Account not found.' });
-  const affected = await accounts.update(accountId, req.body || {});
+  const fields = { ...(req.body || {}) };
+  // The UI picks a model; keep ai_provider in step with it so the two columns
+  // can never disagree about which API a bill should go to.
+  if ('aiModel' in fields) {
+    const provider = require('../lib/aiModels').providerForModel(fields.aiModel);
+    if (provider) fields.aiProvider = provider;
+  }
+  const affected = await accounts.update(accountId, fields);
   res.json({ ok: true, updated: affected });
 });
 
@@ -150,7 +157,7 @@ router.get('/accounts/:id/analytics', async (req, res) => {
   );
   // AI token usage → cost (derived from token counts × price table).
   const aiUsage = require('../models/aiUsage');
-  const pricing = require('../lib/geminiPricing');
+  const pricing = require('../lib/aiPricing');
   const aiMonthlyRows = await aiUsage.monthlyByModel(accountId);
   const aiTotalsRows = await aiUsage.totalsByModel(accountId);
   const round2 = (n) => Math.round(n * 100) / 100;

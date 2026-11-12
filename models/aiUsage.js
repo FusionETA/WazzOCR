@@ -1,5 +1,5 @@
 // Gemini token usage records (ai_usage). One row per AI call. Cost is NOT stored
-// — it's derived from token counts + the price table (lib/geminiPricing) at query
+// — it's derived from token counts + the price table (lib/aiPricing) at query
 // time, so price changes re-price history automatically.
 const db = require('../db');
 

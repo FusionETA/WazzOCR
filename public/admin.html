@@ -208,6 +208,20 @@
     const ch = name==='ai' ? window._aiChart : window._actChart;
     if (ch) { try { ch.resize(); } catch(_){} }
   };
+  // Every model the server can route to, labelled by provider, with the ones
+  // whose API key is missing marked so nobody picks a dead option. Fetched once;
+  // openAccount awaits it so a fast click can't render an empty dropdown.
+  const AI_MODEL_OPTIONS = (async () => {
+    try {
+      const cfg = await (await fetch('/api/ai/config')).json();
+      return Object.entries(cfg.providers || {}).flatMap(([, p]) =>
+        (p.models || []).map(m => ({
+          value: m,
+          label: `${p.label}: ${m}${p.hasKey ? '' : ' (no API key)'}`
+        })));
+    } catch { return []; }
+  })();
+
   window.openAccount = async (id, subtab) => {
     // If no sub-tab passed (e.g. a re-render after saving), keep the one in the URL.
     if (!subtab) { const p=(location.hash||'').replace(/^#/,'').split('/'); if(p[0]==='account' && Number(p[1])===Number(id) && p[2]) subtab=p[2]; }
@@ -360,7 +374,9 @@
     renderAnalytics(id);
     window.__searchDropdown('setStatusDrop', ['active','suspended','trial'].map(s=>({value:s,label:s})), { selected:d.account.status });
     window.__searchDropdown('setPlanDrop', ['trial','paid'].map(s=>({value:s,label:s})), { selected:d.account.plan||'paid' });
-    window.__searchDropdown('setModelDrop', ['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-2.0-flash'].map(s=>({value:s,label:s})), { selected:d.account.ai_model });
+    // Model list comes from the server (lib/aiModels), so adding a model there
+    // shows up here without editing this page. Provider is derived from the id.
+    window.__searchDropdown('setModelDrop', await AI_MODEL_OPTIONS, { selected:d.account.ai_model });
     loadAcctPhones(id);
     if ((d.connections||[]).length) {
       window.__searchDropdown('xeroDrop', d.connections.map(x=>({ value:x.xero_tenant_id, label:x.tenant_name||x.xero_tenant_id })), { placeholder:'Browse organisations' });
