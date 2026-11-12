@@ -61,7 +61,8 @@
     }
     const created = atts.filter((a) => a.status === 'created');
     const orgs = [...new Set(atts.map((a) => a.xero_tenant_name).filter(Boolean))];
-    let msg = m.skip_reason || '';
+    // An email whose files were all refused reads as "nothing to bill", with why.
+    let msg = m.skip_reason || (!atts.length && m.ignored_files ? 'Nothing to process. ' + m.ignored_files : '');
     if (!msg) {
       if (status === 'queued' || status === 'processing') msg = 'Reading the document…';
       else if (status === 'duplicate') msg = 'Already in Xero — nothing to do';
@@ -289,8 +290,12 @@
         <div class="kv"><div class="k" style="min-width:90px">Result</div><div><span class="badge ${cls}">${esc(label)}</span></div></div>
       </div>
       <h3 style="margin:0 0 .6rem">Attachments</h3>
-      ${r.atts.length ? '' : `<div class="muted" style="padding:.8rem;border:1.5px dashed var(--line);border-radius:9px">${esc(m.skip_reason || 'No attachment.')}</div>`}
-      <div style="display:flex;flex-direction:column;gap:.7rem">${r.atts.map(attHtml).join('')}</div>`;
+      ${r.atts.length ? '' : `<div class="muted" style="padding:.8rem;border:1.5px dashed var(--line);border-radius:9px">${esc(m.skip_reason || (m.ignored_files ? 'Nothing to process.' : 'No attachment.'))}</div>`}
+      <div style="display:flex;flex-direction:column;gap:.7rem">${r.atts.map(attHtml).join('')}</div>
+      ${m.ignored_files ? `<h3 style="margin:1rem 0 .4rem">Not processed</h3>
+        <div class="muted" style="font-size:.8rem;padding:.7rem .8rem;border:1px solid var(--line);border-radius:9px;background:#FAFBFE">
+          ${m.ignored_files.replace(/^Ignored:\s*/, '').split(/;\s*/).map((t) => `<div>• ${esc(t)}</div>`).join('')}
+          <div style="margin-top:.4rem">Only PDF, JPG and PNG attachments are read. Pictures that are part of the email itself (logos, icons) and other file types are never sent to the AI.</div></div>` : ''}`;
     document.body.appendChild(bg);
     document.body.appendChild(d);
     r.atts.filter((a) => a.status === 'pending').forEach((a) => {
@@ -443,7 +448,7 @@
         <span class="switch-label">Receive bills by email</span>
         <span class="switch-state ${s.enabled ? 'is-on' : ''}" id="emState">${s.enabled ? 'ON' : 'OFF'}</span>
       </label>
-      <p class="muted" style="margin:.8rem 0 .4rem">Anyone can email bills to this Gmail mailbox. Every PDF and photo is read with the same AI, chart of accounts and Xero posting as WhatsApp, and counts towards the same monthly total.</p>
+      <p class="muted" style="margin:.8rem 0 .4rem">Anyone can email bills to this Gmail mailbox. Only <b>PDF, JPG and PNG attachments</b> are read — pictures that are part of the email itself (logos, icons) and other file types are ignored. Bills use the same AI, chart of accounts and Xero posting as WhatsApp, and count towards the same monthly total.</p>
       <div class="field"><label for="emGmail">Gmail address</label><input id="emGmail" type="email" placeholder="yourcompanywazzocr@gmail.com" value="${esc(s.gmailAddress)}"></div>
       <div class="field"><label for="emGmailPw">Gmail password</label>
         <div class="pw-wrap"><input id="emGmailPw" type="password" autocomplete="off" placeholder="Password for this Gmail" value="${esc(s.gmailPassword)}">
