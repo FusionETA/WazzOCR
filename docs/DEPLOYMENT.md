@@ -10,7 +10,37 @@ get the actual values from the project's local `.env`.
 
 ---
 
-## 0e. Latest update — every bill file saved to Google Drive (server checklist)
+## 0f. Latest update — email: real PDF/JPG/PNG attachments only (server checklist)
+
+Fixes bills invented from e-bill emails' logos and icons (TNB e-bills sent their
+layout pictures as image parts; each was read as a "bill"). Now:
+
+- The Gmail script (`2026-11-12`) sends only **real attachments**: pictures the
+  email's HTML shows (`cid:` or `inline`) are never sent, nor are pictures under
+  20 KB (icons).
+- Only **PDF, JPG and PNG** are accepted — the file name *and* the content type
+  must agree, and the server checks the actual bytes (a renamed `.exe` is
+  refused). ZIP, EXE, Word, HEIC etc. are ignored.
+- What was left out is listed on the email in the Email tab ("Not processed").
+- **Safety net:** until the new script is pasted, the server refuses every
+  *picture* from that account (PDFs still go through), so an old script cannot
+  send icons again.
+- Fields the AI returns are cut to their column sizes (a very long supplier /
+  billed-to used to fail the save).
+
+1. Pull `main`, run the migration again (adds `email_messages.ignored_files`):
+   ```bash
+   node scripts/add-email-channel-tables.js
+   ```
+2. Restart the Node app.
+3. Settings shows **script out of date** → download the Gmail script, paste it
+   over the old one, Save. (No need to run `setup` or `installTrigger` again.)
+4. Test with one TNB e-bill email: exactly **one** bill (from the PDF), and the
+   email's detail lists the logos under "Not processed".
+
+---
+
+## 0e. Every bill file saved to Google Drive (server checklist)
 
 Every PDF or photo WazzOCR receives — by **email or WhatsApp**, whether it was
 created, needs review, was a duplicate or could not be read — is saved to the

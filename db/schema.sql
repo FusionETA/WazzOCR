@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS email_messages (
   subject          VARCHAR(512) NULL,
   received_at      DATETIME NULL,
   skip_reason      VARCHAR(512) NULL,               -- set when the email had no PDF or photo
+  ignored_files    VARCHAR(1024) NULL,              -- files left out and why (pictures inside the email, other types)
   created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_email_msg (account_id, gmail_message_id),
   INDEX idx_email_msg_acct_received (account_id, received_at),

@@ -2,8 +2,14 @@
  * WazzOCR — Gmail email channel
  * ---------------------------------------------------------------------------
  * Runs inside the account's own Gmail (e.g. ayuborneowazzocr@gmail.com) on a
- * time trigger. Every PDF or photo that arrives is sent to WazzOCR, which reads
- * it with the same AI as WhatsApp and creates the draft bill in Xero. Results
+ * time trigger. Every PDF, JPG or PNG *attachment* that arrives is sent to
+ * WazzOCR, which reads it with the same AI as WhatsApp and creates the draft
+ * bill in Xero.
+ *
+ * ATTACHMENTS ONLY: pictures that are part of the email's own design (logos,
+ * icons, QR codes the HTML shows inline) are never sent, and nor is any other
+ * file type (ZIP, EXE, Word, …). What was ignored, and why, is reported with
+ * the email so it shows in WazzOCR's Email tab. Results
  * show in WazzOCR → Email tab. Bills whose Xero organisation is unclear go to
  * Unmatched, and WazzOCR asks the WhatsApp number set in Settings → Email
  * channel to pick one.
@@ -17,8 +23,8 @@
  * under WazzOCR Bills / <month> / <result>. WazzOCR keeps each file until this
  * script collects it, a few per run. Needs Drive permission: run `setup` once.
  *
- * ANYONE can email the mailbox — there is no sender list. Emails with no PDF or
- * photo are still reported, so they show in the Email tab as "nothing to bill".
+ * ANYONE can email the mailbox — there is no sender list. Emails with nothing
+ * to send are still reported, so they show in the Email tab as "nothing to bill".
  *
  * DEDUPE: every attachment WazzOCR accepted is recorded in Script Properties by
  * (message id + size + name) and never sent twice. A network or server error is
@@ -42,7 +48,7 @@
  * heartbeat so WazzOCR's Settings card can say whether the pasted copy is
  * current. Keep identical to EXPECTED_SCRIPT_VERSION in lib/emailIntake.js.
  */
-var SCRIPT_VERSION = '2026-11-10c';
+var SCRIPT_VERSION = '2026-11-12';
 
 var CONFIG = {
   WAZZOCR_API_BASE: '__WAZZOCR_API_BASE__',   // e.g. https://wazzocr.fusioneta.com.my (no trailing slash)
@@ -54,7 +60,16 @@ var CONFIG = {
   PROCESSED_LABEL: 'wazzocr-processed',
   ERROR_LABEL:     'wazzocr-error',
 
-  ALLOWED_EXT: ['pdf', 'jpg', 'jpeg', 'png', 'heic', 'heif', 'webp'],
+  // The only files sent: extension -> content types Gmail may report for it.
+  // Anything else (zip, exe, docx, heic, …) is ignored for safety.
+  ALLOWED: {
+    pdf:  ['application/pdf', 'application/octet-stream'],
+    jpg:  ['image/jpeg', 'image/jpg', 'image/pjpeg', 'application/octet-stream'],
+    jpeg: ['image/jpeg', 'image/jpg', 'image/pjpeg', 'application/octet-stream'],
+    png:  ['image/png', 'application/octet-stream'],
+  },
+  // Pictures smaller than this are logos or icons, not a photo of a bill.
+  MIN_IMAGE_BYTES: 20 * 1024,
   // WazzOCR accepts requests up to 20 MB; base64 adds a third, so files above
   // this are reported as too large instead of being sent.
   MAX_BYTES: 14 * 1024 * 1024,
@@ -100,18 +115,14 @@ function run_() {
   threads.forEach(function (thread) {
     var anyFailed = false;
     thread.getMessages().forEach(function (msg) {
-      var real = msg.getAttachments({ includeInlineImages: false });
-      var sendable = real.filter(isForwardable_);
+      var pick = pickAttachments_(msg);
+      var sendable = pick.send;
+      var ignoredNote = pick.ignored.length ? 'Ignored: ' + pick.ignored.join('; ') : '';
 
       if (!sendable.length) {
         var mkey = 'msg_' + msg.getId();
         if (props.getProperty(mkey)) return;
-        var tooBig = real.filter(function (a) { return isAllowedType_(a) && a.getSize() > CONFIG.MAX_BYTES; });
-        var reason = tooBig.length
-          ? 'Too large to send (over 14 MB): ' + names_(tooBig) + '.'
-          : real.length
-            ? 'No PDF or photo attached (' + names_(real) + ').'
-            : 'No attachment.';
+        var reason = ignoredNote ? 'Nothing to process. ' + ignoredNote + '.' : 'No attachment.';
         var r = post_('/api/email/intake', meta_(msg, { skipped: true, reason: reason }));
         if (r.code === 200) props.setProperty(mkey, String(Date.now()));
         else anyFailed = true;
@@ -126,6 +137,7 @@ function run_() {
             fileName:   att.getName() || 'attachment',
             mimeType:   att.getContentType(),
             fileBase64: Utilities.base64Encode(att.getBytes()),
+            ignored:    ignoredNote,
           }));
           // 200/202 = WazzOCR has it (queued, already received, or not a bill type).
           if (r.code === 200 || r.code === 202) props.setProperty(key, String(Date.now()));
@@ -211,15 +223,67 @@ function searchQuery_() {
   return scope + ' newer_than:' + CONFIG.SCAN_DAYS + 'd';
 }
 
-function isAllowedType_(att) {
-  var name = (att.getName() || '').toLowerCase();
-  var ext  = name.indexOf('.') >= 0 ? name.split('.').pop() : '';
-  var type = String(att.getContentType() || '').toLowerCase();
-  return CONFIG.ALLOWED_EXT.indexOf(ext) >= 0 || type === 'application/pdf' || type.indexOf('image/') === 0;
+/**
+ * The attachments to send, and what was left out and why. A file is sent only
+ * when it is a real attachment (not a picture the email's HTML displays), its
+ * extension AND content type are PDF, JPG or PNG, and it is not too large.
+ * @return {{send: GmailAttachment[], ignored: string[]}}
+ */
+function pickAttachments_(msg) {
+  var atts = msg.getAttachments({ includeInlineImages: false });
+  var send = [], ignored = [];
+  var inline = null;   // worked out only if the email has a picture to judge
+  atts.forEach(function (a) {
+    var name = a.getName() || '(unnamed file)';
+    var kind = kindOf_(a);
+    if (a.getSize() <= 0) return;
+    if (!kind) { ignored.push(name + ' (only PDF, JPG and PNG are accepted)'); return; }
+    if (a.getSize() > CONFIG.MAX_BYTES) { ignored.push(name + ' (over 14 MB)'); return; }
+    if (kind === 'image') {
+      if (inline === null) inline = inlineNames_(msg);
+      if (inline[name.toLowerCase()]) { ignored.push(name + ' (picture inside the email, not an attachment)'); return; }
+      if (a.getSize() < CONFIG.MIN_IMAGE_BYTES) { ignored.push(name + ' (too small to be a bill — logo or icon)'); return; }
+    }
+    send.push(a);
+  });
+  return { send: send, ignored: ignored };
 }
 
-function isForwardable_(att) {
-  return att.getSize() > 0 && att.getSize() <= CONFIG.MAX_BYTES && isAllowedType_(att);
+/** 'pdf' | 'image' when both the extension and the content type agree; else null. */
+function kindOf_(att) {
+  var name = (att.getName() || '').toLowerCase();
+  var ext  = name.indexOf('.') >= 0 ? name.split('.').pop() : '';
+  var type = String(att.getContentType() || '').toLowerCase().split(';')[0].trim();
+  var ok = CONFIG.ALLOWED[ext];
+  if (!ok || ok.indexOf(type) < 0) return null;
+  return ext === 'pdf' ? 'pdf' : 'image';
+}
+
+/**
+ * Names (lower case) of the pictures this email shows inside its own body:
+ * MIME parts marked "inline", or whose Content-ID the HTML points to (cid:…).
+ * These are the logos and icons of e-bill emails, not attachments.
+ */
+function inlineNames_(msg) {
+  var names = {};
+  var html = '';
+  try { html = String(msg.getBody() || '').toLowerCase(); } catch (e) { html = ''; }
+  var raw = '';
+  try { raw = msg.getRawContent(); } catch (e) { return names; }
+  raw.split(/\r?\n--[^\r\n]*/).forEach(function (part) {
+    var end = part.search(/\r?\n\r?\n/);
+    if (end < 0) return;
+    var head = part.slice(0, end).replace(/\r?\n[ \t]+/g, ' ');   // unfold header lines
+    if (!/content-type:\s*image\//i.test(head)) return;
+    var nm = head.match(/(?:filename|name)\*?=\s*(?:utf-8'[^']*')?"?([^";\r\n]+)"?/i);
+    if (!nm) return;
+    var name = decodeURIComponent(nm[1].trim()).toLowerCase();
+    var disp = (head.match(/content-disposition:\s*([a-z]+)/i) || [])[1] || '';
+    var cid  = ((head.match(/content-id:\s*<?([^>\r\n]+)>?/i) || [])[1] || '').toLowerCase();
+    var shown = (cid && html.indexOf('cid:' + cid) >= 0) || html.indexOf('cid:' + name) >= 0;
+    if (disp.toLowerCase() === 'inline' || shown) names[name] = true;
+  });
+  return names;
 }
 
 function names_(atts) {

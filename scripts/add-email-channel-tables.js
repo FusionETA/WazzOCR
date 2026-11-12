@@ -139,6 +139,8 @@ async function addColumn(table, column, definition) {
   );
   await addColumn('email_settings', 'drive_archive', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER notify_failures');
   await addColumn('email_attachments', 'archive_id', 'BIGINT UNSIGNED NULL AFTER bill_index');
+  // What was left out of an email (pictures inside it, other file types) and why.
+  await addColumn('email_messages', 'ignored_files', 'VARCHAR(1024) NULL AFTER skip_reason');
 
   console.log('Email channel tables ready: email_settings, email_messages, email_attachments, email_script_runs, drive_archive.');
   process.exit(0);

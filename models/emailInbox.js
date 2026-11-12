@@ -70,15 +70,28 @@ async function runUsage(accountId) {
 
 // Insert-or-get by Gmail message id, so the script can report the same email
 // again (a retry, or one call per attachment) without making duplicates.
-async function upsertMessage(accountId, { gmailMessageId, fromName, fromEmail, subject, receivedAt, skipReason = null }) {
+// ignoredFiles: what the Gmail script left out of this email and why (pictures
+// inside the email, file types other than PDF/JPG/PNG, …).
+async function upsertMessage(accountId, { gmailMessageId, fromName, fromEmail, subject, receivedAt, skipReason = null, ignoredFiles = null }) {
   await db.execute(
-    `INSERT INTO email_messages (account_id, gmail_message_id, from_name, from_email, subject, received_at, skip_reason)
-     VALUES (?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE skip_reason = COALESCE(VALUES(skip_reason), skip_reason)`,
+    `INSERT INTO email_messages (account_id, gmail_message_id, from_name, from_email, subject, received_at, skip_reason, ignored_files)
+     VALUES (?,?,?,?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE skip_reason = COALESCE(VALUES(skip_reason), skip_reason),
+       ignored_files = COALESCE(VALUES(ignored_files), ignored_files)`,
     [accountId, gmailMessageId, fromName || null, fromEmail || null, subject ? String(subject).slice(0, 512) : null,
-     receivedAt || null, skipReason]
+     receivedAt || null, skipReason, ignoredFiles ? String(ignoredFiles).slice(0, 1024) : null]
   );
   return db.getOne('SELECT * FROM email_messages WHERE account_id = ? AND gmail_message_id = ?', [accountId, gmailMessageId]);
+}
+
+// A file WazzOCR itself refused (wrong type, contents not matching the name, …),
+// added to the email's ignored list once.
+async function addIgnored(messageId, text) {
+  const row = await db.getOne('SELECT ignored_files FROM email_messages WHERE id = ?', [messageId]);
+  const current = (row && row.ignored_files) || '';
+  if (current.includes(text)) return;
+  const next = current ? `${current}; ${text}` : `Ignored: ${text}`;
+  await db.execute('UPDATE email_messages SET ignored_files = ? WHERE id = ?', [next.slice(0, 1024), messageId]);
 }
 
 // ── Attachments ─────────────────────────────────────────────────────────────
@@ -186,6 +199,6 @@ async function monthStats(accountId) {
 
 module.exports = {
   getSettings, saveSettings, heartbeat, recordRun, runUsage,
-  upsertMessage, queueAttachment, addSiblingBill, getAttachment, getAttachmentForAccount, updateAttachment,
+  upsertMessage, addIgnored, queueAttachment, addSiblingBill, getAttachment, getAttachmentForAccount, updateAttachment,
   unfinished, allPending, inbox, monthStats
 };
