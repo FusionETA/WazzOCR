@@ -107,4 +107,32 @@ test('isConfigured follows ANTHROPIC_API_KEY', () => {
   }
 });
 
+test('isUnavailableError: capacity/billing/network errors trigger Gemini fallback', () => {
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+  try {
+    for (const status of [429, 529, 503, 401]) {
+      assert.ok(claude.isUnavailableError(Object.assign(new Error('x'), { status })), `status ${status}`);
+    }
+    assert.ok(claude.isUnavailableError(Object.assign(new Error('Your credit balance is too low'), { status: 400 })));
+    assert.ok(claude.isUnavailableError(Object.assign(new Error('connect ECONNRESET'), { code: 'ECONNRESET' })));
+  } finally {
+    if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = original;
+  }
+});
+
+test('isUnavailableError: document problems do NOT fall back', () => {
+  const original = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+  try {
+    assert.ok(!claude.isUnavailableError(new Error('Claude declined to process this document.')));
+    assert.ok(!claude.isUnavailableError(new Error('This document is too long for claude-sonnet-5-5')));
+    assert.ok(!claude.isUnavailableError(Object.assign(new Error('invalid request: bad image'), { status: 400 })));
+  } finally {
+    if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = original;
+  }
+});
+
 console.log(`\n${passed} passed${process.exitCode ? ' (with failures)' : ''}`);
