@@ -2983,7 +2983,17 @@ async function callAiJson(parts, model, purpose = 'extraction') {
   const settings = await resolveAiSettings();
   const useModel = model || settings.model;
   const provider = providerForModel(useModel) || settings.provider;
-  if (provider === 'claude') return callClaudeJson(parts, useModel, purpose);
+  if (provider === 'claude') {
+    try {
+      return await callClaudeJson(parts, useModel, purpose);
+    } catch (err) {
+      // Claude out of capacity/credit/limits → do the same job on Gemini so the
+      // bill still gets processed. Document-level failures still surface.
+      if (!claudeApi.isUnavailableError(err) || !AI_PROVIDERS.gemini.hasKey()) throw err;
+      console.warn(`[ai] ${useModel} unavailable (${err.status || ''} ${err.message}) — falling back to Gemini for ${purpose}.`);
+      return callGeminiJson(parts, undefined, purpose);
+    }
+  }
   // Groq has no vision/JSON-extraction path here, so it lands on Gemini with
   // Gemini's own default model — the behaviour this code has always had.
   return callGeminiJson(parts, provider === 'gemini' ? useModel : undefined, purpose);
@@ -3568,7 +3578,12 @@ async function callAiChat(userMessage, history = []) {
     return callGroqChat(userMessage, history);
   }
   if (settings.provider === 'claude') {
-    return callClaudeChat(userMessage, history);
+    try {
+      return await callClaudeChat(userMessage, history);
+    } catch (err) {
+      if (!claudeApi.isUnavailableError(err) || !AI_PROVIDERS.gemini.hasKey()) throw err;
+      console.warn(`[ai] Claude chat unavailable (${err.status || ''} ${err.message}) — falling back to Gemini.`);
+    }
   }
   return callGeminiChat(userMessage, history);
 }
