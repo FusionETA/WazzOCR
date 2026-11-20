@@ -45,8 +45,17 @@ function getPool() {
     ssl: buildSsl(),
     waitForConnections: true,
     connectionLimit: Number(process.env.DB_POOL_SIZE || 10),
-    maxIdle: Number(process.env.DB_POOL_SIZE || 10),
+    // maxIdle MUST be below connectionLimit: mysql2 only starts its idle reaper
+    // when maxIdle < connectionLimit, so with them equal idleTimeout was dead
+    // config and connections lived for hours. Idle ones now close after 60s,
+    // which also frees every server-side prepared statement they held.
+    maxIdle: 2,
     idleTimeout: 60000,
+    // pool.execute() uses server-side prepared statements (COM_STMT_PREPARE),
+    // cached per connection in an LRU that defaults to 16000 entries and is
+    // never closed until evicted. Cap it; eviction sends COM_STMT_CLOSE.
+    // (27,693 prepares vs 18 closes on cluster 53787 drove the 90% memory alert.)
+    maxPreparedStatements: 64,
     enableKeepAlive: true,
     namedPlaceholders: true,
     timezone: 'Z',
