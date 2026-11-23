@@ -870,30 +870,26 @@ function scoreMatch(billRaw, tenantRaw) {
   const billCore = normalizeCompanyCore(billRaw);
   const tenantCore = normalizeCompanyCore(tenantRaw);
 
+  // The branch tag is needed by every rule below, not just the exact-core one.
+  const billTag = branchTagOf(billRaw);
+  const tenantTag = branchTagOf(tenantRaw);
+
   // Strongest signals first on the "core" identity (suffixes stripped).
   if (billCore && tenantCore && billCore === tenantCore) {
-    const billTag = branchTagOf(billRaw);
-    const tenantTag = branchTagOf(tenantRaw);
     if (billTag && tenantTag && !branchTagsEqual(billTag, tenantTag)) {
       return { score: 40, reason: 'branch-mismatch' };
     }
     if (!billTag !== !tenantTag) {
-      return { score: 90, reason: 'exact-core-untagged' };
+      // One side names a branch and the other does not, with identical cores
+      // — so there are no extra words that could stand for that branch.
+      // "Ayu Borneo (MK)" is not "Ayu Borneo". Previously scored 90 and was
+      // accepted, which filed branch bills into the parent company.
+      return { score: 40, reason: 'branch-missing' };
     }
     return { score: 100, reason: 'exact-core' };
   }
   if (billNorm === tenantNorm) {
     return { score: 100, reason: 'exact-norm' };
-  }
-
-  // Prefix containment on core (handles "Ayu Borneo Sdn Bhd c/o ABC" → "Ayu Borneo")
-  if (billCore && tenantCore) {
-    if (billCore.startsWith(tenantCore + ' ') || tenantCore.startsWith(billCore + ' ')) {
-      return { score: 95, reason: 'prefix-core' };
-    }
-  }
-  if (billNorm.startsWith(tenantNorm + ' ') || tenantNorm.startsWith(billNorm + ' ')) {
-    return { score: 95, reason: 'prefix-norm' };
   }
 
   // Parenthetical-initials match: "Ayu Borneo (SP)" ↔ "Ayu Borneo Sri Petaling"
@@ -915,6 +911,45 @@ function scoreMatch(billRaw, tenantRaw) {
   }
   if (checkAbbrev(tenPar.abbrev, tenPar.core, billRaw)) {
     return { score: 92, reason: 'parenthetical-initials' };
+  }
+
+  // Branch guard. Every rule below this point compares names by overlap
+  // alone, which cannot tell "Ayu Borneo (MK)" from "Ayu Borneo Nova" — the
+  // second is simply the first's core plus a word, so it scored 95 and every
+  // unconnected branch was filed into Nova. If the two sides disagree about
+  // the branch and the abbreviation rule above did not reconcile them, they
+  // are different companies: say so and let a human choose.
+  if (billTag || tenantTag) {
+    // Only one side uses brackets? The other may still name the same branch,
+    // in words ("Ayu Borneo Sri Petaling") or as a bare code ("Ayu Borneo KK").
+    // Those are the same company and must outrank the untagged parent.
+    if (!billTag !== !tenantTag) {
+      const tag = (billTag || tenantTag).replace(/\s+/g, ' ').trim();
+      const [longer, shorter] = billCore.length >= tenantCore.length
+        ? [billCore, tenantCore] : [tenantCore, billCore];
+      const extra = longer.startsWith(shorter + ' ') ? longer.slice(shorter.length).trim() : '';
+      if (extra && (extra === tag
+                    || extra.replace(/\s+/g, '') === tag.replace(/\s+/g, '')
+                    || initialsOf(extra) === tag)) {
+        return { score: 92, reason: 'branch-spelled-out' };
+      }
+    }
+    if (!billTag || !tenantTag || !branchTagsEqual(billTag, tenantTag)) {
+      return { score: 40, reason: 'branch-mismatch' };
+    }
+  }
+
+  // Prefix containment on core (handles "Ayu Borneo Sdn Bhd c/o ABC" → "Ayu Borneo").
+  // Scored below the branch rules above: "Ayu Borneo" sitting inside
+  // "Ayu Borneo Sri Petaling" is far weaker evidence than a branch code that
+  // actually resolves, and it used to win at 95.
+  if (billCore && tenantCore) {
+    if (billCore.startsWith(tenantCore + ' ') || tenantCore.startsWith(billCore + ' ')) {
+      return { score: 88, reason: 'prefix-core' };
+    }
+  }
+  if (billNorm.startsWith(tenantNorm + ' ') || tenantNorm.startsWith(billNorm + ' ')) {
+    return { score: 95, reason: 'prefix-norm' };
   }
 
   // Substring containment on core
@@ -955,6 +990,18 @@ function scoreMatch(billRaw, tenantRaw) {
   }
 
   return { score: 0, reason: 'none' };
+}
+
+// TNB, Air Selangor, Ranhill SAJ and Indah Water bill by premises, not by
+// company: the name printed on the bill is routinely the landlord, a previous
+// tenant or a director, and is often masked. For these four the account-number
+// table in the AI prompt is the ONLY thing allowed to choose the organisation,
+// so name matching must not run — it would quietly undo that mapping, which is
+// how the Seksyen 14 outlet would end up in the company its name resembles
+// rather than the one that owns it.
+const UTILITY_SUPPLIER_RE = /(tenaga\s*nasional|\btnb\b|air\s+selangor|ranhill|\bsaj\b|indah\s+water|\biwk\b)/i;
+function isUtilitySupplier(supplier) {
+  return UTILITY_SUPPLIER_RE.test(String(supplier || ''));
 }
 
 const MATCH_ACCEPT_THRESHOLD = 70;
@@ -3665,7 +3712,12 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       console.log(`[match] AI exact-name hit → ${matchedTenant.tenantName}`);
     }
   }
-  if (!matchedTenant) {
+  // For the four utilities the account-number mapping decides, full stop.
+  const nameMatchAllowed = !isUtilitySupplier(bill.supplier);
+  if (!nameMatchAllowed && !matchedTenant) {
+    console.log(`[match] ${bill.supplier} bills by premises — name matching skipped, so this goes to a human unless the account number matched.`);
+  }
+  if (!matchedTenant && nameMatchAllowed) {
     matchedTenant = matchTenantByName(bill.billedTo, connections);
     if (matchedTenant) {
       console.log(`[match] fuzzy fallback hit → ${matchedTenant.tenantName}`);
@@ -3675,7 +3727,7 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
   // confuse orgs sharing a prefix (e.g. "EM J Design & Build" vs "EMJ Renovation").
   // The verbatim invoice text is more reliable — re-score both candidates
   // against it and override if verbatim clearly points elsewhere.
-  if (bill.billedToVerbatim && connections.length) {
+  if (bill.billedToVerbatim && connections.length && nameMatchAllowed) {
     const verbatimMatch = matchTenantByName(bill.billedToVerbatim, connections);
     if (verbatimMatch) {
       if (!matchedTenant) {
@@ -4136,10 +4188,11 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
         (c) => String(c.tenantName || '').trim().toLowerCase() === target
       ) || null;
     }
-    if (!matchedTenant) {
+    const nameMatchAllowed = !isUtilitySupplier(bill.supplier);
+    if (!matchedTenant && nameMatchAllowed) {
       matchedTenant = matchTenantByName(bill.billedTo, connections);
     }
-    if (bill.billedToVerbatim && connections.length) {
+    if (bill.billedToVerbatim && connections.length && nameMatchAllowed) {
       const verbatimMatch = matchTenantByName(bill.billedToVerbatim, connections);
       if (verbatimMatch) {
         if (!matchedTenant) {
@@ -5874,6 +5927,13 @@ require('./lib/emailIntake').mount(app, {
   resolveExternalAccount, hasCreatedXeroBill
 });
 
-app.listen(PORT, () => {
-  console.log(`FusionETA OCR + Xero app running at http://localhost:${PORT}`);
-});
+// Exported so tests and scripts can drive the pipeline (e.g. extraction only,
+// without creating anything in Xero) without starting a server.
+module.exports = { app, analyzeFileToBills, processBillForChat, xeroAccountCtx, matchTenantByName, scoreMatch, isUtilitySupplier };
+
+// Listen only when run directly — `node server.js` behaves exactly as before.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`FusionETA OCR + Xero app running at http://localhost:${PORT}`);
+  });
+}
