@@ -2,7 +2,7 @@
 // No network, no DB — the org list below mirrors the Ayu Borneo group.
 // Run: node scripts/test-org-matching.js
 const assert = require('assert');
-const { matchTenantByName, scoreMatch, isUtilitySupplier } = require('../server');
+const { matchTenantByName, scoreMatch, isUtilitySupplier, careOfParty, isCareOfPayer } = require('../server');
 
 const ORGS = [
   'Ayu Borneo Sdn Bhd', 'Ayu Borneo Nova Sdn Bhd', 'Ayu Borneo (KK) Sdn Bhd',
@@ -93,6 +93,41 @@ test('ordinary suppliers are not treated as utilities', () => {
                    'FEEL COOL AIR-CONDITIONING & ELECTRICAL', 'EPITRONIC SDN BHD',
                    'GENTING UTILITIES & SERVICES SDN. BHD', ''])
     assert.strictEqual(isUtilitySupplier(s), false, s);
+});
+
+console.log('\nc/o bills (site + payer)');
+
+// A c/o bill is split into a site copy and a payer copy that share the same
+// verbatim text. The verbatim cross-check used to pull the payer copy back onto
+// the site company, so the EMJ bill was dropped as a duplicate (inv 207058).
+const CO_TEXTS = [
+  'Ayu Borneo (KK) Sdn Bhd C/O EMJ Renovation Sdn Bhd',
+  'Ayu Borneo (KW) SDN BHD C/O\nEMJ Renovation SDN BHD',
+  'AYU BORNEO (KD) SDN. BHD. c\\o EMJ Renovaton Sdn Bhd',
+  'Ayu Borneo (KK) Sdn Bhd care of EMJ Renovation Sdn Bhd'
+];
+test('the company after c/o is extracted', () => {
+  assert.strictEqual(careOfParty('Ayu Borneo (KK) Sdn Bhd C/O EMJ Renovation Sdn Bhd'), 'EMJ Renovation Sdn Bhd');
+  assert.strictEqual(careOfParty('Ayu Borneo (KW) SDN BHD C/O\nEMJ Renovation SDN BHD'), 'EMJ Renovation SDN BHD');
+  assert.strictEqual(careOfParty('Ayu Borneo (KK) Sdn Bhd'), '');
+  assert.strictEqual(careOfParty(''), '');
+});
+test('the payer copy of a c/o bill is kept on EMJ', () => {
+  for (const s of CO_TEXTS)
+    assert.strictEqual(isCareOfPayer(s, 'EMJ Renovation Sdn Bhd'), true, s);
+});
+test('the site copy is not treated as the payer', () => {
+  for (const s of CO_TEXTS) {
+    assert.strictEqual(isCareOfPayer(s, 'Ayu Borneo (KK) Sdn Bhd'), false, s);
+    assert.strictEqual(isCareOfPayer(s, 'Ayu Borneo Sdn Bhd'), false, s);
+  }
+});
+test('EM J Design & Build is not mistaken for the EMJ Renovation payer', () => {
+  for (const s of CO_TEXTS)
+    assert.strictEqual(isCareOfPayer(s, 'EM J Design & Build Sdn Bhd'), false, s);
+});
+test('no c/o means no payer exemption', () => {
+  assert.strictEqual(isCareOfPayer('EMJ Renovation Sdn Bhd', 'EMJ Renovation Sdn Bhd'), false);
 });
 
 console.log(`\n${passed} passed${process.exitCode ? ' (with failures)' : ''}`);

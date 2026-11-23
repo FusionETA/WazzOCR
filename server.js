@@ -1007,6 +1007,24 @@ function isUtilitySupplier(supplier) {
 const MATCH_ACCEPT_THRESHOLD = 70;
 const MATCH_AMBIGUOUS_MARGIN = 3;
 
+// The company named after "c/o" on a Bill To line, or '' when there is none.
+// Under the account's c/o rule a c/o bill becomes TWO bills: one for the site
+// (before c/o) and one for the payer (after c/o). Both carry the same full
+// verbatim text, so the verbatim cross-check below - which strips everything
+// after c/o - would always pull the payer's copy back onto the site company,
+// and the payer's bill was then dropped as a duplicate.
+const CARE_OF_SPLIT_RE = /\s(?:c\s*[\/\\]\s*o|care\s+of)\s+/i;
+function careOfParty(verbatim) {
+  const parts = String(verbatim || '').replace(/\s+/g, ' ').split(CARE_OF_SPLIT_RE);
+  return parts.length > 1 ? parts.slice(1).join(' ').trim() : '';
+}
+// True when the org already chosen is the company after c/o - i.e. this bill
+// is the payer's copy of a c/o split and the cross-check must leave it alone.
+function isCareOfPayer(verbatim, tenantName) {
+  const payer = careOfParty(verbatim);
+  return !!payer && scoreMatch(payer, tenantName).score >= MATCH_ACCEPT_THRESHOLD;
+}
+
 function matchTenantByName(billedTo, tenants) {
   if (!billedTo || !Array.isArray(tenants) || !tenants.length) return null;
   const normBill = normalizeName(billedTo);
@@ -3734,6 +3752,9 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
         matchedTenant = verbatimMatch;
         bill.billedTo = verbatimMatch.tenantName;
         console.log(`[match] verbatim-only hit → ${verbatimMatch.tenantName}`);
+      } else if (verbatimMatch.tenantId !== matchedTenant.tenantId
+                 && isCareOfPayer(bill.billedToVerbatim, matchedTenant.tenantName)) {
+        console.log(`[match] c/o payer copy kept: ${matchedTenant.tenantName} (verbatim alone would say ${verbatimMatch.tenantName})`);
       } else if (verbatimMatch.tenantId !== matchedTenant.tenantId) {
         const aiScore = scoreMatch(bill.billedToVerbatim, matchedTenant.tenantName).score;
         const verbScore = scoreMatch(bill.billedToVerbatim, verbatimMatch.tenantName).score;
@@ -4198,6 +4219,9 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
         if (!matchedTenant) {
           matchedTenant = verbatimMatch;
           bill.billedTo = verbatimMatch.tenantName;
+        } else if (verbatimMatch.tenantId !== matchedTenant.tenantId
+                   && isCareOfPayer(bill.billedToVerbatim, matchedTenant.tenantName)) {
+          // c/o payer copy - keep it (see careOfParty).
         } else if (verbatimMatch.tenantId !== matchedTenant.tenantId) {
           const aiScore = scoreMatch(bill.billedToVerbatim, matchedTenant.tenantName).score;
           const verbScore = scoreMatch(bill.billedToVerbatim, verbatimMatch.tenantName).score;
@@ -5929,7 +5953,7 @@ require('./lib/emailIntake').mount(app, {
 
 // Exported so tests and scripts can drive the pipeline (e.g. extraction only,
 // without creating anything in Xero) without starting a server.
-module.exports = { app, analyzeFileToBills, processBillForChat, xeroAccountCtx, matchTenantByName, scoreMatch, isUtilitySupplier };
+module.exports = { app, analyzeFileToBills, processBillForChat, xeroAccountCtx, matchTenantByName, scoreMatch, isUtilitySupplier, careOfParty, isCareOfPayer };
 
 // Listen only when run directly — `node server.js` behaves exactly as before.
 if (require.main === module) {
