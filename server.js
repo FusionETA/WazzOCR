@@ -3730,12 +3730,13 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
       console.log(`[match] AI exact-name hit → ${matchedTenant.tenantName}`);
     }
   }
-  // For the four utilities the account-number mapping decides, full stop.
-  const nameMatchAllowed = !isUtilitySupplier(bill.supplier);
-  if (!nameMatchAllowed && !matchedTenant) {
-    console.log(`[match] ${bill.supplier} bills by premises — name matching skipped, so this goes to a human unless the account number matched.`);
-  }
-  if (!matchedTenant && nameMatchAllowed) {
+  // For the four utilities, billedTo has already been decided by the rules in
+  // the utilities prompt block: the account-number table first, the printed
+  // company name only when the table has no row. Tidying up the spelling of
+  // that answer below is fine. Re-reading the printed BILL TO text is not —
+  // see the verbatim cross-check.
+  const verbatimOverrideAllowed = !isUtilitySupplier(bill.supplier);
+  if (!matchedTenant) {
     matchedTenant = matchTenantByName(bill.billedTo, connections);
     if (matchedTenant) {
       console.log(`[match] fuzzy fallback hit → ${matchedTenant.tenantName}`);
@@ -3745,7 +3746,12 @@ async function processBillForChat({ bill, attachment, chatId, source = 'whatsapp
   // confuse orgs sharing a prefix (e.g. "EM J Design & Build" vs "EMJ Renovation").
   // The verbatim invoice text is more reliable — re-score both candidates
   // against it and override if verbatim clearly points elsewhere.
-  if (bill.billedToVerbatim && connections.length && nameMatchAllowed) {
+  //
+  // Skipped for TNB / Air Selangor / Ranhill / IWK. There the verbatim text is
+  // usually the landlord's name or a masked one, and where it does name one of
+  // ours the account-number table outranks it. Re-reading it would undo a
+  // mapping somebody in finance wrote down.
+  if (bill.billedToVerbatim && connections.length && verbatimOverrideAllowed) {
     const verbatimMatch = matchTenantByName(bill.billedToVerbatim, connections);
     if (verbatimMatch) {
       if (!matchedTenant) {
@@ -4209,11 +4215,13 @@ app.post('/api/whatsapp/analyze-ocr', async (req, res) => {
         (c) => String(c.tenantName || '').trim().toLowerCase() === target
       ) || null;
     }
-    const nameMatchAllowed = !isUtilitySupplier(bill.supplier);
-    if (!matchedTenant && nameMatchAllowed) {
+    // See processBillForChat: for the four utilities the printed BILL TO text
+    // must not override what the account-number mapping already decided.
+    const verbatimOverrideAllowed = !isUtilitySupplier(bill.supplier);
+    if (!matchedTenant) {
       matchedTenant = matchTenantByName(bill.billedTo, connections);
     }
-    if (bill.billedToVerbatim && connections.length && nameMatchAllowed) {
+    if (bill.billedToVerbatim && connections.length && verbatimOverrideAllowed) {
       const verbatimMatch = matchTenantByName(bill.billedToVerbatim, connections);
       if (verbatimMatch) {
         if (!matchedTenant) {
