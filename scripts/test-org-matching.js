@@ -79,8 +79,11 @@ test('each half of a c/o bill matches its own company', () => {
 
 console.log('\nutility suppliers');
 
-// These four bill by premises. The name on the bill is the landlord or a
-// previous tenant, so only the account-number table may choose the org.
+// These four bill by premises. isUtilitySupplier decides one thing only: that
+// the printed BILL TO text must not override the org already chosen, because
+// on these bills it is usually the landlord's name and, where it does name one
+// of ours, the account-number table outranks it. Name matching itself still
+// runs — a utility bill addressed to a connected company files to it.
 test('the four premises-billed utilities are recognised', () => {
   for (const s of ['Tenaga Nasional Berhad', 'TENAGA NASIONAL BERHAD - WM 1-1',
                    'Pengurusan Air Selangor Sdn. Bhd.', 'Air Selangor',
